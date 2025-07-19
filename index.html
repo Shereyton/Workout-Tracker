@@ -1,84 +1,333 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Workout Tracker</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workout Tracker Pro</title>
+    <style>
+        :root {
+            --main-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --header-gradient: linear-gradient(135deg, #2c3e50, #34495e);
+            --accent-gradient: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            --success-gradient: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            --danger: #dc3545;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--main-gradient);
+            min-height: 100vh;
+            padding: 10px;
+            transition: background 0.3s;
+        }
+        .dark-mode {
+            background: #22232a;
+            color: #f5f6fa;
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+            transition: background 0.3s;
+        }
+        .dark-mode .container { background: #292a35; }
+        .header {
+            background: var(--header-gradient);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .header h1 { font-size: 24px; margin-bottom: 5px; }
+        .date { opacity: 0.8; font-size: 14px; }
+        .dark-toggle {
+            position: absolute; top: 20px; right: 28px;
+            background: rgba(255,255,255,0.2); border: none;
+            border-radius: 999px; padding: 6px 12px;
+            color: #fff; font-size: 14px; cursor: pointer;
+            transition: background 0.2s;
+        }
+        .dark-toggle:hover { background: rgba(255,255,255,0.35);}
+        .workout-section { padding: 20px; }
+        .exercise-select { margin-bottom: 20px; }
+        select, input[type="number"], input[type="text"] {
+            width: 100%; padding: 13px;
+            border: 2px solid #e1e8ed;
+            border-radius: 12px; font-size: 16px;
+            background: white; transition: border-color 0.3s;
+            margin-bottom: 10px;
+        }
+        .dark-mode select, .dark-mode input, .dark-mode input[type="text"], .dark-mode input[type="number"] { background: #232332; color: #f5f6fa; border-color: #444459; }
+        select:focus, input[type="number"]:focus, input[type="text"]:focus { outline: none; border-color: #667eea; }
+        .current-exercise {
+            background: var(--accent-gradient); color: white;
+            padding: 15px; border-radius: 12px; margin-bottom: 20px;
+            text-align: center; box-shadow: 0 2px 8px rgba(250,90,150,0.09);
+            transition: background 0.2s;
+        }
+        .current-exercise h2 { font-size: 20px; margin-bottom: 5px; }
+        .set-info { font-size: 14px; opacity: 0.93; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 15px; }
+        .input-field { flex: 1; }
+        .input-field label {
+            display: block; margin-bottom: 5px; font-weight: 600; color: #2c3e50;
+        }
+        .dark-mode .input-field label { color: #bcbcff; }
+        .btn {
+            width: 100%; padding: 15px; border: none;
+            border-radius: 12px; font-size: 16px; font-weight: 600;
+            cursor: pointer; transition: all 0.3s;
+            margin-bottom: 10px; box-shadow: 0 2px 8px rgba(100,110,234,0.09);
+        }
+        .btn-primary {
+            background: var(--main-gradient); color: white;
+        }
+        .btn-primary:hover { transform: translateY(-2px); }
+        .btn-secondary {
+            background: #f8f9fa; color: #6c757d; border: 2px solid #e1e8ed;
+        }
+        .btn-secondary:hover { background: #e9ecef; }
+        .btn-export {
+            background: var(--success-gradient); color: white;
+        }
+        .btn-export:hover { transform: translateY(-2px);}
+        .btn-small {
+            padding: 4px 10px; border: none; border-radius: 4px; font-size: 12px;
+            cursor: pointer; margin-left: 5px;
+        }
+        .btn-edit { background: #ffc107; color: #222; }
+        .btn-edit:hover { background: #ffb300; }
+        .btn-delete { background: var(--danger); color: #fff;}
+        .btn-delete:hover { background: #a71d2a;}
+        .btn-reset { background: #6c757d; color: white; margin-bottom: 15px;}
+        .btn-reset:hover { background: #545b62; }
+        .sets-history { margin-top: 20px; }
+        .sets-history h3 { color: #2c3e50; margin-bottom: 15px; }
+        .set-item {
+            background: #f8f9fa; padding: 10px 15px;
+            border-radius: 8px; margin-bottom: 8px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .dark-mode .set-item { background: #202030;}
+        .set-actions { display: flex; gap: 6px; }
+        .edit-form { background: #e3f2fd; padding: 8px; border-radius: 8px; margin-top: 5px;}
+        .edit-inputs { display: flex; gap: 10px; margin-bottom: 10px;}
+        .edit-inputs input { flex: 1; padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;}
+        .edit-buttons { display: flex; gap: 5px; }
+        .rest-timer {
+            background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%);
+            color: #2c3e50; padding: 15px; border-radius: 12px;
+            text-align: center; margin-bottom: 15px; font-weight: 600;
+        }
+        .dark-mode .rest-timer { background: #333347; color: #f0cfe7;}
+        .timer-display { font-size: 24px; font-weight: bold;}
+        .hidden { display: none; }
+        .workout-summary {
+            background: #f8f9fa; padding: 15px; border-radius: 12px; margin-top: 20px;
+        }
+        .dark-mode .workout-summary { background: #222239;}
+        .workout-summary h3 { color: #2c3e50; margin-bottom: 10px; }
+        .dark-mode .workout-summary h3 { color: #a0a0ff; }
+        .custom-exercise-row {
+            display: flex; gap: 8px; align-items: center; margin-bottom: 8px;
+        }
+        .custom-exercise-row input { flex: 1; }
+        .custom-exercise-row button { flex-shrink: 0; }
+        @media (max-width: 480px) {
+            .container { margin: 0; border-radius: 0; min-height: 100vh;}
+        }
+    </style>
 </head>
-<body class="bg-gray-100 min-h-screen p-4">
-
-  <div class="max-w-xl mx-auto bg-white shadow-md rounded-xl p-4">
-    <h1 class="text-xl font-bold text-center mb-4">Workout Quick Tracker</h1>
-
-    <input id="exercise" class="w-full p-2 border rounded mb-3" placeholder="Exercise Name" />
-    <div class="flex gap-2 mb-3">
-      <input id="weight" type="number" class="w-1/2 p-2 border rounded" placeholder="Weight (lbs)" />
-      <input id="reps" type="number" class="w-1/2 p-2 border rounded" placeholder="Reps" />
+<body>
+    <div class="container">
+        <div class="header" style="position:relative;">
+            <h1>💪 Workout Tracker Pro</h1>
+            <div class="date" id="currentDate"></div>
+            <button class="dark-toggle" id="darkModeBtn">🌙 Dark Mode</button>
+        </div>
+        <div class="workout-section">
+            <!-- Custom Exercise Addition -->
+            <div class="custom-exercise-row">
+                <input type="text" id="customExerciseInput" placeholder="Add Custom Exercise">
+                <button class="btn btn-secondary" id="addExerciseBtn" style="padding:10px 14px;">Add</button>
+            </div>
+            <!-- Exercise Dropdown -->
+            <div class="exercise-select">
+                <select id="exerciseSelect">
+                    <option value="">Select Exercise</option>
+                    <option value="Bench Press">Bench Press</option>
+                    <option value="Incline Bench Press">Incline Bench Press</option>
+                    <option value="Squats">Squats</option>
+                    <option value="Straight Arm Bicep Curls">Straight Arm Bicep Curls</option>
+                    <option value="Lat Pulldown (Underhand)">Lat Pulldown (Underhand)</option>
+                    <option value="Lat Pulldown (Overhand)">Lat Pulldown (Overhand)</option>
+                </select>
+            </div>
+            <!-- Main Workout UI -->
+            <div id="workoutInterface" class="hidden">
+                <div class="current-exercise">
+                    <h2 id="currentExercise"></h2>
+                    <div class="set-info">Set <span id="currentSet">1</span></div>
+                </div>
+                <div id="restTimer" class="rest-timer hidden">
+                    <div>Rest Time</div>
+                    <div class="timer-display" id="timerDisplay">01:30</div>
+                    <div style="font-size: 12px; margin-top: 5px;">Tap to stop timer</div>
+                </div>
+                <div class="input-group">
+                    <div class="input-field">
+                        <label>Weight (lbs)</label>
+                        <input type="number" id="weightInput" placeholder="135" step="5" min="0">
+                    </div>
+                    <div class="input-field">
+                        <label>Reps</label>
+                        <input type="number" id="repsInput" placeholder="12" min="1">
+                    </div>
+                </div>
+                <button class="btn btn-primary" id="logSetBtn">Log Set</button>
+                <button class="btn btn-reset" id="resetWorkoutBtn">Reset Workout</button>
+                <button class="btn btn-secondary" id="nextExerciseBtn">Next Exercise</button>
+                <div class="sets-history" id="setsHistory">
+                    <h3>Today's Sets</h3>
+                    <div id="setsList"></div>
+                </div>
+            </div>
+            <!-- Workout summary and export -->
+            <div class="workout-summary" id="workoutSummary">
+                <h3>Workout Summary</h3>
+                <div id="summaryContent">Start your first exercise to begin tracking!</div>
+            </div>
+            <button class="btn btn-export" id="exportBtn">Export Workout Data</button>
+        </div>
     </div>
-    <button onclick="addSet()" class="w-full bg-blue-500 text-white p-2 rounded mb-3">Add Set</button>
+    <script>
+        // ========== CORE DATA STRUCTURE ========== //
+        let currentWorkout = JSON.parse(localStorage.getItem('currentWorkout')) || [];
+        let currentExerciseData = JSON.parse(localStorage.getItem('currentExerciseData')) || null;
+        let restTimerInterval = null;
+        let isDarkMode = false;
 
-    <table class="w-full table-auto text-left">
-      <thead>
-        <tr>
-          <th class="border-b py-2">Exercise</th>
-          <th class="border-b py-2">Set</th>
-          <th class="border-b py-2">Weight (lbs)</th>
-          <th class="border-b py-2">Reps</th>
-        </tr>
-      </thead>
-      <tbody id="log"></tbody>
-    </table>
+        // ========== DATE & DARK MODE INIT ========== //
+        document.getElementById('currentDate').textContent = new Date().toLocaleDateString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+        });
+        document.getElementById('darkModeBtn').addEventListener('click', function() {
+            document.body.classList.toggle('dark-mode');
+            isDarkMode = !isDarkMode;
+            this.textContent = isDarkMode ? '☀️ Light Mode' : '🌙 Dark Mode';
+        });
 
-    <button onclick="downloadCSV()" class="mt-4 w-full bg-green-500 text-white p-2 rounded">Download CSV</button>
-  </div>
+        // ========== CUSTOM EXERCISE SUPPORT ========== //
+        document.getElementById('addExerciseBtn').addEventListener('click', function() {
+            const input = document.getElementById('customExerciseInput');
+            const val = input.value.trim();
+            if (val) {
+                const sel = document.getElementById('exerciseSelect');
+                const option = document.createElement('option');
+                option.value = val;
+                option.textContent = val;
+                sel.appendChild(option);
+                sel.value = val;
+                input.value = '';
+                startExercise(val);
+            }
+        });
 
-  <script>
-    let workoutData = [];
-    function addSet() {
-      const exercise = document.getElementById('exercise').value;
-      const weight = document.getElementById('weight').value;
-      const reps = document.getElementById('reps').value;
-      if (!exercise || !weight || !reps) return alert('Please fill all fields.');
-      const existingSets = workoutData.filter(set => set.exercise === exercise).length;
-      const newSet = {
-        exercise,
-        set: existingSets + 1,
-        weight,
-        reps
-      };
-      workoutData.push(newSet);
-      updateTable();
-      document.getElementById('weight').value = '';
-      document.getElementById('reps').value = '';
-    }
-    function updateTable() {
-      const log = document.getElementById('log');
-      log.innerHTML = '';
-      workoutData.forEach(item => {
-        log.innerHTML += `
-          <tr>
-            <td class="py-1 border-b">${item.exercise}</td>
-            <td class="py-1 border-b">${item.set}</td>
-            <td class="py-1 border-b">${item.weight}</td>
-            <td class="py-1 border-b">${item.reps}</td>
-          </tr>`;
-      });
-    }
-    function downloadCSV() {
-      let csvContent = "data:text/csv;charset=utf-8,Exercise,Set,Weight (lbs),Reps\\n";
-      workoutData.forEach(row => {
-        csvContent += `${row.exercise},${row.set},${row.weight},${row.reps}\\n`;
-      });
-      const encodedUri = encodeURI(csvContent);
-      const link = document.createElement("a");
-      link.setAttribute("href", encodedUri);
-      link.setAttribute("download", "workout_log.csv");
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
-  </script>
+        // ========== MAIN EXERCISE HANDLING ========== //
+        document.getElementById('exerciseSelect').addEventListener('change', function() {
+            if (this.value) startExercise(this.value);
+        });
 
-</body>
-</html>
+        function startExercise(name) {
+            if (!name) return;
+            if (!currentExerciseData || (currentExerciseData && currentExerciseData.exercise !== name)) {
+                currentExerciseData = { exercise: name, sets: [], currentSet: 1 };
+                updateWorkoutInterface();
+                saveToStorage();
+            }
+        }
+
+        function updateWorkoutInterface() {
+            document.getElementById('currentExercise').textContent = currentExerciseData.exercise;
+            document.getElementById('currentSet').textContent = currentExerciseData.currentSet;
+            document.getElementById('workoutInterface').classList.remove('hidden');
+            document.getElementById('setsList').innerHTML = '';
+            (currentExerciseData.sets || []).forEach((set, idx) => {
+                addSetToHistory(currentExerciseData.exercise, set.set, set.weight, set.reps, idx);
+            });
+            document.getElementById('weightInput').focus();
+        }
+
+        // ========== LOGGING SETS ========== //
+        document.getElementById('logSetBtn').addEventListener('click', function() {
+            const weight = document.getElementById('weightInput').value;
+            const reps = document.getElementById('repsInput').value;
+            if (!weight || !reps) return alert('Please enter both weight and reps');
+            currentExerciseData.sets.push({
+                set: currentExerciseData.currentSet,
+                weight: parseInt(weight),
+                reps: parseInt(reps),
+                timestamp: new Date().toLocaleTimeString()
+            });
+            addSetToHistory(currentExerciseData.exercise, currentExerciseData.currentSet, weight, reps, currentExerciseData.currentSet-1);
+            currentExerciseData.currentSet++;
+            document.getElementById('currentSet').textContent = currentExerciseData.currentSet;
+            document.getElementById('repsInput').value = '';
+            document.getElementById('repsInput').focus();
+            startRestTimer();
+            updateWorkoutSummary();
+            saveToStorage();
+        });
+
+        function addSetToHistory(exercise, setNumber, weight, reps, idx) {
+            const setsList = document.getElementById('setsList');
+            const setItem = document.createElement('div');
+            setItem.className = 'set-item';
+            setItem.innerHTML = `
+                <span>${exercise} - Set ${setNumber}</span>
+                <span>${weight} lbs × ${reps} reps</span>
+                <div class="set-actions">
+                    <button class="btn-small btn-edit" onclick="editSet(this, ${idx})">Edit</button>
+                    <button class="btn-small btn-delete" onclick="deleteSet(this, ${idx})">Delete</button>
+                </div>
+            `;
+            setItem.dataset.setIndex = idx;
+            setsList.appendChild(setItem);
+        }
+
+        // ========== EDIT & DELETE ========== //
+        window.deleteSet = function(button, setIndex) {
+            if (confirm('Delete this set?')) {
+                currentExerciseData.sets.splice(setIndex, 1);
+                renumberSets();
+                updateWorkoutSummary();
+                saveToStorage();
+            }
+        };
+        window.editSet = function(button, setIndex) {
+            const setItem = button.closest('.set-item');
+            const setData = currentExerciseData.sets[setIndex];
+            const editForm = document.createElement('div');
+            editForm.className = 'edit-form';
+            editForm.innerHTML = `
+                <div class="edit-inputs">
+                    <input type="number" id="editWeight" value="${setData.weight}" placeholder="Weight">
+                    <input type="number" id="editReps" value="${setData.reps}" placeholder="Reps">
+                </div>
+                <div class="edit-buttons">
+                    <button class="btn-small btn-edit" onclick="saveEdit(this, ${setIndex})">Save</button>
+                    <button class="btn-small btn-delete" onclick="cancelEdit(this)">Cancel</button>
+                </div>
+            `;
+            setItem.appendChild(editForm);
+            button.style.display = 'none';
+            button.parentElement.querySelector('.btn-delete').style.display = 'none';
+        };
+        window.saveEdit = function(button, setIndex) {
+            const editForm = button.closest('.edit-form');
+            const newWeight = parseInt(editForm.querySelector('#editWeight').value);
+            const newReps = parseInt(editForm.querySelector('#editReps').value);
+            if (!newWeight
