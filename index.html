@@ -39,23 +39,13 @@ body.dark .container { background:#262a33; }
 
 .header {
   position:relative;
-  padding:20px;
+  padding:20px 20px 18px;
   text-align:center;
   background: var(--grad-header);
   color:#fff;
 }
-.header h1 { font-size:24px; font-weight:700; margin-bottom:4px; }
-.date { font-size:13px; opacity:.8; }
-
-#darkToggle {
-  position:absolute; top:14px; right:14px;
-  border:none; background:rgba(255,255,255,.18);
-  color:#fff; font-size:13px; padding:6px 12px;
-  border-radius:999px; cursor:pointer;
-  backdrop-filter: blur(6px);
-  transition: var(--transition);
-}
-#darkToggle:hover { background:rgba(255,255,255,.30); }
+.header h1 { font-size:24px; font-weight:700; margin-bottom:6px; }
+.date { font-size:13px; opacity:.85; }
 
 .section { padding:20px 20px 28px; }
 select, input[type=number], input[type=text] {
@@ -196,12 +186,65 @@ body.dark .badge { background:#303d52; color:#b8c8e6; }
 
 .hidden { display:none !important; }
 
-.footer-space { height:40px; }
+.footer-space { height:70px; }
 
-@media (max-width:520px){
-  .container { border-radius:0; }
+/* === Floating Theme Toggle (Bottom-Right FAB) === */
+#darkToggle {
+  position:fixed;
+  bottom:calc(14px + env(safe-area-inset-bottom));
+  right:14px;
+  z-index:1000;
+  background:rgba(255,255,255,0.9);
+  color:#222;
+  padding:12px 15px;
+  border:none;
+  border-radius:18px;
+  font-size:14px;
+  font-weight:600;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  box-shadow:0 8px 24px -6px rgba(0,0,0,.3);
+  cursor:pointer;
+  backdrop-filter: blur(6px);
+  transition:var(--transition);
+}
+#darkToggle:active { transform:scale(.94); }
+#darkToggle:hover { background:#fff; }
+body.dark #darkToggle {
+  background:rgba(40,43,50,0.9);
+  color:#f5f6fa;
+  box-shadow:0 8px 24px -6px rgba(0,0,0,.6);
+}
+#darkToggle small {
+  font-size:11px;
+  opacity:.65;
+  font-weight:500;
+  letter-spacing:.3px;
 }
 
+/* Compact on very small screens */
+@media (max-width:380px){
+  #darkToggle { padding:10px 12px; font-size:13px; }
+}
+
+@keyframes pulseHint {
+  0% { box-shadow:0 0 0 0 rgba(255,255,255,.45); }
+  70% { box-shadow:0 0 0 14px rgba(255,255,255,0); }
+  100% { box-shadow:0 0 0 0 rgba(255,255,255,0); }
+}
+body.dark #darkToggle { animation:pulseHint 4s infinite; }
+
+/* (Optional) If you prefer top-right placement, comment out the FAB block above and use:
+#darkToggle {
+  position:absolute;
+  top:12px;
+  right:12px;
+  background:rgba(255,255,255,0.18);
+  color:#fff;
+}
+body.dark #darkToggle { background:rgba(255,255,255,0.25); color:#fff; }
+*/
 </style>
 </head>
 <body>
@@ -209,7 +252,6 @@ body.dark .badge { background:#303d52; color:#b8c8e6; }
     <div class="header">
       <h1>💪 Workout Tracker <span class="badge">Pro</span></h1>
       <div id="today" class="date"></div>
-      <button id="darkToggle">🌙 Dark</button>
     </div>
 
     <div class="section">
@@ -275,10 +317,16 @@ body.dark .badge { background:#303d52; color:#b8c8e6; }
   </div>
   <div class="footer-space"></div>
 
+  <!-- Floating Theme Toggle -->
+  <button id="darkToggle" aria-label="Toggle dark mode">
+    <span id="themeIcon">🌙</span>
+    <span id="themeLabel">Dark</span>
+  </button>
+
 <script>
 /* ------------------ STATE ------------------ */
 let session = JSON.parse(localStorage.getItem('wt_session')) || {
-  exercises: [],   // [{ name, sets: [{set, weight, reps, time}] }]
+  exercises: [],
   startedAt: null
 };
 let currentExercise = JSON.parse(localStorage.getItem('wt_currentExercise')) || null;
@@ -289,6 +337,8 @@ const DEFAULT_REST = 90;
 /* ------------------ ELEMENTS ------------------ */
 const todayEl = document.getElementById('today');
 const darkToggle = document.getElementById('darkToggle');
+const themeIcon = document.getElementById('themeIcon');
+const themeLabel = document.getElementById('themeLabel');
 const exerciseSelect = document.getElementById('exerciseSelect');
 const interfaceBox = document.getElementById('interface');
 const exerciseNameEl = document.getElementById('exerciseName');
@@ -318,10 +368,19 @@ if (currentExercise) {
 }
 updateSummary();
 
-/* ------------------ DARK MODE ------------------ */
+/* ------------------ THEME ------------------ */
+if(localStorage.getItem('wt_theme') === 'dark'){
+  document.body.classList.add('dark');
+  themeIcon.textContent = '☀️';
+  themeLabel.textContent = 'Light';
+}
+
 darkToggle.addEventListener('click', () => {
   document.body.classList.toggle('dark');
-  darkToggle.textContent = document.body.classList.contains('dark') ? '☀️ Light' : '🌙 Dark';
+  const dark = document.body.classList.contains('dark');
+  themeIcon.textContent = dark ? '☀️' : '🌙';
+  themeLabel.textContent = dark ? 'Light' : 'Dark';
+  localStorage.setItem('wt_theme', dark ? 'dark' : 'light');
 });
 
 /* ------------------ CUSTOM EXERCISE ------------------ */
@@ -343,7 +402,6 @@ exerciseSelect.addEventListener('change', e => {
 
 function startExercise(name){
   if(!session.startedAt) session.startedAt = new Date().toISOString();
-  // If switching, store previous exercise if it has sets
   if(currentExercise && currentExercise.sets.length){
     pushOrMergeExercise(currentExercise);
   }
@@ -355,7 +413,10 @@ function startExercise(name){
   weightInput.focus();
 }
 
-function showInterface(){ interfaceBox.classList.remove('hidden'); exerciseNameEl.textContent = currentExercise.name; }
+function showInterface(){
+  interfaceBox.classList.remove('hidden');
+  exerciseNameEl.textContent = currentExercise.name;
+}
 
 /* ------------------ LOG SET ------------------ */
 logBtn.addEventListener('click', () => {
@@ -369,9 +430,9 @@ logBtn.addEventListener('click', () => {
     time: new Date().toLocaleTimeString()
   });
   currentExercise.nextSet++;
-  addSetElement(currentExercise.sets[currentExercise.sets.length-1], currentExercise.sets.length-1);
+  addSetElement(currentExercise.sets.at(-1), currentExercise.sets.length-1);
   updateSetCounter();
-  weightInput.select(); // keep weight for speed
+  weightInput.select();
   repsInput.value = '';
   repsInput.focus();
   startRest(DEFAULT_REST);
@@ -424,7 +485,6 @@ function deleteSet(idx){
 }
 
 function openEditForm(item, idx){
-  // Prevent multiple forms
   if(item.querySelector('.edit-form')) return;
   const s = currentExercise.sets[idx];
   const form = document.createElement('div');
@@ -455,7 +515,7 @@ function openEditForm(item, idx){
     if(ev.target.dataset.editCancel){
       form.remove();
     }
-  }, { once:false });
+  });
 }
 
 function renumberSets(){
@@ -485,15 +545,12 @@ nextExerciseBtn.addEventListener('click', () => {
 function pushOrMergeExercise(ex){
   const existing = session.exercises.find(e => e.name === ex.name);
   if(existing){
-    // append & renumber
-    const base = existing.sets.length;
     ex.sets.forEach(s=>{
       existing.sets.push({
-        set: base + existing.sets.length + 1, // will renumber after
+        set: existing.sets.length + 1,
         weight:s.weight, reps:s.reps, time:s.time
       });
     });
-    existing.sets.forEach((s,i)=> s.set = i+1);
   } else {
     session.exercises.push({
       name: ex.name,
@@ -564,12 +621,10 @@ function updateSummary(){
 
 /* ------------------ EXPORT ------------------ */
 exportBtn.addEventListener('click', () => {
-  // Merge current exercise first (non-destructive clone)
   const exportExercises = session.exercises.map(e => ({...e, sets:[...e.sets]}));
   if(currentExercise && currentExercise.sets.length){
     const exExisting = exportExercises.find(e=> e.name===currentExercise.name);
     if(exExisting){
-      const base = exExisting.sets.length;
       currentExercise.sets.forEach(s=>{
         exExisting.sets.push({set: exExisting.sets.length+1, weight:s.weight, reps:s.reps, time:s.time});
       });
@@ -582,7 +637,6 @@ exportBtn.addEventListener('click', () => {
     return;
   }
   const totalSets = exportExercises.reduce((sum,e)=> sum+e.sets.length,0);
-
   const payload = {
     date: new Date().toISOString().split('T')[0],
     timestamp: new Date().toISOString(),
@@ -591,32 +645,21 @@ exportBtn.addEventListener('click', () => {
     exercises: exportExercises
   };
 
-  // JSON download
+  // JSON
   const jsonStr = JSON.stringify(payload,null,2);
   const blob = new Blob([jsonStr], {type:'application/json'});
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = `workout_${payload.date}.json`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  triggerDownload(blob, `workout_${payload.date}.json`);
 
-  // CSV download
+  // CSV
   let csv = 'Exercise,Set,Weight,Reps,Time\\n';
   exportExercises.forEach(ex => {
     ex.sets.forEach(s => {
       csv += `${ex.name},${s.set},${s.weight},${s.reps},${s.time}\\n`;
     });
   });
-  const blob2 = new Blob([csv], {type:'text/csv'});
-  const link2 = document.createElement('a');
-  link2.href = URL.createObjectURL(blob2);
-  link2.download = `workout_${payload.date}.csv`;
-  document.body.appendChild(link2);
-  link2.click();
-  document.body.removeChild(link2);
+  triggerDownload(new Blob([csv], {type:'text/csv'}), `workout_${payload.date}.csv`);
 
-  // AI summary (clipboard)
+  // AI text
   let aiText = `WORKOUT DATA - ${payload.date}\\n\\n`;
   exportExercises.forEach(ex=>{
     aiText += `${ex.name}:\\n`;
@@ -626,16 +669,25 @@ exportBtn.addEventListener('click', () => {
     aiText += '\\n';
   });
   aiText += `Summary: ${payload.totalExercises} exercises, ${payload.totalSets} total sets.\\n\\n`;
-  aiText += `Please analyze: progress vs previous, next session suggestions, weak points, optimal weight / rep recommendations.`;
+  aiText += `Please analyze progress vs previous sessions, suggest next targets, identify weak points, and recommend optimal weight/rep progressions.`;
 
   if(navigator.clipboard){
     navigator.clipboard.writeText(aiText).then(()=>{
-      alert('Exported JSON + CSV downloaded. AI summary copied to clipboard ✅');
+      alert('Exported JSON + CSV. AI summary copied to clipboard ✅');
     }).catch(()=> alert('Exported files. (Clipboard copy failed)'));
   } else {
-    alert('Exported JSON + CSV. Copy AI summary manually:\\n\\n' + aiText);
+    alert('Exported JSON + CSV. Copy this manually:\\n\\n' + aiText);
   }
 });
+
+function triggerDownload(blob, filename){
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
 
 /* ------------------ SAVE / LOAD ------------------ */
 function saveState(){
