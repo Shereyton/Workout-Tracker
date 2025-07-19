@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Workout Tracker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen p-4">
+
+  <div class="max-w-xl mx-auto bg-white shadow-md rounded-xl p-4">
+    <h1 class="text-xl font-bold text-center mb-4">Workout Quick Tracker</h1>
+
+    <input id="exercise" class="w-full p-2 border rounded mb-3" placeholder="Exercise Name" />
+    <div class="flex gap-2 mb-3">
+      <input id="weight" type="number" class="w-1/2 p-2 border rounded" placeholder="Weight (lbs)" />
+      <input id="reps" type="number" class="w-1/2 p-2 border rounded" placeholder="Reps" />
+    </div>
+    <button onclick="addSet()" class="w-full bg-blue-500 text-white p-2 rounded mb-3">Add Set</button>
+
+    <table class="w-full table-auto text-left">
+      <thead>
+        <tr>
+          <th class="border-b py-2">Exercise</th>
+          <th class="border-b py-2">Set</th>
+          <th class="border-b py-2">Weight (lbs)</th>
+          <th class="border-b py-2">Reps</th>
+        </tr>
+      </thead>
+      <tbody id="log"></tbody>
+    </table>
+
+    <button onclick="downloadCSV()" class="mt-4 w-full bg-green-500 text-white p-2 rounded">Download CSV</button>
+  </div>
+
+  <script>
+    let workoutData = [];
+    function addSet() {
+      const exercise = document.getElementById('exercise').value;
+      const weight = document.getElementById('weight').value;
+      const reps = document.getElementById('reps').value;
+      if (!exercise || !weight || !reps) return alert('Please fill all fields.');
+      const existingSets = workoutData.filter(set => set.exercise === exercise).length;
+      const newSet = {
+        exercise,
+        set: existingSets + 1,
+        weight,
+        reps
+      };
+      workoutData.push(newSet);
+      updateTable();
+      document.getElementById('weight').value = '';
+      document.getElementById('reps').value = '';
+    }
+    function updateTable() {
+      const log = document.getElementById('log');
+      log.innerHTML = '';
+      workoutData.forEach(item => {
+        log.innerHTML += `
+          <tr>
+            <td class="py-1 border-b">${item.exercise}</td>
+            <td class="py-1 border-b">${item.set}</td>
+            <td class="py-1 border-b">${item.weight}</td>
+            <td class="py-1 border-b">${item.reps}</td>
+          </tr>`;
+      });
+    }
+    function downloadCSV() {
+      let csvContent = "data:text/csv;charset=utf-8,Exercise,Set,Weight (lbs),Reps\\n";
+      workoutData.forEach(row => {
+        csvContent += `${row.exercise},${row.set},${row.weight},${row.reps}\\n`;
+      });
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "workout_log.csv");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  </script>
+
+</body>
+</html>
