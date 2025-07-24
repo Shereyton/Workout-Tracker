@@ -6,7 +6,6 @@
 <title>Workout Tracker Pro</title>
 <meta name="description" content="Lightweight mobile workout tracker with export + AI summary">
 <style>
-/* --- (same styles you had, unchanged except where noted) --- */
 :root{
   --grad-main:linear-gradient(135deg,#667eea 0%,#764ba2 100%);
   --grad-accent:linear-gradient(135deg,#f093fb 0%,#f5576c 100%);
@@ -17,38 +16,24 @@
   --transition:0.25s cubic-bezier(.4,.0,.2,1);
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
-body{
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-  background:var(--grad-main);min-height:100vh;padding:10px;color:#222;
-  transition:background .4s,color .3s;
-}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--grad-main);min-height:100vh;padding:10px;color:#222;transition:background .4s,color .3s;}
 body.dark{background:#181a1f;color:#f5f6fa;}
-.container{max-width:520px;margin:0 auto;background:#fff;border-radius:var(--radius);
-  box-shadow:0 12px 32px -8px rgba(0,0,0,.25);overflow:hidden;animation:fadeIn .4s;}
+.container{max-width:520px;margin:0 auto;background:#fff;border-radius:var(--radius);box-shadow:0 12px 32px -8px rgba(0,0,0,.25);overflow:hidden;animation:fadeIn .4s;}
 body.dark .container{background:#262a33;}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
 .header{position:relative;padding:20px 20px 18px;text-align:center;background:var(--grad-header);color:#fff;}
 .header h1{font-size:24px;font-weight:700;margin-bottom:6px;}
 .date{font-size:13px;opacity:.85;}
 .section{padding:20px 20px 28px;}
-select,input[type=number],input[type=text]{
-  width:100%;font-size:16px;padding:13px 14px;border:2px solid #e1e8ed;border-radius:14px;
-  background:#fff;transition:var(--transition);margin-bottom:12px;font-weight:500;
-}
+select,input[type=number],input[type=text]{width:100%;font-size:16px;padding:13px 14px;border:2px solid #e1e8ed;border-radius:14px;background:#fff;transition:var(--transition);margin-bottom:12px;font-weight:500;}
 body.dark select,body.dark input{background:#1e2127;border-color:#39414d;color:#f5f6fa;}
 select:focus,input:focus{outline:none;border-color:#667eea;}
 .inline-row{display:flex;gap:10px;}
 .inline-row .field{flex:1;}
-.current-exercise{
-  background:var(--grad-accent);color:#fff;padding:16px 14px;border-radius:16px;margin:8px 0 18px;
-  text-align:center;box-shadow:0 6px 18px -6px rgba(245,90,150,.45);
-}
+.current-exercise{background:var(--grad-accent);color:#fff;padding:16px 14px;border-radius:16px;margin:8px 0 18px;text-align:center;box-shadow:0 6px 18px -6px rgba(245,90,150,.45);}
 .current-exercise h2{font-size:20px;margin-bottom:4px;}
 .current-exercise .set-info{font-size:13px;opacity:.95;}
-.btn{
-  width:100%;border:none;cursor:pointer;padding:15px 16px;font-size:16px;font-weight:600;border-radius:14px;
-  margin-bottom:12px;transition:var(--transition);letter-spacing:.3px;display:inline-flex;justify-content:center;align-items:center;
-}
+.btn{width:100%;border:none;cursor:pointer;padding:15px 16px;font-size:16px;font-weight:600;border-radius:14px;margin-bottom:12px;transition:var(--transition);letter-spacing:.3px;display:inline-flex;justify-content:center;align-items:center;}
 .btn:active{transform:scale(.97);}
 .btn-primary{background:var(--grad-main);color:#fff;}
 .btn-primary:hover{filter:brightness(1.05);}
@@ -64,10 +49,7 @@ body.dark .btn-reset{background:#505864;}
 body.dark .btn-reset:hover{background:#616c7b;}
 .sets-history{margin-top:20px;}
 .sets-history h3{font-size:16px;margin-bottom:12px;letter-spacing:.5px;}
-.set-item{
-  background:#f8f9fa;border:1px solid #e5e9ef;padding:10px 14px;border-radius:10px;margin-bottom:8px;
-  display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px;
-}
+.set-item{background:#f8f9fa;border:1px solid #e5e9ef;padding:10px 14px;border-radius:10px;margin-bottom:8px;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px;}
 body.dark .set-item{background:#20242a;border-color:#2c323a;}
 .set-label{font-weight:600;}
 .set-meta{opacity:.85;}
@@ -83,16 +65,10 @@ body.dark .edit-form{background:#29374a;}
 .edit-form input{margin:0;font-size:14px;padding:8px;border-radius:6px;}
 .edit-form .row2{display:flex;gap:6px;}
 .edit-form .row2 button{flex:1;}
-.rest-timer{
-  background:linear-gradient(135deg,#ff9a9e 0%,#fecfef 100%);color:#2c3e50;padding:15px 18px;border-radius:14px;
-  text-align:center;font-weight:600;margin-bottom:16px;cursor:pointer;user-select:none;animation:fadeIn .35s;
-}
+.rest-timer{background:linear-gradient(135deg,#ff9a9e 0%,#fecfef 100%);color:#2c3e50;padding:15px 18px;border-radius:14px;text-align:center;font-weight:600;margin-bottom:16px;cursor:pointer;user-select:none;animation:fadeIn .35s;}
 body.dark .rest-timer{background:#3a3440;color:#f1d9e8;}
 .timer-display{font-size:26px;font-weight:700;margin-top:4px;}
-.summary{
-  margin-top:26px;background:#f8f9fa;border:1px solid #e6eaef;padding:16px 18px;border-radius:16px;
-  font-size:14px;line-height:1.5;word-break:break-word;
-}
+.summary{margin-top:26px;background:#f8f9fa;border:1px solid #e6eaef;padding:16px 18px;border-radius:16px;font-size:14px;line-height:1.5;word-break:break-word;}
 body.dark .summary{background:#20242a;border-color:#2d333c;}
 .summary h3{margin:0 0 10px;font-size:16px;}
 .notice{font-size:12px;opacity:.65;margin-top:4px;}
@@ -100,13 +76,7 @@ body.dark .summary{background:#20242a;border-color:#2d333c;}
 body.dark .badge{background:#303d52;color:#b8c8e6;}
 .hidden{display:none!important;}
 .footer-space{height:70px;}
-/* Floating toggle */
-#darkToggle{
-  position:fixed;bottom:calc(14px + env(safe-area-inset-bottom));right:14px;z-index:1000;
-  background:rgba(255,255,255,0.9);color:#222;padding:12px 15px;border:none;border-radius:18px;font-size:14px;font-weight:600;
-  display:flex;align-items:center;gap:6px;box-shadow:0 8px 24px -6px rgba(0,0,0,.3);cursor:pointer;backdrop-filter:blur(6px);
-  transition:var(--transition);
-}
+#darkToggle{position:fixed;bottom:calc(14px + env(safe-area-inset-bottom));right:14px;z-index:1000;background:rgba(255,255,255,0.9);color:#222;padding:12px 15px;border:none;border-radius:18px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:6px;box-shadow:0 8px 24px -6px rgba(0,0,0,.3);cursor:pointer;backdrop-filter:blur(6px);transition:var(--transition);}
 #darkToggle:active{transform:scale(.94);}
 #darkToggle:hover{background:#fff;}
 body.dark #darkToggle{background:rgba(40,43,50,0.9);color:#f5f6fa;box-shadow:0 8px 24px -6px rgba(0,0,0,.6);}
@@ -122,16 +92,11 @@ body.dark #darkToggle{animation:pulseHint 4s infinite;}
       <h1>💪 Workout Tracker <span class="badge">Pro</span></h1>
       <div id="today" class="date"></div>
     </div>
-
     <div class="section">
-
-      <!-- Add Custom Exercise -->
       <div class="inline-row" style="margin-bottom:6px;">
         <input type="text" id="customExercise" placeholder="Add Custom Exercise">
         <button id="addExercise" class="btn btn-secondary" style="flex:0 0 120px;padding:12px;">Add</button>
       </div>
-
-      <!-- Choose Exercise -->
       <select id="exerciseSelect">
         <option value="">Select Exercise</option>
         <option>Bench Press</option>
@@ -141,15 +106,11 @@ body.dark #darkToggle{animation:pulseHint 4s infinite;}
         <option>Lat Pulldown (Underhand)</option>
         <option>Lat Pulldown (Overhand)</option>
       </select>
-
-      <!-- Interface -->
       <div id="interface" class="hidden">
         <div class="current-exercise">
           <h2 id="exerciseName"></h2>
           <div class="set-info">Set <span id="setCounter">1</span></div>
         </div>
-
-        <!-- NEW: timer controls row -->
         <div class="inline-row" style="margin-bottom:8px;">
           <label class="field" style="display:flex;align-items:center;gap:8px;">
             <input type="checkbox" id="useTimer" checked>
@@ -159,13 +120,11 @@ body.dark #darkToggle{animation:pulseHint 4s infinite;}
             <input type="number" id="restSecsInput" min="10" step="5" value="90" placeholder="Rest (sec)">
           </div>
         </div>
-
         <div id="restBox" class="rest-timer hidden">
           <div>Rest Time</div>
           <div id="restDisplay" class="timer-display">01:30</div>
           <div style="font-size:11px;margin-top:4px;opacity:.8;">Tap to cancel</div>
         </div>
-
         <div class="inline-row">
           <div class="field">
             <input type="number" id="weight" min="0" step="1" placeholder="Weight (lbs)">
@@ -174,454 +133,37 @@ body.dark #darkToggle{animation:pulseHint 4s infinite;}
             <input type="number" id="reps" min="1" step="1" placeholder="Reps">
           </div>
         </div>
-
         <button id="logBtn" class="btn btn-primary">Log Set</button>
         <button id="nextExerciseBtn" class="btn btn-secondary">Next Exercise</button>
         <button id="resetBtn" class="btn btn-reset">Reset Workout</button>
-
         <div class="sets-history">
           <h3>Today's Sets</h3>
           <div id="setsList"></div>
         </div>
       </div>
-
       <div class="summary" id="summaryBox">
         <h3>Workout Summary</h3>
         <div id="summaryText">Start your first exercise to begin tracking.</div>
         <div class="notice">Autosaves locally. Export when finished.</div>
       </div>
-
       <button id="exportBtn" class="btn btn-export">Export (JSON + AI + CSV)</button>
-
     </div>
   </div>
   <div class="footer-space"></div>
-
-  <!-- Floating Theme Toggle -->
-  <button id="darkToggle" aria-label="Toggle dark mode">
-    <span id="themeIcon">🌙</span>
-    <span id="themeLabel">Dark</span>
-  </button>
-
+  <button id="darkToggle" aria-label="Toggle dark mode"><span id="themeIcon">🌙</span><span id="themeLabel">Dark</span></button>
 <script>
-/* ------------------ STATE ------------------ */
-let session = JSON.parse(localStorage.getItem('wt_session')) || { exercises:[], startedAt:null };
-let currentExercise = JSON.parse(localStorage.getItem('wt_currentExercise')) || null;
+let session=JSON.parse(localStorage.getItem('wt_session'))||{exercises:[],startedAt:null};
+let currentExercise=JSON.parse(localStorage.getItem('wt_currentExercise'))||null;
+let restTimer=null,restSecondsRemaining=0,restStartMs=0,restSetIndex=null;
+const todayEl=document.getElementById('today'),darkToggle=document.getElementById('darkToggle'),themeIcon=document.getElementById('themeIcon'),themeLabel=document.getElementById('themeLabel'),exerciseSelect=document.getElementById('exerciseSelect'),interfaceBox=document.getElementById('interface'),exerciseNameEl=document.getElementById('exerciseName'),setCounterEl=document.getElementById('setCounter'),weightInput=document.getElementById('weight'),repsInput=document.getElementById('reps'),logBtn=document.getElementById('logBtn'),setsList=document.getElementById('setsList'),summaryText=document.getElementById('summaryText'),nextExerciseBtn=document.getElementById('nextExerciseBtn'),resetBtn=document.getElementById('resetBtn'),exportBtn=document.getElementById('exportBtn'),restBox=document.getElementById('restBox'),restDisplay=document.getElementById('restDisplay'),useTimerEl=document.getElementById('useTimer'),restSecsInput=document.getElementById('restSecsInput'),addExerciseBtn=document.getElementById('addExercise'),customExerciseInput=document.getElementById('customExercise');
 
-let restTimer = null;
-let restSecondsRemaining = 0;
-let restStartMs = 0;
-let restSetIndex = null; // which set we are timing for
-const DEFAULT_REST = 90;
-
-/* ------------------ ELEMENTS ------------------ */
-const todayEl = document.getElementById('today');
-const darkToggle = document.getElementById('darkToggle');
-const themeIcon = document.getElementById('themeIcon');
-const themeLabel = document.getElementById('themeLabel');
-
-const exerciseSelect = document.getElementById('exerciseSelect');
-const interfaceBox = document.getElementById('interface');
-const exerciseNameEl = document.getElementById('exerciseName');
-const setCounterEl = document.getElementById('setCounter');
-
-const weightInput = document.getElementById('weight');
-const repsInput = document.getElementById('reps');
-const logBtn = document.getElementById('logBtn');
-const setsList = document.getElementById('setsList');
-const summaryText = document.getElementById('summaryText');
-const nextExerciseBtn = document.getElementById('nextExerciseBtn');
-const resetBtn = document.getElementById('resetBtn');
-const exportBtn = document.getElementById('exportBtn');
-
-const restBox = document.getElementById('restBox');
-const restDisplay = document.getElementById('restDisplay');
-const useTimerEl = document.getElementById('useTimer');
-const restSecsInput = document.getElementById('restSecsInput');
-
-const addExerciseBtn = document.getElementById('addExercise');
-const customExerciseInput = document.getElementById('customExercise');
-
-/* ------------------ INIT ------------------ */
-todayEl.textContent = new Date().toLocaleDateString('en-US',{
-  weekday:'long',year:'numeric',month:'long',day:'numeric'
-});
-
-if(currentExercise){ showInterface(); rebuildSetsList(); updateSetCounter(); }
+// init
+todayEl.textContent=new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+if(currentExercise){interfaceBox.classList.remove('hidden');exerciseNameEl.textContent=currentExercise.name;currentExercise.sets.forEach((s,i)=>addSetElement(s,i));setCounterEl.textContent=currentExercise.nextSet;} 
 updateSummary();
 
-/* ------------------ THEME ------------------ */
-if(localStorage.getItem('wt_theme')==='dark'){
-  document.body.classList.add('dark');
-  themeIcon.textContent='☀️'; themeLabel.textContent='Light';
-}
-darkToggle.addEventListener('click',()=>{
-  document.body.classList.toggle('dark');
-  const dark=document.body.classList.contains('dark');
-  themeIcon.textContent=dark?'☀️':'🌙';
-  themeLabel.textContent=dark?'Light':'Dark';
-  localStorage.setItem('wt_theme',dark?'dark':'light');
-});
+// theme
+darkToggle.addEventListener('click',()=>{document.body.classList.toggle('dark');const d=document.body.classList.contains('dark');themeIcon.textContent=d?'☀️':'🌙';themeLabel.textContent=d?'Light':'Dark';localStorage.setItem('wt_theme',d?'dark':'light');});
+if(localStorage.getItem('wt_theme')==='dark'){document.body.classList.add('dark');themeIcon.textContent='☀️';themeLabel.textContent='Light';}
 
-/* ------------------ CUSTOM EXERCISE ------------------ */
-addExerciseBtn.addEventListener('click',()=>{
-  const name=customExerciseInput.value.trim();
-  if(!name) return;
-  const opt=document.createElement('option');
-  opt.textContent=name;
-  exerciseSelect.appendChild(opt);
-  exerciseSelect.value=name;
-  customExerciseInput.value='';
-  startExercise(name);
-});
-
-/* ------------------ SELECT EXERCISE ------------------ */
-exerciseSelect.addEventListener('change',e=>{
-  if(e.target.value) startExercise(e.target.value);
-});
-
-function startExercise(name){
-  if(!session.startedAt) session.startedAt=new Date().toISOString();
-  if(currentExercise && currentExercise.sets.length){
-    pushOrMergeExercise(currentExercise);
-  }
-  currentExercise={ name, sets:[], nextSet:1 };
-  saveState();
-  showInterface();
-  rebuildSetsList();
-  updateSetCounter();
-  weightInput.focus();
-}
-
-function showInterface(){
-  interfaceBox.classList.remove('hidden');
-  exerciseNameEl.textContent=currentExercise.name;
-}
-
-/* ------------------ LOG SET ------------------ */
-logBtn.addEventListener('click',()=>{
-  const w=parseInt(weightInput.value);
-  const r=parseInt(repsInput.value);
-  if(!w||!r){ alert('Enter weight & reps'); return; }
-
-  const useTimer = useTimerEl.checked;
-  const planned = parseInt(restSecsInput.value)||DEFAULT_REST;
-
-  const setObj={
-    set: currentExercise.nextSet,
-    weight:w,
-    reps:r,
-    time:new Date().toLocaleTimeString(),
-    restPlanned: useTimer ? planned : null,
-    restActual: null
-  };
-
-  currentExercise.sets.push(setObj);
-  const idx=currentExercise.sets.length-1;
-  addSetElement(setObj,idx);
-
-  currentExercise.nextSet++;
-  updateSetCounter();
-
-  weightInput.select();
-  repsInput.value=''; repsInput.focus();
-
-  if(useTimer){
-    startRest(planned, idx);
-  }
-
-  updateSummary();
-  saveState();
-});
-
-function addSetElement(setObj,index){
-  const item=document.createElement('div');
-  item.className='set-item';
-  item.dataset.index=index;
-
-  const restInfo = setObj.restActual!=null
-    ? ` • Rest: ${formatSec(setObj.restActual)}`
-    : (setObj.restPlanned?` • Rest planned: ${formatSec(setObj.restPlanned)}`:'');
-  item.innerHTML=`
-    <div style="flex:1;min-width:150px;">
-      <div class="set-label">${currentExercise.name} – Set ${setObj.set}</div>
-      <div class="set-meta">${setObj.weight} lbs × ${setObj.reps} reps${restInfo}</div>
-    </div>
-    <div class="set-actions">
-      <button class="btn-mini edit" data-action="edit">Edit</button>
-      <button class="btn-mini del" data-action="del">Del</button>
-    </div>
-  `;
-  setsList.appendChild(item);
-}
-
-function rebuildSetsList(){
-  setsList.innerHTML='';
-  if(!currentExercise) return;
-  currentExercise.sets.forEach((s,i)=> addSetElement(s,i));
-}
-
-/* ------------------ EDIT / DELETE ------------------ */
-setsList.addEventListener('click',e=>{
-  const btn=e.target.closest('button'); if(!btn) return;
-  const action=btn.dataset.action;
-  const item=btn.closest('.set-item');
-  const idx=parseInt(item.dataset.index);
-
-  if(action==='del') deleteSet(idx);
-  else if(action==='edit') openEditForm(item,idx);
-});
-
-function deleteSet(idx){
-  if(!confirm('Delete this set?')) return;
-  currentExercise.sets.splice(idx,1);
-  renumberSets();
-  rebuildSetsList();
-  updateSetCounter();
-  updateSummary();
-  saveState();
-}
-
-function openEditForm(item,idx){
-  if(item.querySelector('.edit-form')) return;
-  const s=currentExercise.sets[idx];
-
-  const form=document.createElement('div');
-  form.className='edit-form';
-  form.innerHTML=`
-    <div class="row">
-      <input type="number" id="editW" value="${s.weight}" min="0">
-      <input type="number" id="editR" value="${s.reps}" min="1">
-    </div>
-    <div class="row">
-      <input type="number" id="editRestPlanned" value="${s.restPlanned??''}" min="0" placeholder="Rest planned (sec)">
-      <input type="number" id="editRestActual" value="${s.restActual??''}" min="0" placeholder="Rest actual (sec)">
-    </div>
-    <div class="row2">
-      <button class="btn-mini edit" data-edit-save>Save</button>
-      <button class="btn-mini del" data-edit-cancel>Cancel</button>
-    </div>
-  `;
-  item.appendChild(form);
-
-  form.addEventListener('click',ev=>{
-    if(ev.target.dataset.editSave){
-      const newW=parseInt(form.querySelector('#editW').value);
-      const newR=parseInt(form.querySelector('#editR').value);
-      const newPlanned = form.querySelector('#editRestPlanned').value===''?null:parseInt(form.querySelector('#editRestPlanned').value);
-      const newActual = form.querySelector('#editRestActual').value===''?null:parseInt(form.querySelector('#editRestActual').value);
-      if(!newW||!newR){ alert('Enter valid numbers'); return; }
-
-      const obj=currentExercise.sets[idx];
-      obj.weight=newW; obj.reps=newR;
-      obj.restPlanned=newPlanned;
-      obj.restActual=newActual;
-
-      updateSummary();
-      saveState();
-      rebuildSetsList();
-    }
-    if(ev.target.dataset.editCancel){ form.remove(); }
-  });
-}
-
-function renumberSets(){
-  currentExercise.sets.forEach((s,i)=> s.set=i+1);
-  currentExercise.nextSet=currentExercise.sets.length+1;
-}
-
-function updateSetCounter(){
-  if(!currentExercise) return;
-  setCounterEl.textContent=currentExercise.nextSet;
-  exerciseNameEl.textContent=currentExercise.name;
-}
-
-/* ------------------ NEXT EXERCISE ------------------ */
-nextExerciseBtn.addEventListener('click',()=>{
-  if(currentExercise && currentExercise.sets.length){ pushOrMergeExercise(currentExercise); }
-  currentExercise=null;
-  exerciseSelect.value='';
-  interfaceBox.classList.add('hidden');
-  weightInput.value=''; repsInput.value='';
-  updateSummary();
-  saveState();
-});
-
-function pushOrMergeExercise(ex){
-  const existing=session.exercises.find(e=>e.name===ex.name);
-  if(existing){
-    ex.sets.forEach(s=>{
-      existing.sets.push({
-        set: existing.sets.length+1,
-        weight:s.weight,reps:s.reps,time:s.time,
-        restPlanned:s.restPlanned,restActual:s.restActual
-      });
-    });
-  }else{
-    session.exercises.push({
-      name:ex.name,
-      sets:ex.sets.map(s=>({...s}))
-    });
-  }
-}
-
-/* ------------------ REST TIMER ------------------ */
-function startRest(seconds,setIndex){
-  stopRest();
-  restSecondsRemaining=seconds;
-  restStartMs=Date.now();
-  restSetIndex=setIndex;
-  updateRestDisplay();
-  restBox.classList.remove('hidden');
-  restTimer=setInterval(()=>{
-    restSecondsRemaining--;
-    updateRestDisplay();
-    if(restSecondsRemaining<=0){
-      finishRest();
-      restDisplay.textContent='Ready!';
-      setTimeout(()=>restBox.classList.add('hidden'),1500);
-    }
-  },1000);
-}
-
-function stopRest(){
-  if(restTimer){ clearInterval(restTimer); restTimer=null; }
-}
-
-function finishRest(){
-  stopRest();
-  const elapsed = Math.round((Date.now()-restStartMs)/1000);
-  if(currentExercise && restSetIndex!=null && currentExercise.sets[restSetIndex]){
-    currentExercise.sets[restSetIndex].restActual = elapsed;
-    saveState();
-    rebuildSetsList(); // update UI rest meta
-  }
-  restSetIndex=null;
-}
-
-function updateRestDisplay(){
-  const m=Math.floor(restSecondsRemaining/60);
-  const s=restSecondsRemaining%60;
-  restDisplay.textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-}
-
-restBox.addEventListener('click',()=>{
-  // user cancelled
-  finishRest();
-  restBox.classList.add('hidden');
-});
-
-/* ------------------ RESET WORKOUT ------------------ */
-resetBtn.addEventListener('click',()=>{
-  if(!confirm('Reset entire workout?')) return;
-  stopRest();
-  session={exercises:[],startedAt:null};
-  currentExercise=null;
-  exerciseSelect.value='';
-  interfaceBox.classList.add('hidden');
-  setsList.innerHTML='';
-  weightInput.value=''; repsInput.value='';
-  updateSummary();
-  saveState();
-});
-
-/* ------------------ SUMMARY ------------------ */
-function updateSummary(){
-  let totalSets=0;
-  let lines=[];
-  session.exercises.forEach(ex=>{
-    totalSets+=ex.sets.length;
-    lines.push(`${ex.name}: ${ex.sets.length} sets`);
-  });
-  if(currentExercise && currentExercise.sets.length){
-    totalSets+=currentExercise.sets.length;
-    lines.push(`${currentExercise.name}: ${currentExercise.sets.length} sets (in progress)`);
-  }
-  summaryText.innerHTML = totalSets===0
-    ? 'Start your first exercise to begin tracking.'
-    : `<strong>Total Sets: ${totalSets}</strong><br>${lines.join('<br>')}`;
-}
-
-/* ------------------ EXPORT ------------------ */
-exportBtn.addEventListener('click',()=>{
-  const exportExercises=session.exercises.map(e=>({...e,sets:[...e.sets]}));
-  if(currentExercise && currentExercise.sets.length){
-    const exExisting=exportExercises.find(e=>e.name===currentExercise.name);
-    if(exExisting){
-      currentExercise.sets.forEach(s=>{
-        exExisting.sets.push({set:exExisting.sets.length+1,weight:s.weight,reps:s.reps,time:s.time,restPlanned:s.restPlanned,restActual:s.restActual});
-      });
-    }else{
-      exportExercises.push({name:currentExercise.name,sets:currentExercise.sets.map(s=>({...s}))});
-    }
-  }
-  if(!exportExercises.length){ alert('No workout data yet.'); return; }
-  const totalSets=exportExercises.reduce((sum,e)=>sum+e.sets.length,0);
-  const payload={
-    date:new Date().toISOString().split('T')[0],
-    timestamp:new Date().toISOString(),
-    totalExercises:exportExercises.length,
-    totalSets,
-    exercises:exportExercises
-  };
-
-  // JSON
-  triggerDownload(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}),`workout_${payload.date}.json`);
-
-  // CSV (added rest columns)
-  let csv='Exercise,Set,Weight,Reps,Time,RestPlanned(sec),RestActual(sec)\n';
-  exportExercises.forEach(ex=>{
-    ex.sets.forEach(s=>{
-      csv+=`${ex.name},${s.set},${s.weight},${s.reps},${s.time},${s.restPlanned??''},${s.restActual??''}\n`;
-    });
-  });
-  triggerDownload(new Blob([csv],{type:'text/csv'}),`workout_${payload.date}.csv`);
-
-  // AI text
-  let aiText=`WORKOUT DATA - ${payload.date}\n\n`;
-  exportExercises.forEach(ex=>{
-    aiText+=`${ex.name}:\n`;
-    ex.sets.forEach(s=>{
-      const rp=s.restPlanned!=null?` (planned ${formatSec(s.restPlanned)}`:'';
-      const ra=s.restActual!=null?`${rp?'; ': ' ('}actual ${formatSec(s.restActual)})`:(rp?')':'');
-      aiText+=`  Set ${s.set}: ${s.weight} lbs × ${s.reps} reps${rp||ra? (rp?rp:'')+(ra?ra:''):''}\n`;
-    });
-    aiText+='\n';
-  });
-  aiText+=`Summary: ${payload.totalExercises} exercises, ${payload.totalSets} total sets.\n\n`;
-  aiText+='Please analyze progress vs previous sessions, suggest next targets, identify weak points, and recommend optimal weight/rep progressions.';
-
-  if(navigator.clipboard){
-    navigator.clipboard.writeText(aiText).then(()=>alert('Exported JSON + CSV. AI summary copied to clipboard ✅')).catch(()=>alert('Exported files. (Clipboard copy failed)'));
-  }else{
-    alert('Exported JSON + CSV. Copy AI summary manually:\n\n'+aiText);
-  }
-});
-
-function triggerDownload(blob,filename){
-  const link=document.createElement('a');
-  link.href=URL.createObjectURL(blob);
-  link.download=filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
-
-/* ------------------ SAVE / LOAD ------------------ */
-function saveState(){
-  localStorage.setItem('wt_session',JSON.stringify(session));
-  localStorage.setItem('wt_currentExercise',JSON.stringify(currentExercise));
-}
-
-/* ------------------ UTILS ------------------ */
-function formatSec(sec){
-  const m=Math.floor(sec/60), s=sec%60;
-  return `${m}m ${s}s`;
-}
-
-/* ------------------ SHORTCUTS ------------------ */
-repsInput.addEventListener('keydown',e=>{ if(e.key==='Enter') logBtn.click(); });
-weightInput.addEventListener('keydown',e=>{ if(e.key==='Enter') repsInput.focus(); });
-</script>
-</body>
-</html>
+// custom
