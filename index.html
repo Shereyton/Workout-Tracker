@@ -234,7 +234,11 @@ body.dark #darkToggle{
         <h3>Workout Summary</h3>
         <div id="summaryText">Start your first exercise to begin tracking.</div>
         <div class="notice">Autosaves locally. Export when finished.</div>
-      </div>
+      </div> <div style="margin-top:12px; display:flex; gap:8px;">
+    <button id="summaryEditBtn" class="btn btn-secondary" style="flex:1;">Edit Workout</button>
+    <button id="summaryResetBtn" class="btn btn-reset"   style="flex:1;">Reset Workout</button>
+  </div>
+</div>
 
       <button id="exportBtn" class="btn btn-export">Export (JSON + AI + CSV)</button>
 
@@ -275,6 +279,8 @@ const summaryText      = document.getElementById('summaryText');
 const nextExerciseBtn  = document.getElementById('nextExerciseBtn');
 const resetBtn         = document.getElementById('resetBtn');
 const exportBtn        = document.getElementById('exportBtn');
+const summaryEditBtn = document.getElementById('summaryEditBtn');
+const summaryResetBtn = document.getElementById('summaryResetBtn');
 const restBox          = document.getElementById('restBox');
 const restDisplay      = document.getElementById('restDisplay');
 const useTimerEl       = document.getElementById('useTimer');
@@ -718,3 +724,23 @@ weightInput.addEventListener('keydown', e => {
 </script>
 </body>
 </html>
+// --- Edit Workout from Summary ---
+summaryEditBtn.addEventListener('click', () => {
+  if (currentExercise && currentExercise.sets.length) {
+    showInterface();
+  } else if (session.exercises.length) {
+    currentExercise = session.exercises.pop();
+    saveState();
+    showInterface();
+    rebuildSetsList();
+    updateSetCounter();
+  } else {
+    alert('No workout in progress to edit.');
+  }
+});
+
+// --- Reset Workout from Summary ---
+summaryResetBtn.addEventListener('click', () => {
+  if (!confirm('Reset entire workout? This will delete ALL your sets. Are you sure?')) return;
+  resetBtn.click();
+});
