@@ -176,7 +176,6 @@ body.dark #darkToggle{
     </div>
 
     <div class="section">
-
       <!-- Add Custom Exercise -->
       <div class="inline-row" style="margin-bottom:6px;">
         <input type="text" id="customExercise" placeholder="Add Custom Exercise" class="field">
@@ -217,6 +216,8 @@ body.dark #darkToggle{
 
         <div class="inline-row">
           <input type="number" id="weight" min="0" step="1" class="field" placeholder="Weight (lbs)">
+        </div>
+        <div class="inline-row">
           <input type="number" id="reps"   min="1" step="1" class="field" placeholder="Reps">
         </div>
 
@@ -230,18 +231,20 @@ body.dark #darkToggle{
         </div>
       </div>
 
+      <!-- Summary -->
       <div class="summary" id="summaryBox">
         <h3>Workout Summary</h3>
         <div id="summaryText">Start your first exercise to begin tracking.</div>
         <div class="notice">Autosaves locally. Export when finished.</div>
-      </div> <div style="margin-top:12px; display:flex; gap:8px;">
-    <button id="summaryEditBtn" class="btn btn-secondary" style="flex:1;">Edit Workout</button>
-    <button id="summaryResetBtn" class="btn btn-reset"   style="flex:1;">Reset Workout</button>
-  </div>
-</div>
+
+        <!-- Summary-only controls -->
+        <div style="margin-top:12px; display:flex; gap:8px;">
+          <button id="summaryEditBtn" class="btn btn-secondary" style="flex:1;">Edit Workout</button>
+          <button id="summaryResetBtn" class="btn btn-reset" style="flex:1;">Reset Workout</button>
+        </div>
+      </div>
 
       <button id="exportBtn" class="btn btn-export">Export (JSON + AI + CSV)</button>
-
     </div>
   </div>
   <div class="footer-space"></div>
@@ -279,33 +282,40 @@ const summaryText      = document.getElementById('summaryText');
 const nextExerciseBtn  = document.getElementById('nextExerciseBtn');
 const resetBtn         = document.getElementById('resetBtn');
 const exportBtn        = document.getElementById('exportBtn');
-const summaryEditBtn = document.getElementById('summaryEditBtn');
-const summaryResetBtn = document.getElementById('summaryResetBtn');
 const restBox          = document.getElementById('restBox');
 const restDisplay      = document.getElementById('restDisplay');
 const useTimerEl       = document.getElementById('useTimer');
 const restSecsInput    = document.getElementById('restSecsInput');
 const addExerciseBtn   = document.getElementById('addExercise');
 const customExerciseInput = document.getElementById('customExercise');
+const summaryEditBtn   = document.getElementById('summaryEditBtn');
+const summaryResetBtn  = document.getElementById('summaryResetBtn');
+const summaryBox       = document.getElementById('summaryBox');
 
 /* ------------------ INIT ------------------ */
 todayEl.textContent = new Date().toLocaleDateString('en-US',{
   weekday:'long',year:'numeric',month:'long',day:'numeric'
 });
 
-if (currentExercise) {
-  showInterface();
-  rebuildSetsList();
-  updateSetCounter();
-}
-updateSummary();
-
-/* ------------------ THEME ------------------ */
-if(localStorage.getItem('wt_theme') === 'dark'){
+if (localStorage.getItem('wt_theme') === 'dark'){
   document.body.classList.add('dark');
   themeIcon.textContent = '☀️';
   themeLabel.textContent = 'Light';
 }
+
+if (currentExercise && currentExercise.sets && currentExercise.sets.length > 0){
+  showInterface();
+  rebuildSetsList();
+  updateSetCounter();
+  syncSummaryResetVisibility();
+} else {
+  // make sure we're on summary
+  hideInterface();
+  syncSummaryResetVisibility();
+}
+updateSummary();
+
+/* ------------------ THEME ------------------ */
 darkToggle.addEventListener('click', () => {
   document.body.classList.toggle('dark');
   const dark = document.body.classList.contains('dark');
@@ -344,10 +354,20 @@ function startExercise(name){
   weightInput.focus();
 }
 
+/* ------------------ UI HELPERS ------------------ */
 function showInterface(){
-  document.getElementById('summaryResetBtn').style.display = 'none';
   interfaceBox.classList.remove('hidden');
   exerciseNameEl.textContent = currentExercise.name;
+  syncSummaryResetVisibility();
+}
+function hideInterface(){
+  interfaceBox.classList.add('hidden');
+  syncSummaryResetVisibility();
+}
+function syncSummaryResetVisibility(){
+  // Only show the summary reset button when the interface is hidden (home screen)
+  const onHome = interfaceBox.classList.contains('hidden');
+  summaryResetBtn.style.display = onHome ? 'inline-block' : 'none';
 }
 
 /* ------------------ LOG SET ------------------ */
@@ -386,6 +406,7 @@ logBtn.addEventListener('click', function(){
 
   updateSummary();
   saveState();
+  syncSummaryResetVisibility();
 });
 
 function addSetElement(setObj,index){
@@ -483,14 +504,11 @@ function openEditForm(item, idx){
       saveState();
       rebuildSetsList();
       updateSummary();
+      form.remove();
     }
     if (ev.target.hasAttribute('data-edit-cancel')) {
       form.remove();
       return;
-    }
-    // close form after save
-    if (ev.target.hasAttribute('data-edit-save')) {
-      form.remove();
     }
   });
 }
@@ -513,7 +531,7 @@ nextExerciseBtn.addEventListener('click', () => {
   }
   currentExercise = null;
   exerciseSelect.value = '';
-  interfaceBox.classList.add('hidden');
+  hideInterface();
   weightInput.value = '';
   repsInput.value = '';
 
@@ -524,6 +542,7 @@ nextExerciseBtn.addEventListener('click', () => {
 
   updateSummary();
   saveState();
+  syncSummaryResetVisibility();
 });
 
 function pushOrMergeExercise(ex){
@@ -592,18 +611,10 @@ restBox.addEventListener('click', function(){
   restBox.classList.add('hidden');
 });
 
-/* ------------------ RESET WORKOUT ------------------ */
+/* ------------------ RESET WORKOUT (inside interface) ------------------ */
 resetBtn.addEventListener('click', ()=>{
-  if(!confirm('Reset entire workout?')) return;
-  stopRest();
-  session = { exercises: [], startedAt:null };
-  currentExercise = null;
-  exerciseSelect.value='';
-  interfaceBox.classList.add('hidden');
-  setsList.innerHTML='';
-  weightInput.value=''; repsInput.value='';
-  updateSummary();
-  saveState();
+  if(!confirm('Reset entire workout? This will delete ALL your sets. Are you sure?')) return;
+  fullReset();
 });
 
 /* ------------------ SUMMARY ------------------ */
@@ -625,7 +636,47 @@ function updateSummary(){
     summaryText.textContent = 'Start your first exercise to begin tracking.';
   } else {
     summaryText.innerHTML = `<strong>Total Sets: ${totalSets}</strong><br>${lines.join('<br>')}`;
-  }document.getElementById('summaryResetBtn').style.display = 'block';
+  }
+}
+
+/* ------------------ SUMMARY BUTTONS ------------------ */
+// Edit from summary
+summaryEditBtn.addEventListener('click', () => {
+  if (currentExercise && currentExercise.sets.length) {
+    showInterface();
+    rebuildSetsList();
+    updateSetCounter();
+  } else if (session.exercises.length) {
+    // pull the last completed exercise back out to continue editing
+    currentExercise = session.exercises.pop();
+    saveState();
+    showInterface();
+    rebuildSetsList();
+    updateSetCounter();
+  } else {
+    alert('No workout in progress to edit.');
+  }
+  syncSummaryResetVisibility();
+});
+
+// Reset from summary (home)
+summaryResetBtn.addEventListener('click', () => {
+  if (!confirm('Reset entire workout? This will delete ALL your sets. Are you sure?')) return;
+  fullReset();
+});
+
+// Full reset function
+function fullReset(){
+  stopRest();
+  session = { exercises: [], startedAt:null };
+  currentExercise = null;
+  exerciseSelect.value='';
+  hideInterface();
+  setsList.innerHTML='';
+  weightInput.value=''; repsInput.value='';
+  updateSummary();
+  saveState();
+  syncSummaryResetVisibility();
 }
 
 /* ------------------ EXPORT ------------------ */
@@ -714,63 +765,13 @@ function formatSec(sec){
   const m=Math.floor(sec/60), s=sec%60;
   return `${m}m ${s}s`;
 }
-editBtn.addEventListener('click', () => {
-  if (!exerciseInput.value || !setsInput.value || !repsInput.value || !weightInput.value) {
-    alert('Please fill in all fields.');
-    return;
-  }
 
-  const exercise = {
-    name: exerciseInput.value,
-    sets: parseInt(setsInput.value),
-    reps: parseInt(repsInput.value),
-    weight: parseFloat(weightInput.value)
-  };
-
-  currentExercise.sets.push(exercise);
-  saveState();
-  rebuildSetsList();
-  updateSetCounter();
-
-  // Clear inputs
-  exerciseInput.value = '';
-  setsInput.value = '';
-  repsInput.value = '';
-  weightInput.value = '';
-  exerciseInput.focus();
-});
 /* ------------------ SHORTCUTS ------------------ */
 repsInput.addEventListener('keydown', e => {
   if(e.key==='Enter') logBtn.click();
 });
 weightInput.addEventListener('keydown', e => {
   if(e.key==='Enter') repsInput.focus();
-});// --- Edit Workout from Summary ---
-summaryEditBtn.addEventListener('click', () => {
-  if (currentExercise && currentExercise.sets.length) {
-    // if you’re already mid-set, just pop back into the interface
-    showInterface();
-    document.getElementById('summaryResetBtn').style.display = 'block';
-    rebuildSetsList();
-    updateSetCounter();
-  } else if (session.exercises.length) {
-    // otherwise grab your last exercise from the session history
-    currentExercise = session.exercises.pop();
-    saveState();
-    showInterface();
-    rebuildSetsList();
-    updateSetCounter();
-    document.getElementById('summaryResetBtn').style.display = 'block';
-  } else {
-    alert('No workout in progress to edit.');
-  }
-});
-});
-
-// --- Reset Workout from Summary ---
-summaryResetBtn.addEventListener('click', () => {
-  if (!confirm('Reset entire workout? This will delete ALL your sets. Are you sure?')) return;
-  resetBtn.click();
 });
 </script>
 </body>
