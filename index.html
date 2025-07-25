@@ -720,11 +720,7 @@ repsInput.addEventListener('keydown', e => {
 });
 weightInput.addEventListener('keydown', e => {
   if(e.key==='Enter') repsInput.focus();
-});
-</script>
-</body>
-</html>
-// --- Edit Workout from Summary ---
+});// --- Edit Workout from Summary ---
 summaryEditBtn.addEventListener('click', () => {
   if (currentExercise && currentExercise.sets.length) {
     showInterface();
@@ -744,3 +740,6 @@ summaryResetBtn.addEventListener('click', () => {
   if (!confirm('Reset entire workout? This will delete ALL your sets. Are you sure?')) return;
   resetBtn.click();
 });
+</script>
+</body>
+</html>
