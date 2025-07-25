@@ -1,124 +1,709 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Quick Workout Tracker</title>
-  <style>
-    /* … your original CSS exactly as it was … */
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Workout Tracker Pro</title>
+<meta name="description" content="Lightweight mobile workout tracker with export + AI summary">
+<style>
+:root {
+  --grad-main: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+  --grad-accent: linear-gradient(135deg,#f093fb 0%,#f5576c 100%);
+  --grad-success: linear-gradient(135deg,#11998e 0%,#38ef7d 100%);
+  --grad-header: linear-gradient(135deg,#2c3e50,#34495e);
+  --danger:#dc3545;
+  --radius:20px;
+  --transition:0.25s cubic-bezier(.4,.0,.2,1);
+}
+* { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+body {
+  font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background: var(--grad-main);
+  min-height:100vh;
+  padding:10px;
+  color:#222;
+  transition: background .4s, color .3s;
+}
+body.dark { background:#181a1f; color:#f5f6fa; }
+.container {
+  max-width:520px;
+  margin:0 auto;
+  background:#fff;
+  border-radius:var(--radius);
+  box-shadow:0 12px 32px -8px rgba(0,0,0,.25);
+  overflow:hidden;
+  animation:fadeIn .4s;
+}
+body.dark .container { background:#262a33; }
+@keyframes fadeIn { from {opacity:0; transform:translateY(10px);} to {opacity:1; transform:translateY(0);} }
+
+.header {
+  position:relative;
+  padding:20px 20px 18px;
+  text-align:center;
+  background: var(--grad-header);
+  color:#fff;
+}
+.header h1 { font-size:24px; font-weight:700; margin-bottom:6px; }
+.date { font-size:13px; opacity:.85; }
+
+.section { padding:20px 20px 28px; }
+select, input[type=number], input[type=text] {
+  width:100%; font-size:16px;
+  padding:13px 14px;
+  border:2px solid #e1e8ed;
+  border-radius:14px;
+  background:#fff;
+  transition: var(--transition);
+  margin-bottom:12px;
+  font-weight:500;
+}
+body.dark select, body.dark input {
+  background:#1e2127; border-color:#39414d; color:#f5f6fa;
+}
+select:focus, input:focus { outline:none; border-color:#667eea; }
+
+.inline-row { display:flex; gap:10px; }
+.inline-row .field { flex:1; }
+
+.current-exercise {
+  background: var(--grad-accent);
+  color:#fff;
+  padding:16px 14px;
+  border-radius:16px;
+  margin:8px 0 18px;
+  text-align:center;
+  box-shadow:0 6px 18px -6px rgba(245,90,150,.45);
+}
+.current-exercise h2 { font-size:20px; margin-bottom:4px; }
+.current-exercise .set-info { font-size:13px; opacity:.95; }
+
+.btn {
+  width:100%; border:none; cursor:pointer;
+  padding:15px 16px; font-size:16px; font-weight:600;
+  border-radius:14px; margin-bottom:12px;
+  transition: var(--transition);
+  letter-spacing:.3px;
+  display:inline-flex; justify-content:center; align-items:center;
+  position:relative; overflow:hidden;
+}
+.btn:active { transform:scale(.97); }
+.btn-primary { background:var(--grad-main); color:#fff; }
+.btn-primary:hover { filter:brightness(1.05); }
+.btn-secondary { background:#f0f3f6; color:#555; }
+.btn-secondary:hover { background:#e2e8ef; }
+body.dark .btn-secondary { background:#313641; color:#cfd4dc; }
+body.dark .btn-secondary:hover { background:#3c4350; }
+.btn-export { background:var(--grad-success); color:#fff; }
+.btn-export:hover { filter:brightness(1.06); }
+.btn-reset { background:#6c757d; color:#fff; }
+.btn-reset:hover { background:#5a6268; }
+body.dark .btn-reset { background:#505864; }
+body.dark .btn-reset:hover { background:#616c7b; }
+
+.sets-history { margin-top:20px; }
+.sets-history h3 { font-size:16px; margin-bottom:12px; letter-spacing:.5px; }
+.set-item {
+  background:#f8f9fa;
+  border:1px solid #e5e9ef;
+  padding:10px 14px;
+  border-radius:10px;
+  margin-bottom:8px;
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+  font-size:14px;
+}
+body.dark .set-item { background:#20242a; border-color:#2c323a; }
+.set-label { font-weight:600; }
+.set-meta { opacity:.85; }
+.set-actions { display:flex; gap:6px; }
+
+.btn-mini {
+  border:none; padding:4px 8px;
+  font-size:12px; border-radius:6px;
+  cursor:pointer; font-weight:600;
+  transition: var(--transition);
+}
+.btn-mini.edit { background:#ffc107; color:#222; }
+.btn-mini.edit:hover { background:#ffb300; }
+.btn-mini.del { background:var(--danger); color:#fff; }
+.btn-mini.del:hover { background:#b3202d; }
+
+.edit-form {
+  width:100%; background:#e3f2fd;
+  padding:8px 10px 10px; border-radius:8px;
+  margin-top:6px; display:flex; flex-direction:column; gap:8px;
+}
+body.dark .edit-form { background:#29374a; }
+.edit-form .row { display:flex; gap:8px; }
+.edit-form input { margin:0; font-size:14px; padding:8px; border-radius:6px; }
+.edit-form .row2 { display:flex; gap:6px; }
+.edit-form .row2 button { flex:1; }
+
+.rest-timer {
+  background:linear-gradient(135deg,#ff9a9e 0%,#fecfef 100%);
+  color:#2c3e50; padding:15px 18px;
+  border-radius:14px;
+  text-align:center;
+  font-weight:600;
+  margin-bottom:16px;
+  cursor:pointer;
+  user-select:none;
+  animation:fadeIn .35s;
+}
+body.dark .rest-timer { background:#3a3440; color:#f1d9e8; }
+.timer-display { font-size:26px; font-weight:700; margin-top:4px; }
+
+.summary {
+  margin-top:26px;
+  background:#f8f9fa;
+  border:1px solid #e6eaef;
+  padding:16px 18px;
+  border-radius:16px;
+  font-size:14px;
+  line-height:1.5;
+  word-break:break-word;
+}
+body.dark .summary { background:#20242a; border-color:#2d333c; }
+.summary h3 { margin:0 0 10px; font-size:16px; }
+
+.notice { font-size:12px; opacity:.65; margin-top:4px; }
+
+.badge {
+  display:inline-block;
+  background:#edf2ff;
+  color:#344675;
+  padding:2px 8px;
+  font-size:11px;
+  border-radius:999px;
+  margin-left:6px;
+  font-weight:600;
+}
+body.dark .badge { background:#303d52; color:#b8c8e6; }
+
+.hidden { display:none !important; }
+
+.footer-space { height:70px; }
+
+/* === Floating Theme Toggle (Bottom-Right FAB) === */
+#darkToggle {
+  position:fixed;
+  bottom:calc(14px + env(safe-area-inset-bottom));
+  right:14px;
+  z-index:1000;
+  background:rgba(255,255,255,0.9);
+  color:#222;
+  padding:12px 15px;
+  border:none;
+  border-radius:18px;
+  font-size:14px;
+  font-weight:600;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  box-shadow:0 8px 24px -6px rgba(0,0,0,.3);
+  cursor:pointer;
+  backdrop-filter: blur(6px);
+  transition:var(--transition);
+}
+#darkToggle:active { transform:scale(.94); }
+#darkToggle:hover { background:#fff; }
+body.dark #darkToggle {
+  background:rgba(40,43,50,0.9);
+  color:#f5f6fa;
+  box-shadow:0 8px 24px -6px rgba(0,0,0,.6);
+}
+#darkToggle small {
+  font-size:11px;
+  opacity:.65;
+  font-weight:500;
+  letter-spacing:.3px;
+}
+
+/* Compact on very small screens */
+@media (max-width:380px){
+  #darkToggle { padding:10px 12px; font-size:13px; }
+}
+
+@keyframes pulseHint {
+  0% { box-shadow:0 0 0 0 rgba(255,255,255,.45); }
+  70% { box-shadow:0 0 0 14px rgba(255,255,255,0); }
+  100% { box-shadow:0 0 0 0 rgba(255,255,255,0); }
+}
+body.dark #darkToggle { animation:pulseHint 4s infinite; }
+
+/* (Optional) If you prefer top-right placement, comment out the FAB block above and use:
+#darkToggle {
+  position:absolute;
+  top:12px;
+  right:12px;
+  background:rgba(255,255,255,0.18);
+  color:#fff;
+}
+body.dark #darkToggle { background:rgba(255,255,255,0.25); color:#fff; }
+*/
+</style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <h1>💪 Workout Tracker</h1>
-      <div class="date" id="currentDate"></div>
+      <h1>💪 Workout Tracker <span class="badge">Pro</span></h1>
+      <div id="today" class="date"></div>
     </div>
 
-    <div class="workout-section">
-      <div class="exercise-select">
-        <select id="exerciseSelect">
-          <option value="">Select Exercise</option>
-          <option value="bench-press">Bench Press</option>
-          <option value="incline-bench">Incline Bench Press</option>
-          <option value="squats">Squats</option>
-          <option value="bicep-curls">Straight Arm Bicep Curls</option>
-          <option value="lat-pulldown-underhand">Lat Pulldown (Underhand)</option>
-          <option value="lat-pulldown-overhand">Lat Pulldown (Overhand)</option>
-        </select>
+    <div class="section">
+
+      <!-- Add Custom Exercise -->
+      <div class="inline-row" style="margin-bottom:6px;">
+        <input type="text" id="customExercise" placeholder="Add Custom Exercise">
+        <button id="addExercise" class="btn btn-secondary" style="flex:0 0 120px; padding:12px;">Add</button>
       </div>
 
-      <div id="workoutInterface" class="hidden">
-        <!-- … current exercise display, inputs, buttons … -->
-        <button class="btn btn-primary" id="logSetBtn">Log Set</button>
-        <button class="btn btn-reset" id="resetWorkoutBtn">Reset Workout</button>
-        <button class="btn btn-secondary" id="nextExerciseBtn">Next Exercise</button>
+      <!-- Choose Exercise -->
+      <select id="exerciseSelect">
+        <option value="">Select Exercise</option>
+        <option>Bench Press</option>
+        <option>Incline Bench Press</option>
+        <option>Squats</option>
+        <option>Straight Arm Bicep Curls</option>
+        <option>Lat Pulldown (Underhand)</option>
+        <option>Lat Pulldown (Overhand)</option>
+      </select>
 
-        <div class="sets-history" id="setsHistory">
+      <!-- Interface -->
+      <div id="interface" class="hidden">
+        <div class="current-exercise">
+          <h2 id="exerciseName"></h2>
+          <div class="set-info">Set <span id="setCounter">1</span></div>
+        </div>
+
+        <div id="restBox" class="rest-timer hidden">
+          <div>Rest Time</div>
+          <div id="restDisplay" class="timer-display">01:30</div>
+          <div style="font-size:11px; margin-top:4px; opacity:.8;">Tap to cancel</div>
+        </div>
+
+        <div class="inline-row">
+          <div class="field">
+            <input type="number" id="weight" min="0" step="1" placeholder="Weight (lbs)">
+          </div>
+          <div class="field">
+            <input type="number" id="reps" min="1" step="1" placeholder="Reps">
+          </div>
+        </div>
+
+        <button id="logBtn" class="btn btn-primary">Log Set</button>
+        <button id="nextExerciseBtn" class="btn btn-secondary">Next Exercise</button>
+        <button id="resetBtn" class="btn btn-reset">Reset Workout</button>
+
+        <div class="sets-history">
           <h3>Today's Sets</h3>
           <div id="setsList"></div>
         </div>
       </div>
 
-      <div class="workout-summary" id="workoutSummary">
+      <div class="summary" id="summaryBox">
         <h3>Workout Summary</h3>
-        <div id="summaryContent">Start your first exercise to begin tracking!</div>
+        <div id="summaryText">Start your first exercise to begin tracking.</div>
+        <div class="notice">Autosaves locally. Export when finished.</div>
       </div>
 
-      <button class="btn btn-export" id="exportBtn">Export Workout Data</button>
+      <button id="exportBtn" class="btn btn-export">Export (JSON + AI + CSV)</button>
+
     </div>
   </div>
+  <div class="footer-space"></div>
 
-  <script>
-    // … all your original JS up to the edit functions …
+  <!-- Floating Theme Toggle -->
+  <button id="darkToggle" aria-label="Toggle dark mode">
+    <span id="themeIcon">🌙</span>
+    <span id="themeLabel">Dark</span>
+  </button>
 
-    // === FIXED edit-form handlers ===
-    function editSet(button, setIndex) {
-      const setItem = button.closest('.set-item');
-      const currentSet = currentExerciseData.sets[setIndex];
+<script>
+/* ------------------ STATE ------------------ */
+let session = JSON.parse(localStorage.getItem('wt_session')) || {
+  exercises: [],
+  startedAt: null
+};
+let currentExercise = JSON.parse(localStorage.getItem('wt_currentExercise')) || null;
+let restTimer = null;
+let restSecondsRemaining = 0;
+const DEFAULT_REST = 90;
 
-      // hide the Edit/Delete buttons
-      setItem.querySelector('.btn-edit').style.display = 'none';
-      setItem.querySelector('.btn-delete').style.display = 'none';
+/* ------------------ ELEMENTS ------------------ */
+const todayEl = document.getElementById('today');
+const darkToggle = document.getElementById('darkToggle');
+const themeIcon = document.getElementById('themeIcon');
+const themeLabel = document.getElementById('themeLabel');
+const exerciseSelect = document.getElementById('exerciseSelect');
+const interfaceBox = document.getElementById('interface');
+const exerciseNameEl = document.getElementById('exerciseName');
+const setCounterEl = document.getElementById('setCounter');
+const weightInput = document.getElementById('weight');
+const repsInput = document.getElementById('reps');
+const logBtn = document.getElementById('logBtn');
+const setsList = document.getElementById('setsList');
+const summaryText = document.getElementById('summaryText');
+const nextExerciseBtn = document.getElementById('nextExerciseBtn');
+const resetBtn = document.getElementById('resetBtn');
+const exportBtn = document.getElementById('exportBtn');
+const restBox = document.getElementById('restBox');
+const restDisplay = document.getElementById('restDisplay');
+const addExerciseBtn = document.getElementById('addExercise');
+const customExerciseInput = document.getElementById('customExercise');
 
-      // create the form
-      const editForm = document.createElement('div');
-      editForm.className = 'edit-form';
-      editForm.innerHTML = `
-        <div class="edit-inputs">
-          <input type="number" id="editWeight" value="${currentSet.weight}" placeholder="Weight">
-          <input type="number" id="editReps"   value="${currentSet.reps}"   placeholder="Reps">
-        </div>
-        <div class="edit-buttons">
-          <button class="btn-small btn-edit" onclick="saveEdit(this, ${setIndex})">Save</button>
-          <button class="btn-small btn-delete" onclick="cancelEdit(this, ${setIndex})">Cancel</button>
-        </div>
-      `;
-      setItem.appendChild(editForm);
+/* ------------------ INIT ------------------ */
+todayEl.textContent = new Date().toLocaleDateString('en-US',{
+  weekday:'long', year:'numeric', month:'long', day:'numeric'
+});
+
+if (currentExercise) {
+  showInterface();
+  rebuildSetsList();
+  updateSetCounter();
+}
+updateSummary();
+
+/* ------------------ THEME ------------------ */
+if(localStorage.getItem('wt_theme') === 'dark'){
+  document.body.classList.add('dark');
+  themeIcon.textContent = '☀️';
+  themeLabel.textContent = 'Light';
+}
+
+darkToggle.addEventListener('click', () => {
+  document.body.classList.toggle('dark');
+  const dark = document.body.classList.contains('dark');
+  themeIcon.textContent = dark ? '☀️' : '🌙';
+  themeLabel.textContent = dark ? 'Light' : 'Dark';
+  localStorage.setItem('wt_theme', dark ? 'dark' : 'light');
+});
+
+/* ------------------ CUSTOM EXERCISE ------------------ */
+addExerciseBtn.addEventListener('click', () => {
+  const name = customExerciseInput.value.trim();
+  if(!name) return;
+  const opt = document.createElement('option');
+  opt.textContent = name;
+  exerciseSelect.appendChild(opt);
+  exerciseSelect.value = name;
+  customExerciseInput.value = '';
+  startExercise(name);
+});
+
+/* ------------------ SELECT EXERCISE ------------------ */
+exerciseSelect.addEventListener('change', e => {
+  if(e.target.value) startExercise(e.target.value);
+});
+
+function startExercise(name){
+  if(!session.startedAt) session.startedAt = new Date().toISOString();
+  if(currentExercise && currentExercise.sets.length){
+    pushOrMergeExercise(currentExercise);
+  }
+  currentExercise = { name, sets: [], nextSet: 1 };
+  saveState();
+  showInterface();
+  rebuildSetsList();
+  updateSetCounter();
+  weightInput.focus();
+}
+
+function showInterface(){
+  interfaceBox.classList.remove('hidden');
+  exerciseNameEl.textContent = currentExercise.name;
+}
+
+/* ------------------ LOG SET ------------------ */
+logBtn.addEventListener('click', () => {
+  const w = parseInt(weightInput.value);
+  const r = parseInt(repsInput.value);
+  if(!w || !r){ alert('Enter weight & reps'); return; }
+  currentExercise.sets.push({
+    set: currentExercise.nextSet,
+    weight: w,
+    reps: r,
+    time: new Date().toLocaleTimeString()
+  });
+  currentExercise.nextSet++;
+  addSetElement(currentExercise.sets.at(-1), currentExercise.sets.length-1);
+  updateSetCounter();
+  weightInput.select();
+  repsInput.value = '';
+  repsInput.focus();
+  startRest(DEFAULT_REST);
+  updateSummary();
+  saveState();
+});
+
+function addSetElement(setObj,index){
+  const item = document.createElement('div');
+  item.className='set-item';
+  item.dataset.index=index;
+  item.innerHTML = `
+    <div style="flex:1;min-width:150px;">
+      <div class="set-label">${currentExercise.name} – Set ${setObj.set}</div>
+      <div class="set-meta">${setObj.weight} lbs × ${setObj.reps} reps</div>
+    </div>
+    <div class="set-actions">
+      <button class="btn-mini edit" data-action="edit">Edit</button>
+      <button class="btn-mini del" data-action="del">Del</button>
+    </div>
+  `;
+  setsList.appendChild(item);
+}
+
+function rebuildSetsList(){
+  setsList.innerHTML='';
+  if(!currentExercise) return;
+  currentExercise.sets.forEach((s,i)=> addSetElement(s,i));
+}
+
+/* ------------------ EDIT / DELETE ------------------ */
+setsList.addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if(!btn) return;
+  const action = btn.dataset.action;
+  const item = btn.closest('.set-item');
+  const idx = parseInt(item.dataset.index);
+  if(action==='del') deleteSet(idx);
+  else if(action==='edit') openEditForm(item, idx);
+});
+
+function deleteSet(idx){
+  if(!confirm('Delete this set?')) return;
+  currentExercise.sets.splice(idx,1);
+  renumberSets();
+  rebuildSetsList();
+  updateSetCounter();
+  updateSummary();
+  saveState();
+}
+
+function openEditForm(item, idx){
+  if(item.querySelector('.edit-form')) return;
+  const s = currentExercise.sets[idx];
+  const form = document.createElement('div');
+  form.className='edit-form';
+  form.innerHTML = `
+    <div class="row">
+      <input type="number" id="editW" value="${s.weight}" min="0">
+      <input type="number" id="editR" value="${s.reps}" min="1">
+    </div>
+    <div class="row2">
+      <button class="btn-mini edit" data-edit-save>Save</button>
+      <button class="btn-mini del" data-edit-cancel>Cancel</button>
+    </div>
+  `;
+  item.appendChild(form);
+
+  form.addEventListener('click', ev=>{
+    if(ev.target.dataset.editSave){
+      const newW = parseInt(form.querySelector('#editW').value);
+      const newR = parseInt(form.querySelector('#editR').value);
+      if(!newW || !newR){ alert('Enter valid numbers'); return; }
+      currentExercise.sets[idx].weight=newW;
+      currentExercise.sets[idx].reps=newR;
+      updateSummary();
+      saveState();
+      rebuildSetsList();
     }
-
-    function saveEdit(button, setIndex) {
-      const editForm = button.closest('.edit-form');
-      const newWeight = parseInt(editForm.querySelector('#editWeight').value, 10);
-      const newReps   = parseInt(editForm.querySelector('#editReps').value, 10);
-
-      if (isNaN(newWeight) || isNaN(newReps)) {
-        alert('Please enter valid weight and reps');
-        return;
-      }
-
-      // update data
-      currentExerciseData.sets[setIndex].weight = newWeight;
-      currentExerciseData.sets[setIndex].reps   = newReps;
-
-      // update display text
-      const setItem = editForm.closest('.set-item');
-      setItem.querySelector('.set-meta').textContent = `${newWeight} lbs × ${newReps} reps`;
-
-      // cleanup
-      editForm.remove();
-      const btns = setItem.querySelector('.set-actions');
-      btns.querySelector('.btn-edit').style.display   = 'inline-block';
-      btns.querySelector('.btn-delete').style.display = 'inline-block';
-
-      updateWorkoutSummary();
+    if(ev.target.dataset.editCancel){
+      form.remove();
     }
+  });
+}
 
-    function cancelEdit(button, setIndex) {
-      const editForm = button.closest('.edit-form');
-      const setItem  = editForm.closest('.set-item');
+function renumberSets(){
+  currentExercise.sets.forEach((s,i)=> s.set = i+1);
+  currentExercise.nextSet = currentExercise.sets.length + 1;
+}
 
-      // remove form
-      editForm.remove();
+function updateSetCounter(){
+  if(!currentExercise) return;
+  setCounterEl.textContent = currentExercise.nextSet;
+  exerciseNameEl.textContent = currentExercise.name;
+}
 
-      // restore buttons
-      const btns = setItem.querySelector('.set-actions');
-      btns.querySelector('.btn-edit').style.display   = 'inline-block';
-      btns.querySelector('.btn-delete').style.display = 'inline-block';
+/* ------------------ NEXT EXERCISE ------------------ */
+nextExerciseBtn.addEventListener('click', () => {
+  if(currentExercise && currentExercise.sets.length){
+    pushOrMergeExercise(currentExercise);
+  }
+  currentExercise = null;
+  exerciseSelect.value = '';
+  interfaceBox.classList.add('hidden');
+  weightInput.value = ''; repsInput.value='';
+  updateSummary();
+  saveState();
+});
+
+function pushOrMergeExercise(ex){
+  const existing = session.exercises.find(e => e.name === ex.name);
+  if(existing){
+    ex.sets.forEach(s=>{
+      existing.sets.push({
+        set: existing.sets.length + 1,
+        weight:s.weight, reps:s.reps, time:s.time
+      });
+    });
+  } else {
+    session.exercises.push({
+      name: ex.name,
+      sets: ex.sets.map(s=> ({...s}))
+    });
+  }
+}
+
+/* ------------------ REST TIMER ------------------ */
+function startRest(seconds){
+  stopRest();
+  restSecondsRemaining = seconds;
+  updateRestDisplay();
+  restBox.classList.remove('hidden');
+  restTimer = setInterval(()=>{
+    restSecondsRemaining--;
+    updateRestDisplay();
+    if(restSecondsRemaining <=0){
+      stopRest();
+      restDisplay.textContent = 'Ready!';
+      setTimeout(()=> restBox.classList.add('hidden'), 1500);
     }
+  },1000);
+}
+function stopRest(){
+  if(restTimer){ clearInterval(restTimer); restTimer=null; }
+}
+function updateRestDisplay(){
+  const m = Math.floor(restSecondsRemaining/60);
+  const s = restSecondsRemaining % 60;
+  restDisplay.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+restBox.addEventListener('click', ()=> { stopRest(); restBox.classList.add('hidden'); });
 
-    // … rest of your original JS (deleteSet, logSetBtn handler, rest timer, export, etc.) …
+/* ------------------ RESET WORKOUT ------------------ */
+resetBtn.addEventListener('click', ()=>{
+  if(!confirm('Reset entire workout?')) return;
+  stopRest();
+  session = { exercises: [], startedAt:null };
+  currentExercise = null;
+  exerciseSelect.value='';
+  interfaceBox.classList.add('hidden');
+  setsList.innerHTML='';
+  weightInput.value=''; repsInput.value='';
+  updateSummary();
+  saveState();
+});
 
-  </script>
+/* ------------------ SUMMARY ------------------ */
+function updateSummary(){
+  let totalSets = 0;
+  let lines = [];
+  session.exercises.forEach(ex=>{
+    totalSets += ex.sets.length;
+    lines.push(`${ex.name}: ${ex.sets.length} sets`);
+  });
+  if(currentExercise && currentExercise.sets.length){
+    totalSets += currentExercise.sets.length;
+    lines.push(`${currentExercise.name}: ${currentExercise.sets.length} sets (in progress)`);
+  }
+
+  if(totalSets === 0){
+    summaryText.textContent = 'Start your first exercise to begin tracking.';
+  } else {
+    summaryText.innerHTML = `<strong>Total Sets: ${totalSets}</strong><br>${lines.join('<br>')}`;
+  }
+}
+
+/* ------------------ EXPORT ------------------ */
+exportBtn.addEventListener('click', () => {
+  const exportExercises = session.exercises.map(e => ({...e, sets:[...e.sets]}));
+  if(currentExercise && currentExercise.sets.length){
+    const exExisting = exportExercises.find(e=> e.name===currentExercise.name);
+    if(exExisting){
+      currentExercise.sets.forEach(s=>{
+        exExisting.sets.push({set: exExisting.sets.length+1, weight:s.weight, reps:s.reps, time:s.time});
+      });
+    } else {
+      exportExercises.push({ name: currentExercise.name, sets: currentExercise.sets.map(s=>({...s})) });
+    }
+  }
+  if(!exportExercises.length){
+    alert('No workout data yet.');
+    return;
+  }
+  const totalSets = exportExercises.reduce((sum,e)=> sum+e.sets.length,0);
+  const payload = {
+    date: new Date().toISOString().split('T')[0],
+    timestamp: new Date().toISOString(),
+    totalExercises: exportExercises.length,
+    totalSets,
+    exercises: exportExercises
+  };
+
+  // JSON
+  const jsonStr = JSON.stringify(payload,null,2);
+  const blob = new Blob([jsonStr], {type:'application/json'});
+  triggerDownload(blob, `workout_${payload.date}.json`);
+
+  // CSV
+  let csv = 'Exercise,Set,Weight,Reps,Time\\n';
+  exportExercises.forEach(ex => {
+    ex.sets.forEach(s => {
+      csv += `${ex.name},${s.set},${s.weight},${s.reps},${s.time}\\n`;
+    });
+  });
+  triggerDownload(new Blob([csv], {type:'text/csv'}), `workout_${payload.date}.csv`);
+
+  // AI text
+  let aiText = `WORKOUT DATA - ${payload.date}\\n\\n`;
+  exportExercises.forEach(ex=>{
+    aiText += `${ex.name}:\\n`;
+    ex.sets.forEach(s=>{
+      aiText += `  Set ${s.set}: ${s.weight} lbs × ${s.reps} reps\\n`;
+    });
+    aiText += '\\n';
+  });
+  aiText += `Summary: ${payload.totalExercises} exercises, ${payload.totalSets} total sets.\\n\\n`;
+  aiText += `Please analyze progress vs previous sessions, suggest next targets, identify weak points, and recommend optimal weight/rep progressions.`;
+
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(aiText).then(()=>{
+      alert('Exported JSON + CSV. AI summary copied to clipboard ✅');
+    }).catch(()=> alert('Exported files. (Clipboard copy failed)'));
+  } else {
+    alert('Exported JSON + CSV. Copy this manually:\\n\\n' + aiText);
+  }
+});
+
+function triggerDownload(blob, filename){
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/* ------------------ SAVE / LOAD ------------------ */
+function saveState(){
+  localStorage.setItem('wt_session', JSON.stringify(session));
+  localStorage.setItem('wt_currentExercise', JSON.stringify(currentExercise));
+}
+
+/* ------------------ KEY SHORTCUTS ------------------ */
+repsInput.addEventListener('keydown', e => {
+  if(e.key==='Enter') logBtn.click();
+});
+weightInput.addEventListener('keydown', e => {
+  if(e.key==='Enter') repsInput.focus();
+});
+
+</script>
 </body>
 </html>
