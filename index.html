@@ -724,16 +724,23 @@ weightInput.addEventListener('keydown', e => {
 });// --- Edit Workout from Summary ---
 summaryEditBtn.addEventListener('click', () => {
   if (currentExercise && currentExercise.sets.length) {
+    // if you’re already mid-set, just pop back into the interface
     showInterface();
+    document.getElementById('summaryResetBtn').style.display = 'block';
+    rebuildSetsList();
+    updateSetCounter();
   } else if (session.exercises.length) {
+    // otherwise grab your last exercise from the session history
     currentExercise = session.exercises.pop();
     saveState();
     showInterface();
     rebuildSetsList();
     updateSetCounter();
+    document.getElementById('summaryResetBtn').style.display = 'block';
   } else {
     alert('No workout in progress to edit.');
   }
+});
 });
 
 // --- Reset Workout from Summary ---
