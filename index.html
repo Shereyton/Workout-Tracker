@@ -714,7 +714,31 @@ function formatSec(sec){
   const m=Math.floor(sec/60), s=sec%60;
   return `${m}m ${s}s`;
 }
+editBtn.addEventListener('click', () => {
+  if (!exerciseInput.value || !setsInput.value || !repsInput.value || !weightInput.value) {
+    alert('Please fill in all fields.');
+    return;
+  }
 
+  const exercise = {
+    name: exerciseInput.value,
+    sets: parseInt(setsInput.value),
+    reps: parseInt(repsInput.value),
+    weight: parseFloat(weightInput.value)
+  };
+
+  currentExercise.sets.push(exercise);
+  saveState();
+  rebuildSetsList();
+  updateSetCounter();
+
+  // Clear inputs
+  exerciseInput.value = '';
+  setsInput.value = '';
+  repsInput.value = '';
+  weightInput.value = '';
+  exerciseInput.focus();
+});
 /* ------------------ SHORTCUTS ------------------ */
 repsInput.addEventListener('keydown', e => {
   if(e.key==='Enter') logBtn.click();
