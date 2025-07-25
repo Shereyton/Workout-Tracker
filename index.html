@@ -345,6 +345,7 @@ function startExercise(name){
 }
 
 function showInterface(){
+  document.getElementById('summaryResetBtn').style.display = 'none';
   interfaceBox.classList.remove('hidden');
   exerciseNameEl.textContent = currentExercise.name;
 }
@@ -624,7 +625,7 @@ function updateSummary(){
     summaryText.textContent = 'Start your first exercise to begin tracking.';
   } else {
     summaryText.innerHTML = `<strong>Total Sets: ${totalSets}</strong><br>${lines.join('<br>')}`;
-  }
+  }document.getElementById('summaryResetBtn').style.display = 'block';
 }
 
 /* ------------------ EXPORT ------------------ */
