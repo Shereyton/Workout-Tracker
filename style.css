@@ -158,3 +158,9 @@ body.dark #darkToggle{
 }
 .hidden{display:none!important;}
 .footer-space{height:70px;}
+
+.superset-inputs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+.superset-inputs .superset-field{flex:1;}
+
+.summary-item{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+.summary-item button{margin-left:8px;}
