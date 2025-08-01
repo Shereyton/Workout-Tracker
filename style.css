@@ -161,6 +161,8 @@ body.dark #darkToggle{
 
 .superset-inputs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
 .superset-inputs .superset-field{flex:1;}
+.superset-builder{margin-bottom:12px;padding:12px;background:#f8f9fa;border:1px solid #e5e9ef;border-radius:12px;}
+body.dark .superset-builder{background:#20242a;border-color:#2d333c;}
 
 .summary-item{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
 .summary-item button{margin-left:8px;}
