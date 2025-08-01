@@ -2,7 +2,9 @@
   "name": "workout-tracker",
   "version": "1.0.0",
   "scripts": {
-    "test": "jest"
+    "setup": "npm install",
+    "test": "jest",
+    "test:watch": "jest --watchAll"
   },
   "devDependencies": {
     "jest": "^29.6.1",
