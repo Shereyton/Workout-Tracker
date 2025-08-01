@@ -21,6 +21,7 @@
         <input type="text" id="customExercise" placeholder="Add Custom Exercise" class="field">
         <button id="addExercise" class="btn btn-secondary" style="flex:0 0 120px;">Add</button>
       </div>
+      <button id="startSuperset" class="btn btn-secondary" style="margin-bottom:12px;">Start Superset</button>
 
       <!-- Choose Exercise -->
       <select id="exerciseSelect">
@@ -54,10 +55,11 @@
           <div style="font-size:11px; margin-top:4px; opacity:.8;">Tap to cancel</div>
         </div>
 
-        <div class="inline-row">
+                <div class="inline-row" id="standardInputs">
           <input type="number" id="weight" min="0" step="1" class="field" placeholder="Weight (lbs)">
           <input type="number" id="reps"   min="1" step="1" class="field" placeholder="Reps">
         </div>
+        <div id="supersetInputs" class="superset-inputs hidden"></div>
 
         <button id="logBtn" class="btn btn-primary">Log Set</button>
         <button id="nextExerciseBtn" class="btn btn-secondary">Next Exercise</button>
@@ -83,10 +85,3 @@
 
   <!-- Floating Theme Toggle -->
   <button id="darkToggle" aria-label="Toggle dark mode">
-    <span id="themeIcon">🌙</span>
-    <span id="themeLabel">Dark</span>
-  </button>
-
-<script src="script.js"></script>
-</body>
-</html>
