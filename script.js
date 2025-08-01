@@ -42,6 +42,10 @@ const customExerciseInput = document.getElementById('customExercise');
 const startSupersetBtn = document.getElementById('startSuperset');
 const supersetInputs   = document.getElementById('supersetInputs');
 const standardInputs   = document.getElementById('standardInputs');
+const supersetBuilder  = document.getElementById('supersetBuilder');
+const supersetSelect1  = document.getElementById('supersetSelect1');
+const supersetSelect2  = document.getElementById('supersetSelect2');
+const beginSupersetBtn = document.getElementById('beginSuperset');
 
 /* ------------------ INIT ------------------ */
 todayEl.textContent = new Date().toLocaleDateString('en-US',{
@@ -82,12 +86,29 @@ addExerciseBtn.addEventListener('click', () => {
 });
 
 /* ------------------ SUPERSET ------------------ */
+function populateSupersetSelects(){
+  [supersetSelect1,supersetSelect2].forEach(sel=>{
+    sel.innerHTML = exerciseSelect.innerHTML;
+    sel.value = '';
+  });
+}
+
 startSupersetBtn.addEventListener('click', () => {
-  const names = prompt('Enter two exercises separated by comma');
-  if(!names) return;
-  const parts = names.split(',').map(s=>s.trim()).filter(Boolean);
-  if(parts.length < 2) { alert('Enter two exercise names'); return; }
-  startSuperset(parts[0], parts[1]);
+  supersetBuilder.classList.toggle('hidden');
+  if(!supersetBuilder.classList.contains('hidden')){
+    populateSupersetSelects();
+  }
+});
+
+beginSupersetBtn.addEventListener('click', () => {
+  const n1 = supersetSelect1.value;
+  const n2 = supersetSelect2.value;
+  if(!n1 || !n2){
+    alert('Choose two exercises');
+    return;
+  }
+  supersetBuilder.classList.add('hidden');
+  startSuperset([n1,n2]);
 });
 
 /* ------------------ SELECT EXERCISE ------------------ */
@@ -103,6 +124,7 @@ function startExercise(name){
   currentExercise = { name, sets: [], nextSet: 1 };
   supersetInputs.classList.add('hidden');
   standardInputs.classList.remove('hidden');
+  supersetBuilder.classList.add('hidden');
   saveState();
   showInterface();
   rebuildSetsList();
@@ -110,15 +132,17 @@ function startExercise(name){
   weightInput.focus();
 }
 
-function startSuperset(n1,n2){
+function startSuperset(namesArr){
   if(!session.startedAt) session.startedAt = new Date().toISOString();
   if(currentExercise && currentExercise.sets.length){
     pushOrMergeExercise(currentExercise);
   }
-  currentExercise = { name:`${n1} + ${n2}`, isSuperset:true, exercises:[n1,n2], sets:[], nextSet:1 };
-  setupSupersetInputs([n1,n2]);
+  const clean = namesArr.filter(Boolean);
+  currentExercise = { name: clean.join(' + '), isSuperset:true, exercises:[...clean], sets:[], nextSet:1 };
+  setupSupersetInputs(clean);
   standardInputs.classList.add('hidden');
   supersetInputs.classList.remove('hidden');
+  supersetBuilder.classList.add('hidden');
   saveState();
   showInterface();
   rebuildSetsList();
@@ -140,7 +164,6 @@ function showInterface(){
   interfaceBox.classList.remove('hidden');
   exerciseNameEl.textContent = currentExercise.name;
 }
-
 
 /* ------------------ LOG SET ------------------ */
 logBtn.addEventListener('click', function(){
@@ -225,7 +248,7 @@ function addSetElement(setObj,index){
 
   let meta = '';
   if(currentExercise.isSuperset){
-    meta = setObj.exercises.map(e=>`${e.name}: ${e.weight}×${e.reps}`).join(' | ');
+    meta = setObj.exercises.map(e=>`${e.name}: ${e.weight}×${e.reps}`).join(' |');
   } else {
     meta = `${setObj.weight} lbs × ${setObj.reps} reps`;
   }
@@ -572,7 +595,7 @@ exportBtn.addEventListener('click', () => {
     }
     aiText += '\n';
   });
-  aiText += `Summary: ${payload.totalExercises} exercises, ${payload.totalSets} total sets.\n\n`;
+  aiText += `Summary: ${payload.totalExercises} exercises, ${payload.totalSets}total sets.\n\n`;
   aiText += `Please analyze progress vs previous sessions, suggest next targets, identify weak points, and recommend optimal weight/rep progressions.`;
 
   if(navigator.clipboard){
