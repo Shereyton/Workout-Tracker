@@ -39,6 +39,9 @@ const useTimerEl       = document.getElementById('useTimer');
 const restSecsInput    = document.getElementById('restSecsInput');
 const addExerciseBtn   = document.getElementById('addExercise');
 const customExerciseInput = document.getElementById('customExercise');
+const startSupersetBtn = document.getElementById('startSuperset');
+const supersetInputs   = document.getElementById('supersetInputs');
+const standardInputs   = document.getElementById('standardInputs');
 
 /* ------------------ INIT ------------------ */
 todayEl.textContent = new Date().toLocaleDateString('en-US',{
@@ -78,6 +81,15 @@ addExerciseBtn.addEventListener('click', () => {
   startExercise(name);
 });
 
+/* ------------------ SUPERSET ------------------ */
+startSupersetBtn.addEventListener('click', () => {
+  const names = prompt('Enter two exercises separated by comma');
+  if(!names) return;
+  const parts = names.split(',').map(s=>s.trim()).filter(Boolean);
+  if(parts.length < 2) { alert('Enter two exercise names'); return; }
+  startSuperset(parts[0], parts[1]);
+});
+
 /* ------------------ SELECT EXERCISE ------------------ */
 exerciseSelect.addEventListener('change', e => {
   if(e.target.value) startExercise(e.target.value);
@@ -89,11 +101,39 @@ function startExercise(name){
     pushOrMergeExercise(currentExercise);
   }
   currentExercise = { name, sets: [], nextSet: 1 };
+  supersetInputs.classList.add('hidden');
+  standardInputs.classList.remove('hidden');
   saveState();
   showInterface();
   rebuildSetsList();
   updateSetCounter();
   weightInput.focus();
+}
+
+function startSuperset(n1,n2){
+  if(!session.startedAt) session.startedAt = new Date().toISOString();
+  if(currentExercise && currentExercise.sets.length){
+    pushOrMergeExercise(currentExercise);
+  }
+  currentExercise = { name:`${n1} + ${n2}`, isSuperset:true, exercises:[n1,n2], sets:[], nextSet:1 };
+  setupSupersetInputs([n1,n2]);
+  standardInputs.classList.add('hidden');
+  supersetInputs.classList.remove('hidden');
+  saveState();
+  showInterface();
+  rebuildSetsList();
+  updateSetCounter();
+  document.querySelector('#weight0').focus();
+}
+
+function setupSupersetInputs(arr){
+  supersetInputs.innerHTML='';
+  arr.forEach((name,i)=>{
+    const row=document.createElement('div');
+    row.className='inline-row';
+    row.innerHTML=`<input type="number" id="weight${i}" class="field superset-field" placeholder="${name} weight" min="0"><input type="number" id="reps${i}" class="field superset-field" placeholder="${name} reps" min="1">`;
+    supersetInputs.appendChild(row);
+  });
 }
 
 function showInterface(){
@@ -104,6 +144,40 @@ function showInterface(){
 
 /* ------------------ LOG SET ------------------ */
 logBtn.addEventListener('click', function(){
+  if(currentExercise.isSuperset){
+    const setGroup = currentExercise.exercises.map((ex,i)=>{
+      const w=parseInt(document.getElementById(`weight${i}`).value,10);
+      const r=parseInt(document.getElementById(`reps${i}`).value,10);
+      return {name:ex, weight:w, reps:r};
+    });
+    if(setGroup.some(s=>!canLogSet(s.weight,s.reps))){
+      alert('Enter weight & reps for all exercises');
+      return;
+    }
+    const useTimer = useTimerEl.checked;
+    const planned = useTimer ? (parseInt(restSecsInput.value,10) || 0) : null;
+    currentExercise.sets.push({
+      set: currentExercise.nextSet,
+      exercises:setGroup,
+      time:new Date().toLocaleTimeString(),
+      restPlanned:planned,
+      restActual:null
+    });
+    addSetElement(currentExercise.sets[currentExercise.sets.length-1], currentExercise.sets.length-1);
+    currentExercise.nextSet++;
+    updateSetCounter();
+    currentExercise.exercises.forEach((_,i)=>{
+      document.getElementById(`weight${i}`).value='';
+      document.getElementById(`reps${i}`).value='';
+    });
+    if(useTimer && planned!=null){
+      startRest(planned, currentExercise.sets.length-1);
+    }
+    updateSummary();
+    saveState();
+    return;
+  }
+
   const w = parseInt(weightInput.value, 10);
   const r = parseInt(repsInput.value, 10);
 
@@ -149,10 +223,17 @@ function addSetElement(setObj,index){
     ? ` • Rest: ${formatSec(setObj.restActual)}`
     : (setObj.restPlanned != null ? ` • Rest planned: ${formatSec(setObj.restPlanned)}` : '');
 
+  let meta = '';
+  if(currentExercise.isSuperset){
+    meta = setObj.exercises.map(e=>`${e.name}: ${e.weight}×${e.reps}`).join(' | ');
+  } else {
+    meta = `${setObj.weight} lbs × ${setObj.reps} reps`;
+  }
+
   item.innerHTML = `
     <div style="flex:1;min-width:150px;">
       <div class="set-label">${currentExercise.name} – Set ${setObj.set}</div>
-      <div class="set-meta">${setObj.weight} lbs × ${setObj.reps} reps${restInfo}</div>
+      <div class="set-meta">${meta}${restInfo}</div>
     </div>
     <div class="set-actions">
       <button class="btn-mini edit" data-action="edit">Edit</button>
@@ -196,41 +277,63 @@ function openEditForm(item, idx){
 
   const form = document.createElement('div');
   form.className = 'edit-form';
-  form.innerHTML = `
-    <div class="row">
-      <input type="number" class="editW" value="${s.weight}" min="0">
-      <input type="number" class="editR" value="${s.reps}"   min="1">
-    </div>
-    <div class="row">
-      <input type="number" class="editRestPlanned" value="${s.restPlanned ?? ''}" min="0" placeholder="Rest planned (sec)">
-      <input type="number" class="editRestActual"  value="${s.restActual  ?? ''}" min="0" placeholder="Rest actual (sec)">
-    </div>
-    <div class="row2">
-      <button type="button" class="btn-mini edit" data-edit-save>Save</button>
-      <button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button>
-    </div>
-  `;
+  if(currentExercise.isSuperset){
+    let rows='';
+    s.exercises.forEach((ex,i)=>{
+      rows += `<div class="row"><span style="font-size:12px;flex-basis:100%;">${ex.name}</span><input type="number" class="editW${i}" value="${ex.weight}" min="0"><input type="number" class="editR${i}" value="${ex.reps}" min="1"></div>`;
+    });
+    form.innerHTML = `${rows}<div class="row2"><button type="button" class="btn-mini edit" data-edit-save>Save</button><button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button></div>`;
+  } else {
+    form.innerHTML = `
+      <div class="row">
+        <input type="number" class="editW" value="${s.weight}" min="0">
+        <input type="number" class="editR" value="${s.reps}"   min="1">
+      </div>
+      <div class="row">
+        <input type="number" class="editRestPlanned" value="${s.restPlanned ?? ''}" min="0" placeholder="Rest planned (sec)">
+        <input type="number" class="editRestActual"  value="${s.restActual  ?? ''}" min="0" placeholder="Rest actual (sec)">
+      </div>
+      <div class="row2">
+        <button type="button" class="btn-mini edit" data-edit-save>Save</button>
+        <button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button>
+      </div>
+    `;
+  }
   item.appendChild(form);
 
   form.addEventListener('click', ev => {
     if (ev.target.hasAttribute('data-edit-save')) {
-      const newW  = parseInt(form.querySelector('.editW').value, 10);
-      const newR  = parseInt(form.querySelector('.editR').value, 10);
-      const vPlanned = form.querySelector('.editRestPlanned').value;
-      const vActual  = form.querySelector('.editRestActual').value;
+      if(currentExercise.isSuperset){
+        let bad=false;
+        s.exercises.forEach((ex,i)=>{
+          const w=parseInt(form.querySelector(`.editW${i}`).value,10);
+          const r=parseInt(form.querySelector(`.editR${i}`).value,10);
+          if(isNaN(w)||isNaN(r)) bad=true;
+          ex.weight=w; ex.reps=r;
+        });
+        if(bad){
+          alert('Enter valid numbers');
+          return;
+        }
+      } else {
+        const newW  = parseInt(form.querySelector('.editW').value, 10);
+        const newR  = parseInt(form.querySelector('.editR').value, 10);
+        const vPlanned = form.querySelector('.editRestPlanned').value;
+        const vActual  = form.querySelector('.editRestActual').value;
 
-      const newPlanned = vPlanned === '' ? null : parseInt(vPlanned, 10);
-      const newActual  = vActual  === '' ? null : parseInt(vActual, 10);
+        const newPlanned = vPlanned === '' ? null : parseInt(vPlanned, 10);
+        const newActual  = vActual  === '' ? null : parseInt(vActual, 10);
 
-      if (isNaN(newW) || isNaN(newR)) {
-        alert('Enter valid weight & reps');
-        return;
+        if (isNaN(newW) || isNaN(newR)) {
+          alert('Enter valid weight & reps');
+          return;
+        }
+
+        s.weight = newW;
+        s.reps   = newR;
+        s.restPlanned = newPlanned;
+        s.restActual  = newActual;
       }
-
-      s.weight = newW;
-      s.reps   = newR;
-      s.restPlanned = newPlanned;
-      s.restActual  = newActual;
 
       saveState();
       rebuildSetsList();
@@ -282,15 +385,13 @@ function pushOrMergeExercise(ex){
   const existing = session.exercises.find(e => e.name === ex.name);
   if(existing){
     ex.sets.forEach(s=>{
-      existing.sets.push({
-        set: existing.sets.length + 1,
-        weight:s.weight, reps:s.reps, time:s.time,
-        restPlanned:s.restPlanned, restActual:s.restActual
-      });
+      existing.sets.push(JSON.parse(JSON.stringify({...s, set: existing.sets.length + 1})));
     });
   } else {
     session.exercises.push({
       name: ex.name,
+      isSuperset: ex.isSuperset || false,
+      exercises: ex.exercises ? [...ex.exercises] : undefined,
       sets: ex.sets.map(s=> ({...s}))
     });
   }
@@ -362,21 +463,43 @@ resetBtn.addEventListener('click', ()=>{
 function updateSummary(){
   let totalSets = 0;
   const lines = [];
-  session.exercises.forEach(ex=>{
+  session.exercises.forEach((ex,i)=>{
     totalSets += ex.sets.length;
-    lines.push(`${ex.name}: ${ex.sets.length} sets`);
+    lines.push(`<div class="summary-item">${ex.name}: ${ex.sets.length} sets <button class="btn-mini edit" data-summary-edit="${i}">Edit</button></div>`);
   });
   if (currentExercise && currentExercise.sets.length){
     totalSets += currentExercise.sets.length;
-    lines.push(`${currentExercise.name}: ${currentExercise.sets.length} sets (in progress)`);
+    lines.push(`<div class="summary-item">${currentExercise.name}: ${currentExercise.sets.length} sets (in progress)</div>`);
   }
 
   if(totalSets === 0){
     summaryText.textContent = 'Start your first exercise to begin tracking.';
   } else {
-    summaryText.innerHTML = `<strong>Total Sets: ${totalSets}</strong><br>${lines.join('<br>')}`;
+    summaryText.innerHTML = `<strong>Total Sets: ${totalSets}</strong><br>${lines.join('')}`;
   }
 }
+
+summaryText.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-summary-edit]');
+  if(!btn) return;
+  const idx = parseInt(btn.dataset.summaryEdit,10);
+  if(currentExercise && currentExercise.sets.length){
+    pushOrMergeExercise(currentExercise);
+  }
+  currentExercise = session.exercises.splice(idx,1)[0];
+  showInterface();
+  if(currentExercise.isSuperset){
+    setupSupersetInputs(currentExercise.exercises);
+    standardInputs.classList.add('hidden');
+    supersetInputs.classList.remove('hidden');
+  } else {
+    supersetInputs.classList.add('hidden');
+    standardInputs.classList.remove('hidden');
+  }
+  rebuildSetsList();
+  updateSetCounter();
+  updateSummary();
+});
 
 /* ------------------ EXPORT ------------------ */
 exportBtn.addEventListener('click', () => {
@@ -416,7 +539,13 @@ exportBtn.addEventListener('click', () => {
   let csv = 'Exercise,Set,Weight,Reps,Time,RestPlanned(sec),RestActual(sec)\n';
   exportExercises.forEach(ex => {
     ex.sets.forEach(s => {
-      csv += `${ex.name},${s.set},${s.weight},${s.reps},${s.time},${s.restPlanned ?? ''},${s.restActual ?? ''}\n`;
+      if(ex.isSuperset){
+        s.exercises.forEach(sub=>{
+          csv += `${sub.name},${s.set},${sub.weight},${sub.reps},${s.time},${s.restPlanned ?? ''},${s.restActual ?? ''}\n`;
+        });
+      } else {
+        csv += `${ex.name},${s.set},${s.weight},${s.reps},${s.time},${s.restPlanned ?? ''},${s.restActual ?? ''}\n`;
+      }
     });
   });
   triggerDownload(new Blob([csv], {type:'text/csv'}), `workout_${payload.date}.csv`);
@@ -424,12 +553,23 @@ exportBtn.addEventListener('click', () => {
   // AI text
   let aiText = `WORKOUT DATA - ${payload.date}\n\n`;
   exportExercises.forEach(ex=>{
-    aiText += `${ex.name}:\n`;
-    ex.sets.forEach(s=>{
-      const rp = s.restPlanned!=null ? ` (planned ${formatSec(s.restPlanned)}` : '';
-      const ra = s.restActual !=null ? `${rp?'; ': ' ('}actual ${formatSec(s.restActual)})` : (rp?')':'');
-      aiText += `  Set ${s.set}: ${s.weight} lbs × ${s.reps} reps${rp||ra? (rp?rp:'')+(ra?ra:''):''}\n`;
-    });
+    if(ex.isSuperset){
+      aiText += `${ex.name}:\n`;
+      ex.sets.forEach(s=>{
+        const rp = s.restPlanned!=null ? ` (planned ${formatSec(s.restPlanned)}` : '';
+        const ra = s.restActual !=null ? `${rp?'; ': ' ('}actual ${formatSec(s.restActual)})` : (rp?')':'');
+        s.exercises.forEach(sub=>{
+          aiText += `  Set ${s.set} - ${sub.name}: ${sub.weight} lbs × ${sub.reps} reps${rp||ra? (rp?rp:'')+(ra?ra:''):''}\n`;
+        });
+      });
+    } else {
+      aiText += `${ex.name}:\n`;
+      ex.sets.forEach(s=>{
+        const rp = s.restPlanned!=null ? ` (planned ${formatSec(s.restPlanned)}` : '';
+        const ra = s.restActual !=null ? `${rp?'; ': ' ('}actual ${formatSec(s.restActual)})` : (rp?')':'');
+        aiText += `  Set ${s.set}: ${s.weight} lbs × ${s.reps} reps${rp||ra? (rp?rp:'')+(ra?ra:''):''}\n`;
+      });
+    }
     aiText += '\n';
   });
   aiText += `Summary: ${payload.totalExercises} exercises, ${payload.totalSets} total sets.\n\n`;
