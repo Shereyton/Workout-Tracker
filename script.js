@@ -361,14 +361,12 @@ function openEditForm(item, idx){
       saveState();
       rebuildSetsList();
       updateSummary();
+      form.remove();
+      return;
     }
     if (ev.target.hasAttribute('data-edit-cancel')) {
       form.remove();
       return;
-    }
-    // close form after save
-    if (ev.target	hasAttribute('data-edit-save')) {
-      form.remove();
     }
   });
 }
