@@ -19,15 +19,15 @@
       <!-- Add Custom Exercise -->
       <div class="inline-row" style="margin-bottom:6px;">
         <input type="text" id="customExercise" placeholder="Add Custom Exercise" class="field">
-        <button id="addExercise" class="btn btn-secondary" style="flex:0 0 120px;">Add</button>
+        <button id="addExercise" type="button" class="btn btn-secondary" style="flex:0 0 120px;">Add</button>
       </div>
-      <button id="startSuperset" class="btn btn-secondary" style="margin-bottom:12px;">Start Superset</button>
+      <button id="startSuperset" type="button" class="btn btn-secondary" style="margin-bottom:12px;">Start Superset</button>
       <div id="supersetBuilder" class="superset-builder hidden">
         <div class="inline-row" style="margin-bottom:6px;">
           <select id="supersetSelect1"></select>
           <select id="supersetSelect2"></select>
         </div>
-        <button id="beginSuperset" class="btn btn-primary">Begin Superset</button>
+        <button id="beginSuperset" type="button" class="btn btn-primary">Begin Superset</button>
       </div>
 
       <!-- Choose Exercise -->
@@ -68,9 +68,9 @@
         </div>
         <div id="supersetInputs" class="superset-inputs hidden"></div>
 
-        <button id="logBtn" class="btn btn-primary">Log Set</button>
-        <button id="nextExerciseBtn" class="btn btn-secondary">Next Exercise</button>
-        <button id="resetBtn" class="btn btn-reset">Reset Workout</button>
+        <button id="logBtn" type="button" class="btn btn-primary">Log Set</button>
+        <button id="nextExerciseBtn" type="button" class="btn btn-secondary">Next Exercise</button>
+        <button id="resetBtn" type="button" class="btn btn-reset">Reset Workout</button>
 
         <div class="sets-history">
           <h3>Today's Sets</h3>
@@ -84,14 +84,14 @@
         <div class="notice">Autosaves locally. Export when finished.</div>
       </div>
 
-      <button id="exportBtn" class="btn btn-export">Export (JSON + AI + CSV)</button>
+      <button id="exportBtn" type="button" class="btn btn-export">Export (JSON + AI + CSV)</button>
 
     </div>
   </div>
   <div class="footer-space"></div>
 
   <!-- Floating Theme Toggle -->
-  <button id="darkToggle" aria-label="Toggle dark mode">
+  <button id="darkToggle" type="button" aria-label="Toggle dark mode">
     <span id="themeIcon">🌙</span>
     <span id="themeLabel">Dark</span>
   </button>
