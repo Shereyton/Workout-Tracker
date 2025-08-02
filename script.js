@@ -367,7 +367,7 @@ function openEditForm(item, idx){
       return;
     }
     // close form after save
-    if (ev.target.hasAttribute('data-edit-save')) {
+    if (ev.target	hasAttribute('data-edit-save')) {
       form.remove();
     }
   });
