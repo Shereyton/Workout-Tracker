@@ -1,4 +1,4 @@
-const { parseDateLocal } = require('../calendar');
+const { parseDateLocal } = require('../../calendar');
 
 test('parseDateLocal returns exact date', () => {
   const d = parseDateLocal('2025-08-01');
