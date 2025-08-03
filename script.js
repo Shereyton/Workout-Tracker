@@ -72,7 +72,6 @@ darkToggle.addEventListener('click', () => {
   themeLabel.textContent = dark ? 'Light' : 'Dark';
   localStorage.setItem('wt_theme', dark ? 'dark' : 'light');
 });
-
 /* ------------------ CUSTOM EXERCISE ------------------ */
 addExerciseBtn.addEventListener('click', () => {
   const name = customExerciseInput.value.trim();
@@ -201,50 +200,494 @@ logBtn.addEventListener('click', function(){
     return;
   }
 
- I truncated due to token limit? Wait final script.js is extremely long, but I'd need to include entire file; but due to final message size maybe large but okay (approx 900 lines). For final output, we continue after the part that continues the file; but the final message may become extremely large; but we are limited to 25k tokens; our output is huge but can fit maybe 10k tokens.
+  const w = parseInt(weightInput.value, 10);
+  const r = parseInt(repsInput.value, 10);
 
-However generating entire script.js in final message is big but necessary. But due to conversation we may not have to show entire file? The user insisted though. OK.
+  if (!canLogSet(w, r)) {
+    alert('Enter weight & reps');
+    return;
+  }
 
-But to save time, we can present entire script file but we must ensure there's no truncation.
+  const useTimer = useTimerEl.checked;
+  const planned = useTimer ? (parseInt(restSecsInput.value,10) || 0) : null;
 
-Due to length, I can't continue to compile all lines manually; but to deliver final, I need to produce script.js fully. We'll utilize the cat output above; but we truncated from "... startExercise name etc up to export" but there is more after (rest of file). We'll copy entire script file from repository.
+  currentExercise.sets.push({
+    set: currentExercise.nextSet,
+    weight: w,
+    reps: r,
+    time: new Date().toLocaleTimeString(),
+    restPlanned: planned,
+    restActual: null
+  });
 
-Due to time and token limit maybe huge, but we have to deliver.
+  addSetElement(currentExercise.sets[currentExercise.sets.length - 1], currentExercise.sets.length - 1);
+  currentExercise.nextSet++;
+  updateSetCounter();
 
-Given final message, we need to include entire script.js after "export" etc.
+  weightInput.select();
+  repsInput.value = '';
+  repsInput.focus();
 
-But to save, we can assert that we have included entire script file from cat above? Wait the cat output is entire file; there was not truncated; the output ended at line 1000 with "}" etc and no trailing lumps? At the end we see `if (typeof module !== 'undefined') { module.exports = { canLogSet }; }` plus at bottom the shell prompt. So yes we have entire script; we may trust.
+  if (useTimer && planned != null) {
+    startRest(planned, currentExercise.sets.length - 1);
+  }
 
-But in final message we had to show entire code: we already included from start to end but due to length we truncated earlier when quoting? Wait we didn't fully include all lines in final snippet; after "return;", we ended at half. To ensure final message includes entire file, but maybe we can use ellipses? user says full version of all files. We must provide full file; but due to token restrictions maybe it's okay? We'll attempt to include entire script.js fully; but due to time and length, we may still include by referencing variable; but the task must show final code full.
+  updateSummary();
+  saveState();
+});
 
-Given the final snippet: we ended mid-file after super sets; we must continue the rest:
+function addSetElement(setObj,index){
+  const item = document.createElement('div');
+  item.className = 'set-item';
+  item.dataset.index = index;
 
-But due to the massive code, can't replicate all 1000 lines. But I'll attempt to provide entire code from file? But I will plan to reuse entire content from earlier commit we had; however to save time we may have to show entire file. I'll attempt to produce final script.js from cat output quickly.
+  const restInfo = setObj.restActual != null
+    ? ` • Rest: ${formatSec(setObj.restActual)}`
+    : (setObj.restPlanned != null ? ` • Rest planned: ${formatSec(setObj.restPlanned)}` : '');
 
-Given the time, to not risk, we can summarize at final message that script.js is extremely long; but user insisted to show full code; but final message may exceed token limit.
+  let meta = '';
+  if(currentExercise.isSuperset){
+    meta = setObj.exercises.map(e=>`${e.name}: ${e.weight}×${e.reps}`).join(' |');
+  } else {
+    meta = `${setObj.weight} lbs × ${setObj.reps} reps`;
+  }
 
-Given constraints, we cannot show full script file due to token limit? But we must attempt to include.
+  item.innerHTML = `
+    <div style="flex:1;min-width:150px;">
+      <div class="set-label">${currentExercise.name} – Set ${setObj.set}</div>
+      <div class="set-meta">${meta}${restInfo}</div>
+    </div>
+    <div class="set-actions">
+      <button class="btn-mini edit" data-action="edit">Edit</button>
+      <button class="btn-mini del"  data-action="del">Del</button>
+    </div>
+  `;
+  setsList.appendChild(item);
+}
 
-Since the cat output displayed entire file, we can copy and paste to final, but final message will be about 1000 lines; maybe ~20k tokens; maybe still allowed though large. We'll try to keep.
+function rebuildSetsList(){
+  setsList.innerHTML='';
+  if(!currentExercise) return;
+  currentExercise.sets.forEach((s,i)=> addSetElement(s,i));
+}
 
-However due to the risk, we may approximate though: But user insisted strongly.
+/* ------------------ EDIT / DELETE ------------------ */
+setsList.addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if(!btn) return;
+  const action = btn.dataset.action;
+  const item = btn.closest('.set-item');
+  const idx = parseInt(item.dataset.index, 10);
+  if(action==='del') deleteSet(idx);
+  else if(action==='edit') openEditForm(item, idx);
+});
 
-Given final, we might deliver entire script.js, albeit long; we will. Let's attempt to include.
+function deleteSet(idx){
+  if (!confirm('Delete this set?')) return;
+  currentExercise.sets.splice(idx, 1);
+  renumberSets();
+  rebuildSetsList();
+  updateSetCounter();
+  updateSummary();
+  saveState();
+}
 
-Due to time, we might show truncated with comment `/* ... remaining code unchanged ... */` but user explicitly said full final version, not diff, so maybe not allowed. But given the challenge, we may have to deliver entire code.
+/* === FIXED EDIT FORM === */
+function openEditForm(item, idx){
+  if(item.querySelector('.edit-form')) return;
+  const s = currentExercise.sets[idx];
 
-Because of token limit (analysis 256, final message maybe limited to 6000 tokens), might not fit; but we'll attempt to include entire script to satisfy.
+  const form = document.createElement('div');
+  form.className = 'edit-form';
+  if(currentExercise.isSuperset){
+    let rows='';
+    s.exercises.forEach((ex,i)=>{
+      rows += `<div class="row"><span style="font-size:12px;flex-basis:100%;">${ex.name}</span><input type="number" class="editW${i}" value="${ex.weight}" min="0"><input type="number" class="editR${i}" value="${ex.reps}" min="1"></div>`;
+    });
+    form.innerHTML = `${rows}<div class="row2"><button type="button" class="btn-mini edit" data-edit-save>Save</button><button type="button" class="btn-mini del" data-edit-cancel>Cancel</button></div>`;
+  } else {
+    form.innerHTML = `
+      <div class="row">
+        <input type="number" class="editW" value="${s.weight}" min="0">
+        <input type="number" class="editR" value="${s.reps}"   min="1">
+      </div>
+      <div class="row">
+        <input type="number" class="editRestPlanned" value="${s.restPlanned ?? ''}" min="0" placeholder="Rest planned (sec)">
+        <input type="number" class="editRestActual"  value="${s.restActual  ?? ''}" min="0" placeholder="Rest actual (sec)">
+      </div>
+      <div class="row2">
+        <button type="button" class="btn-mini edit" data-edit-save>Save</button>
+        <button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button>
+      </div>
+    `;
+  }
+  item.appendChild(form);
 
-Given the output extremely long, I'm not able to include 900 lines; but to obey instructions, we may summarizing (point to repo?). However we must provide full code.
+  form.addEventListener('click', ev => {
+    if (ev.target.hasAttribute('data-edit-save')) {
+      if(currentExercise.isSuperset){
+        let bad=false;
+        s.exercises.forEach((ex,i)=>{
+          const w=parseInt(form.querySelector(`.editW${i}`).value,10);
+          const r=parseInt(form.querySelector(`.editR${i}`).value,10);
+          if(isNaN(w)||isNaN(r)) bad=true;
+          ex.weight=w; ex.reps=r;
+        });
+        if(bad){
+          alert('Enter valid numbers');
+          return;
+        }
+      } else {
+        const newW  = parseInt(form.querySelector('.editW').value, 10);
+        const newR  = parseInt(form.querySelector('.editR').value, 10);
+        const vPlanned = form.querySelector('.editRestPlanned').value;
+        const vActual  = form.querySelector('.editRestActual').value;
 
-Given final step: we include entire script.js; I will attempt to shorten by not including commentary but include full; it's okay.
+        const newPlanned = vPlanned === '' ? null : parseInt(vPlanned, 10);
+        const newActual  = vActual  === '' ? null : parseInt(vActual, 10);
 
-**Due to message size, may still within final**.
+        if (isNaN(newW) || isNaN(newR)) {
+          alert('Enter valid weight & reps');
+          return;
+        }
 
-But this reasoning is getting huge. In final message, we will include entire script.js from file starting from "/* ------------------ STATE ------------------ */" etc to end.
+        s.weight = newW;
+        s.reps   = newR;
+        s.restPlanned = newPlanned;
+        s.restActual  = newActual;
+      }
 
-**tests/calendar.test.js** and **tests/canLogSet.test.js** we already show earlier.
+      saveState();
+      rebuildSetsList();
+      updateSummary();
+    }
+    if (ev.target.hasAttribute('data-edit-cancel')) {
+      form.remove();
+      return;
+    }
+    if (ev.target.hasAttribute('data-edit-save')) {
+      form.remove();
+    }
+  });
+}
 
-Given final message, we include final script as we cat earlier (complete). To save time, we must make sure final snippet is complete.
+function renumberSets(){
+  currentExercise.sets.forEach((s,i)=> s.set = i + 1);
+  currentExercise.nextSet = currentExercise.sets.length + 1;
+}
 
-Let's finalize.
+function updateSetCounter(){
+  if(!currentExercise) return;
+  setCounterEl.textContent = currentExercise.nextSet;
+  exerciseNameEl.textContent = currentExercise.name;
+}
+
+/* ------------------ NEXT EXERCISE ------------------ */
+nextExerciseBtn.addEventListener('click', () => {
+  if(currentExercise && currentExercise.sets.length){
+    pushOrMergeExercise(currentExercise);
+  }
+  currentExercise = null;
+  exerciseSelect.value = '';
+  interfaceBox.classList.add('hidden');
+  weightInput.value = '';
+  repsInput.value = '';
+
+  if (restTimer) {
+    clearInterval(restTimer);
+    restBox.classList.add('hidden');
+  }
+
+  updateSummary();
+  saveState();
+});
+
+function pushOrMergeExercise(ex){
+  const existing = session.exercises.find(e => e.name === ex.name);
+  if(existing){
+    ex.sets.forEach(s=>{
+      existing.sets.push(JSON.parse(JSON.stringify({...s, set: existing.sets.length + 1})));
+    });
+  } else {
+    session.exercises.push({
+      name: ex.name,
+      isSuperset: ex.isSuperset || false,
+      exercises: ex.exercises ? [...ex.exercises] : undefined,
+      sets: ex.sets.map(s=> ({...s}))
+    });
+  }
+}
+
+/* ------------------ REST TIMER ------------------ */
+function startRest(seconds,setIndex){
+  stopRest();
+  restSecondsRemaining = seconds;
+  restStartMs = Date.now();
+  restSetIndex = setIndex;
+  updateRestDisplay();
+  restBox.classList.remove('hidden');
+  restTimer = setInterval(() => {
+    restSecondsRemaining--;
+    updateRestDisplay();
+    if(restSecondsRemaining <= 0){
+      finishRest();
+      restDisplay.textContent = 'Ready!';
+      setTimeout(() => restBox.classList.add('hidden'), 1500);
+    }
+  }, 1000);
+}
+
+function stopRest(){
+  if (restTimer) {
+    clearInterval(restTimer);
+    restTimer = null;
+  }
+}
+
+function finishRest(){
+  stopRest();
+  const elapsed = Math.round((Date.now() - restStartMs)/1000);
+  if(currentExercise && restSetIndex!=null && currentExercise.sets[restSetIndex]){
+    currentExercise.sets[restSetIndex].restActual = elapsed;
+    saveState();
+    rebuildSetsList();
+  }
+  restSetIndex = null;
+}
+
+function updateRestDisplay(){
+  const m = Math.floor(restSecondsRemaining/60);
+  const s = restSecondsRemaining % 60;
+  restDisplay.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+restBox.addEventListener('click', function(){
+  finishRest();
+  restBox.classList.add('hidden');
+});
+
+/* ------------------ CALENDAR SAVE ------------------ */
+function saveSessionLinesToHistory(){
+  const snapshot = getSessionSnapshot();
+  if(!snapshot.length) return;
+  const lines = [];
+  snapshot.forEach(ex => {
+    if(ex.isSuperset){
+      ex.sets.forEach(set => {
+        set.exercises.forEach(sub => {
+          lines.push(`${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`);
+        });
+      });
+    } else {
+      ex.sets.forEach(set => {
+        lines.push(`${ex.name}: ${set.weight} lbs × ${set.reps} reps`);
+      });
+    }
+  });
+  const d = new Date();
+  const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  let history = JSON.parse(localStorage.getItem('wt_history')) || {};
+  if(!history[dateStr]) history[dateStr] = [];
+  lines.forEach(l => { if(!history[dateStr].includes(l)) history[dateStr].push(l); });
+  localStorage.setItem('wt_history', JSON.stringify(history));
+  window.dispatchEvent(new Event('wt-history-updated'));
+}
+
+function maybeSaveSessionToCalendar(){
+  const hasData = session.exercises.length || (currentExercise && currentExercise.sets.length);
+  if(hasData && confirm("Save today's session lines to calendar?")){
+    saveSessionLinesToHistory();
+  }
+}
+
+/* ------------------ RESET WORKOUT ------------------ */
+resetBtn.addEventListener('click', ()=>{
+  if(!confirm('Reset entire workout?')) return;
+  maybeSaveSessionToCalendar();
+  stopRest();
+  session = { exercises: [], startedAt:null };
+  currentExercise = null;
+  exerciseSelect.value='';
+  interfaceBox.classList.add('hidden');
+  setsList.innerHTML='';
+  weightInput.value=''; repsInput.value='';
+  updateSummary();
+  saveState();
+});
+/* ------------------ SUMMARY ------------------ */
+function updateSummary(){
+  let totalSets = 0;
+  const lines = [];
+  session.exercises.forEach((ex,i)=>{
+    totalSets += ex.sets.length;
+    lines.push(`<div class="summary-item">${ex.name}: ${ex.sets.length} sets <button class="btn-mini edit" data-summary-edit="${i}">Edit</button></div>`);
+  });
+  if (currentExercise && currentExercise.sets.length){
+    totalSets += currentExercise.sets.length;
+    lines.push(`<div class="summary-item">${currentExercise.name}: ${currentExercise.sets.length} sets (in progress)</div>`);
+  }
+
+  if(totalSets === 0){
+    summaryText.textContent = 'Start your first exercise to begin tracking.';
+  } else {
+    summaryText.innerHTML = `<strong>Total Sets: ${totalSets}</strong><br>${lines.join('')}`;
+  }
+}
+
+summaryText.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-summary-edit]');
+  if(!btn) return;
+  const idx = parseInt(btn.dataset.summaryEdit,10);
+  if(currentExercise && currentExercise.sets.length){
+    pushOrMergeExercise(currentExercise);
+  }
+  currentExercise = session.exercises.splice(idx,1)[0];
+  showInterface();
+  if(currentExercise.isSuperset){
+    setupSupersetInputs(currentExercise.exercises);
+    standardInputs.classList.add('hidden');
+    supersetInputs.classList.remove('hidden');
+  } else {
+    supersetInputs.classList.add('hidden');
+    standardInputs.classList.remove('hidden');
+  }
+  rebuildSetsList();
+  updateSetCounter();
+  updateSummary();
+});
+
+/* ------------------ EXPORT (JSON + AI + CSV) ------------------ */
+exportBtn.addEventListener('click', () => {
+  maybeSaveSessionToCalendar();
+  const exportExercises = session.exercises.map(e => ({...e, sets:[...e.sets]}));
+  if(currentExercise && currentExercise.sets.length){
+    const exExisting = exportExercises.find(e=> e.name===currentExercise.name);
+    if(exExisting){
+      currentExercise.sets.forEach(s=>{
+        exExisting.sets.push({
+          set: exExisting.sets.length+1,
+          weight:s.weight, reps:s.reps, time:s.time,
+          restPlanned:s.restPlanned, restActual:s.restActual
+        });
+      });
+    } else {
+      exportExercises.push({ name: currentExercise.name, sets: currentExercise.sets.map(s=>({...s})) });
+    }
+  }
+  if(!exportExercises.length){
+    alert('No workout data yet.');
+    return;
+  }
+  const totalSets = exportExercises.reduce((sum,e)=> sum+e.sets.length,0);
+  const payload = {
+    date: new Date().toISOString().split('T')[0],
+    timestamp: new Date().toISOString(),
+    totalExercises: exportExercises.length,
+    totalSets,
+    exercises: exportExercises
+  };
+
+  const jsonStr = JSON.stringify(payload,null,2);
+  triggerDownload(new Blob([jsonStr], {type:'application/json'}), `workout_${payload.date}.json`);
+
+  let csv = 'Exercise,Set,Weight,Reps,Time,RestPlanned(sec),RestActual(sec)\n';
+  exportExercises.forEach(ex => {
+    ex.sets.forEach(s => {
+      if(ex.isSuperset){
+        s.exercises.forEach(sub=>{
+          csv += `${sub.name},${s.set},${sub.weight},${sub.reps},${s.time},${s.restPlanned ?? ''},${s.restActual ?? ''}\n`;
+        });
+      } else {
+        csv += `${ex.name},${s.set},${s.weight},${s.reps},${s.time},${s.restPlanned ?? ''},${s.restActual ?? ''}\n`;
+      }
+    });
+  });
+  triggerDownload(new Blob([csv], {type:'text/csv'}), `workout_${payload.date}.csv`);
+
+  let aiText = `WORKOUT DATA - ${payload.date}\n\n`;
+  exportExercises.forEach(ex=>{
+    if(ex.isSuperset){
+      aiText += `${ex.name}:\n`;
+      ex.sets.forEach(s=>{
+        const rp = s.restPlanned!=null ? ` (planned ${formatSec(s.restPlanned)}` : '';
+        const ra = s.restActual !=null ? `${rp?'; ': ' ('}actual ${formatSec(s.restActual)})` : (rp?')':'');
+        s.exercises.forEach(sub=>{
+          aiText += `  Set ${s.set} - ${sub.name}: ${sub.weight} lbs × ${sub.reps} reps${rp||ra? (rp?rp:'')+(ra?ra:''):''}\n`;
+        });
+      });
+    } else {
+      aiText += `${ex.name}:\n`;
+      ex.sets.forEach(s=>{
+        const rp = s.restPlanned!=null ? ` (planned ${formatSec(s.restPlanned)}` : '';
+        const ra = s.restActual !=null ? `${rp?'; ': ' ('}actual ${formatSec(s.restActual)})` : (rp?')':'');
+        aiText += `  Set ${s.set}: ${s.weight} lbs × ${s.reps} reps${rp||ra? (rp?rp:'')+(ra?ra:''):''}\n`;
+      });
+    }
+    aiText += '\n';
+  });
+  aiText += `Summary: ${payload.totalExercises} exercises, ${payload.totalSets}total sets.\n\n`;
+  aiText += `Please analyze progress vs previous sessions, suggest next targets, identify weak points, and recommend optimal weight/rep progressions.`;
+
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(aiText).then(()=>{
+      alert('Exported JSON + CSV. AI summary copied to clipboard ✅');
+    }).catch(()=> alert('Exported files. (Clipboard copy failed)'));
+  } else {
+    alert('Exported JSON + CSV. Copy this manually:\n\n' + aiText);
+  }
+});
+function triggerDownload(blob, filename){
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/* ------------------ SAVE / LOAD ------------------ */
+function saveState(){
+  localStorage.setItem('wt_session', JSON.stringify(session));
+  localStorage.setItem('wt_currentExercise', JSON.stringify(currentExercise));
+}
+
+/* ------------------ UTILS ------------------ */
+function formatSec(sec){
+  const m=Math.floor(sec/60), s=sec%60;
+  return `${m}m ${s}s`;
+}
+
+/* ------------------ SHORTCUTS ------------------ */
+repsInput.addEventListener('keydown', e => {
+  if(e.key==='Enter') logBtn.click();
+});
+weightInput.addEventListener('keydown', e => {
+  if(e.key==='Enter') repsInput.focus();
+});
+}
+
+function getSessionSnapshot(){
+  const snapshot = session.exercises.map(ex => ({
+    name: ex.name,
+    isSuperset: ex.isSuperset || false,
+    exercises: ex.exercises ? [...ex.exercises] : undefined,
+    sets: ex.sets.map(s => ({...s}))
+  }));
+  if(currentExercise){
+    snapshot.push({
+      name: currentExercise.name,
+      isSuperset: currentExercise.isSuperset || false,
+      exercises: currentExercise.exercises ? [...currentExercise.exercises] : undefined,
+      sets: currentExercise.sets.map(s => ({...s}))
+    });
+  }
+  return snapshot;
+}
+
+if (typeof window !== 'undefined') {
+  window.getSessionSnapshot = getSessionSnapshot;
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { canLogSet };
+}
