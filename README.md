@@ -4,11 +4,11 @@ This is a lightweight web-based workout tracker. Log sets with any weight (inclu
 
 ### History
 
-Workout history is saved to local storage under `wt_history`. You can export this history to a JSON file or import it back in two ways:
+Workout history is saved to local storage under `wt_history`. You can export this history or import additional entries.
 
-1. **Import History** – choose a JSON file from disk.
-2. **Paste History** – toggle the paste box and paste JSON directly.
+1. **Import History** – choose a JSON file from disk (entries merge and de-duplicate).
+2. **Paste Import** – paste JSON, AI text, or CSV into the box and import.
 
-After pasting valid JSON the calendar re-renders and you'll see your notes immediately.
+The calendar includes Prev/Next buttons plus Today and Go-to-date controls for quick navigation. After importing, the calendar re-renders and you'll see your notes immediately.
 
 Run tests with `npm test`.
