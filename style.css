@@ -166,3 +166,18 @@ body.dark .superset-builder{background:#20242a;border-color:#2d333c;}
 
 .summary-item{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
 .summary-item button{margin-left:8px;}
+
+/* calendar */
+#calendarSection{margin-top:26px;}
+.calendar-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+#calTitle{font-weight:600;}
+#calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:12px;}
+#calendar .cal-header{font-weight:600;text-align:center;}
+.calendar-day{padding:8px;border:1px solid #e6eaef;border-radius:6px;text-align:center;cursor:pointer;}
+.calendar-day.has-data{background:#d4edda;border-color:#c3e6cb;}
+.calendar-day.selected{border-color:#667eea;font-weight:700;}
+.calendar-day.muted{opacity:.4;}
+.day-details{border:1px solid #e6eaef;border-radius:8px;padding:10px;margin-bottom:12px;}
+.day-details h4{margin-bottom:8px;}
+.day-details ul{list-style:disc;margin-left:20px;margin-bottom:8px;}
+.history-actions{display:flex;gap:8px;flex-wrap:wrap;}
