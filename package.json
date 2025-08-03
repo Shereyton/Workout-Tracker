@@ -1,13 +1,135 @@
-{
-  "name": "workout-tracker",
-  "version": "1.0.0",
-  "scripts": {
-    "setup": "npm install",
-    "test": "jest",
-    "test:watch": "jest --watchAll"
-  },
-  "devDependencies": {
-    "jest": "^29.6.1",
-    "jest-environment-jsdom": "^30.0.5"
-  }
-}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>Workout Tracker Pro</title>
+<meta name="description" content="Lightweight mobile workout tracker with export + AI summary">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>💪 Workout Tracker <span class="badge">Pro</span></h1>
+      <div id="today" class="date"></div>
+    </div>
+
+    <div class="section">
+
+      <!-- Add Custom Exercise -->
+      <div class="inline-row" style="margin-bottom:6px;">
+        <input type="text" id="customExercise" placeholder="Add Custom Exercise" class="field">
+        <button id="addExercise" class="btn btn-secondary" style="flex:0 0 120px;">Add</button>
+      </div>
+      <button id="startSuperset" class="btn btn-secondary" style="margin-bottom:12px;">Start Superset</button>
+      <div id="supersetBuilder" class="superset-builder hidden">
+        <div class="inline-row" style="margin-bottom:6px;">
+          <select id="supersetSelect1"></select>
+          <select id="supersetSelect2"></select>
+        </div>
+        <button id="beginSuperset" class="btn btn-primary">Begin Superset</button>
+      </div>
+
+      <!-- Choose Exercise -->
+      <select id="exerciseSelect">
+        <option value="">Select Exercise</option>
+        <option>Bench Press</option>
+        <option>Incline Bench Press</option>
+        <option>Squats</option>
+        <option>Straight Arm Bicep Curls</option>
+        <option>Lat Pulldown (Underhand)</option>
+        <option>Lat Pulldown (Overhand)</option>
+      </select>
+
+      <!-- Interface -->
+      <div id="interface" class="hidden">
+        <div class="current-exercise">
+          <h2 id="exerciseName"></h2>
+          <div class="set-info">Set <span id="setCounter">1</span></div>
+        </div>
+
+        <!-- timer controls -->
+        <div class="inline-row" style="margin-bottom:8px;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="useTimer" checked> Use rest timer
+          </label>
+          <input type="number" id="restSecsInput" class="field" placeholder="Rest (sec)" value="90" min="5">
+        </div>
+
+        <div id="restBox" class="rest-timer hidden">
+          <div>Rest Time</div>
+          <div id="restDisplay" class="timer-display">01:30</div>
+          <div style="font-size:11px; margin-top:4px; opacity:.8;">Tap to cancel</div>
+        </div>
+
+        <div class="inline-row" id="standardInputs">
+          <input type="number" id="weight" min="0" step="1" class="field" placeholder="Weight (lbs)">
+          <input type="number" id="reps"   min="1" step="1" class="field" placeholder="Reps">
+        </div>
+        <div id="supersetInputs" class="superset-inputs hidden"></div>
+
+        <button id="logBtn" class="btn btn-primary">Log Set</button>
+        <button id="nextExerciseBtn" class="btn btn-secondary">Next Exercise</button>
+        <button id="resetBtn" class="btn btn-reset">Reset Workout</button>
+
+        <div class="sets-history">
+          <h3>Today's Sets</h3>
+          <div id="setsList"></div>
+        </div>
+      </div>
+
+      <div class="summary" id="summaryBox">
+        <h3>Workout Summary</h3>
+        <div id="summaryText">Start your first exercise to begin tracking.</div>
+        <div class="notice">Autosaves locally. Export when finished.</div>
+      </div>
+
+      <div id="calendarSection">
+        <h3>Workout History</h3>
+        <div class="calendar-nav">
+          <button id="calPrev" class="btn btn-secondary">Prev</button>
+          <div id="calTitle"></div>
+          <button id="calNext" class="btn btn-secondary">Next</button>
+        </div>
+        <div class="calendar-controls">
+          <button id="calToday" class="btn btn-secondary">Today</button>
+          <input type="date" id="calGoto" class="field">
+          <button id="calGo" class="btn btn-secondary" disabled>Go</button>
+        </div>
+        <div id="calendar"></div>
+        <div id="dayDetails" class="day-details">
+          <h4 id="dayTitle"></h4>
+          <ul id="entries"></ul>
+          <div class="inline-row" style="margin-top:6px;">
+            <input type="text" id="entryInput" class="field" placeholder="Add workout note">
+            <button id="addEntry" class="btn btn-secondary" style="flex:0 0 80px;">Add</button>
+          </div>
+        </div>
+        <div class="history-actions">
+          <button id="saveTodaySession" class="btn btn-secondary">Save Today from Session</button>
+          <button id="exportHistory" class="btn btn-secondary">Export History</button>
+          <input type="file" id="importHistoryFile" style="display:none" accept="application/json">
+          <button id="importHistory" class="btn btn-secondary">Import History</button>
+        </div>
+        <div id="pasteImport">
+          <textarea id="pasteJson" placeholder="Paste JSON / AI text / CSV here"></textarea>
+          <button id="importFromPaste" class="btn btn-secondary" style="margin-top:8px;">Import From Paste</button>
+        </div>
+      </div>
+
+      <button id="exportBtn" class="btn btn-export">Export (JSON + AI + CSV)</button>
+
+    </div>
+  </div>
+  <div class="footer-space"></div>
+
+  <!-- Floating Theme Toggle -->
+  <button id="darkToggle" aria-label="Toggle dark mode">
+    <span id="themeIcon">🌙</span>
+    <span id="themeLabel">Dark</span>
+  </button>
+
+<script src="script.js"></script>
+<script src="calendar.js"></script>
+</body>
+</html>
