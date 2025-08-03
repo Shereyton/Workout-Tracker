@@ -3,15 +3,17 @@ function parseDateLocal(str){
   return new Date(y, m-1, d);
 }
 
-if (typeof document !== 'undefined' && document.getElementById('calendar')) {
-  const STORAGE_KEY = 'wt_history';
-  let history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-  let current = new Date();
-  current.setDate(1);
-  let selectedDate = formatDate(new Date());
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', () => {
+    if(!document.getElementById('calendar')) return;
+    const STORAGE_KEY = 'wt_history';
+    let history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+    let current = new Date();
+    current.setDate(1);
+    let selectedDate = formatDate(new Date());
 
   const calendarEl = document.getElementById('calendar');
-  the dayTitle = document.getElementById('dayTitle');
+  const dayTitle = document.getElementById('dayTitle');
   const entriesEl = document.getElementById('entries');
   const entryInput = document.getElementById('entryInput');
   const addEntryBtn = document.getElementById('addEntry');
@@ -250,7 +252,7 @@ if (typeof document !== 'undefined' && document.getElementById('calendar')) {
 
   function parseCsv(text){
     if(!/Exercise\s*,\s*Set\s*,\s*Weight\s*,\s*Reps/i.test(text)) return null;
-    const lines = text.trim().split(/\r?\\n/).filter(Boolean);
+    const lines = text.trim().split(/\r?\n/).filter(Boolean);
     lines.shift();
     const out = [];
     lines.forEach(l=>{
@@ -336,8 +338,9 @@ if (typeof document !== 'undefined' && document.getElementById('calendar')) {
     renderDay();
   });
 
-  renderCalendar();
-  renderDay();
+    renderCalendar();
+    renderDay();
+  });
 }
 if (typeof module !== 'undefined') {
   module.exports = { parseDateLocal };
