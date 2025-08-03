@@ -1,9 +1,0 @@
-✓ logs valid sets and updates summary
-✓ rejects invalid input
-✓ deletes sets correctly
-✓ handles superset groups
-✓ exports data to JSON and CSV
-✓ generates session summary across exercises
-
-Test Suites: 1 passed, 1 total
-Tests:       6 passed, 6 total
