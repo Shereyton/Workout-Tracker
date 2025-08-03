@@ -18,7 +18,7 @@ if (typeof document !== 'undefined') {
     const entryInput = document.getElementById('entryInput');
     const addEntryBtn = document.getElementById('addEntry');
     const exportBtn = document.getElementById('exportHistory');
-    the importBtn = document.getElementById('importHistory');
+    const importBtn = document.getElementById('importHistory');
     const importFile = document.getElementById('importHistoryFile');
     const saveTodayBtn = document.getElementById('saveTodaySession');
     const calPrev = document.getElementById('calPrev');
