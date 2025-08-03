@@ -122,15 +122,21 @@ body.dark .rest-timer{background:#3a3440;color:#f1d9e8;}
 
 .summary{
   margin-top:26px;
-  background:#f8f9fa;
-  border:1px solid #e6eaef;
   padding:16px 18px;
   border-radius:16px;
   font-size:14px;
   line-height:1.5;
   word-break:break-word;
+  border:2px solid transparent;
+  background:
+    linear-gradient(#fff,#fff) padding-box,
+    var(--grad-accent) border-box;
 }
-body.dark .summary{background:#20242a;border-color:#2d333c;}
+body.dark .summary{
+  background:
+    linear-gradient(#20242a,#20242a) padding-box,
+    var(--grad-accent) border-box;
+}
 .summary h3{margin:0 0 10px;font-size:16px;}
 .notice{font-size:12px;opacity:.65;margin-top:4px;}
 
@@ -169,7 +175,20 @@ body.dark .superset-builder{background:#20242a;border-color:#2d333c;}
 .summary-item button{margin-left:8px;}
 
 /* calendar */
-#calendarSection{margin-top:26px;}
+#calendarSection{
+  margin-top:26px;
+  padding:16px 18px;
+  border-radius:16px;
+  border:2px solid transparent;
+  background:
+    linear-gradient(#fff,#fff) padding-box,
+    var(--grad-success) border-box;
+}
+body.dark #calendarSection{
+  background:
+    linear-gradient(#20242a,#20242a) padding-box,
+    var(--grad-success) border-box;
+}
 .calendar-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
 #calTitle{font-weight:600;}
 #calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:12px;}
