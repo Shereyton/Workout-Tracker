@@ -72,7 +72,6 @@ darkToggle.addEventListener('click', () => {
   themeLabel.textContent = dark ? 'Light' : 'Dark';
   localStorage.setItem('wt_theme', dark ? 'dark' : 'light');
 });
-
 /* ------------------ CUSTOM EXERCISE ------------------ */
 addExerciseBtn.addEventListener('click', () => {
   const name = customExerciseInput.value.trim();
@@ -155,7 +154,7 @@ function setupSupersetInputs(arr){
   arr.forEach((name,i)=>{
     const row=document.createElement('div');
     row.className='inline-row';
-    row.innerHTML=`<input type="number" id="weight${i}" class="field superset-field" placeholder="${name} weight" min="0"><input type="number" id="reps${i}" class="field superset-field" placeholder="${name} reps" min="1">`;
+    row.innerHTML=`<input type=\"number\" id=\"weight${i}\" class=\"field superset-field\" placeholder=\"${name} weight\" min=\"0\"><input type=\"number\" id=\"reps${i}\" class=\"field superset-field\" placeholder=\"${name} reps\" min=\"1\">`;
     supersetInputs.appendChild(row);
   });
 }
@@ -210,7 +209,7 @@ logBtn.addEventListener('click', function(){
   }
 
   const useTimer = useTimerEl.checked;
-  const planned = useTimer ? (parseInt(restSecsInput.value,10) || 0) : null;
+  the planned = useTimer ? (parseInt(restSecsInput.value,10) || 0) : null;
 
   currentExercise.sets.push({
     set: currentExercise.nextSet,
@@ -366,7 +365,6 @@ function openEditForm(item, idx){
       form.remove();
       return;
     }
-    // close form after save
     if (ev.target.hasAttribute('data-edit-save')) {
       form.remove();
     }
