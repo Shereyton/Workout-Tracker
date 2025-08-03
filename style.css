@@ -182,3 +182,8 @@ body.dark .superset-builder{background:#20242a;border-color:#2d333c;}
 .day-details h4{margin-bottom:8px;}
 .day-details ul{list-style:disc;margin-left:20px;margin-bottom:8px;}
 .history-actions{display:flex;gap:8px;flex-wrap:wrap;}
+
+.calendar-controls{display:flex;gap:8px;margin-bottom:8px;}
+.calendar-controls #calGoto{flex:1;}
+#pasteImport{margin-top:8px;}
+#pasteImport textarea{width:100%;min-height:80px;}
