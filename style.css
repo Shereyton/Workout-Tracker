@@ -103,11 +103,11 @@ body.dark .set-item{background:#20242a;border-color:#2c323a;}
 }
 body.dark .edit-form{background:#29374a;}
 .edit-form .row{display:flex;gap:8px;}
-edit-form input{margin:0;font-size:14px;padding:8px;border-radius:6px;}
-edit-form .row2{display:flex;gap:6px;}
-edit-form .row2 button{flex:1;}
+.edit-form input{margin:0;font-size:14px;padding:8px;border-radius:6px;}
+.edit-form .row2{display:flex;gap:6px;}
+.edit-form .row2 button{flex:1;}
 
-rest-timer{
+.rest-timer{
   background:linear-gradient(135deg,#ff9a9e 0%,#fecfef 100%);
   color:#2c3e50;padding:15px 18px;
   border-radius:14px;
@@ -120,7 +120,7 @@ rest-timer{
 body.dark .rest-timer{background:#3a3440;color:#f1d9e8;}
 .timer-display{font-size:26px;font-weight:700;margin-top:4px;}
 
-summary{
+.summary{
   margin-top:26px;
   background:#f8f9fa;
   border:1px solid #e6eaef;
