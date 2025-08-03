@@ -91,6 +91,11 @@
           <div id="calTitle"></div>
           <button id="calNext" class="btn btn-secondary">Next</button>
         </div>
+        <div class="calendar-controls">
+          <button id="calToday" class="btn btn-secondary">Today</button>
+          <input type="date" id="calGoto" class="field">
+          <button id="calGo" class="btn btn-secondary" disabled>Go</button>
+        </div>
         <div id="calendar"></div>
         <div id="dayDetails" class="day-details">
           <h4 id="dayTitle"></h4>
@@ -105,11 +110,10 @@
           <button id="exportHistory" class="btn btn-secondary">Export History</button>
           <input type="file" id="importHistoryFile" style="display:none" accept="application/json">
           <button id="importHistory" class="btn btn-secondary">Import History</button>
-          <button id="pasteHistoryToggle" class="btn btn-secondary">Paste History</button>
         </div>
-        <div id="pasteHistoryBox" class="hidden" style="margin-top:8px;">
-          <textarea id="pasteHistoryText" placeholder="Paste history JSON"></textarea>
-          <button id="pasteHistoryImport" class="btn btn-secondary" style="margin-top:8px;">Import Pasted</button>
+        <div id="pasteImport">
+          <textarea id="pasteJson" placeholder="Paste JSON / AI text / CSV here"></textarea>
+          <button id="importFromPaste" class="btn btn-secondary" style="margin-top:8px;">Import From Paste</button>
         </div>
       </div>
 
