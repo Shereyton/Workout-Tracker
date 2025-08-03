@@ -30,12 +30,6 @@ if (typeof document !== 'undefined') {
     const pasteJson = document.getElementById('pasteJson');
     const importFromPaste = document.getElementById('importFromPaste');
 
-    function updateDateInput(){
-      calGoto.value = selectedDate;
-      calGo.disabled = !calGoto.value;
-    }
-    updateDateInput();
-
     function formatDate(d){
       return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     }
@@ -146,7 +140,6 @@ if (typeof document !== 'undefined') {
         });
         entriesEl.appendChild(li);
       });
-      updateDateInput();
     }
     addEntryBtn.addEventListener('click', () => {
       const val = entryInput.value.trim();
