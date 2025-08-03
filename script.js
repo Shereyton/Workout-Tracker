@@ -121,194 +121,459 @@ function startExercise(name){
   if(currentExercise && currentExercise.sets.length){
     pushOrMergeExercise(currentExercise);
   }
-  currentExercise = { name, sets: [], isSuperset: false };
-  showInterface();
-  exerciseNameEl.textContent = name;
-  weightInput.value='';
-  repsInput.value='';
-  updateSetCounter();
-  restBox.classList.add('hidden');
-  restTimer = null;
-  restSecondsRemaining = 0;
+  currentExercise = { name, sets: [], nextSet: 1 };
+  supersetInputs.classList.add('hidden');
+  standardInputs.classList.remove('hidden');
+  supersetBuilder.classList.add('hidden');
   saveState();
+  showInterface();
+  rebuildSetsList();
+  updateSetCounter();
+  weightInput.focus();
 }
 
-/* ------------------ SUPERSET MODE ------------------ */
-function startSuperset(names){
+function startSuperset(namesArr){
   if(!session.startedAt) session.startedAt = new Date().toISOString();
   if(currentExercise && currentExercise.sets.length){
     pushOrMergeExercise(currentExercise);
   }
-  currentExercise = {
-    name: `${names[0]} + ${names[1]}`,
-    sets: [],
-    isSuperset: true,
-    exercises: names.map(n => ({name:n}))
-  };
-  showInterface();
-  exerciseNameEl.textContent = currentExercise.name;
+  const clean = namesArr.filter(Boolean);
+  currentExercise = { name: clean.join(' + '), isSuperset:true, exercises:[...clean], sets:[], nextSet:1 };
+  setupSupersetInputs(clean);
   standardInputs.classList.add('hidden');
   supersetInputs.classList.remove('hidden');
-  supersetInputs.innerHTML = currentExercise.exercises.map(ex=>{
-    return `<input type="number" class="field superset-field" data-name="${ex.name}" placeholder="${ex.name} weight (lbs)">
-            <input type="number" class="field superset-field" data-name="${ex.name}" placeholder="${ex.name} reps">`;
-  }).join('');
-  updateSetCounter();
-  restBox.classList.add('hidden');
-  restTimer = null;
-  restSecondsRemaining = 0;
+  supersetBuilder.classList.add('hidden');
   saveState();
-}
-
-/* ------------------ INTERFACE ------------------ */
-function showInterface(){
-  interfaceBox.classList.remove('hidden');
-  exerciseSelect.classList.add('hidden');
-}
-
-function updateSetCounter(){
-  const count = currentExercise.sets.length + 1;
-  setCounterEl.textContent = count;
-}
-
-logBtn.addEventListener('click', () => {
-  if(currentExercise.isSuperset){
-    const fields = [...supersetInputs.querySelectorAll('.superset-field')];
-    const inputs = [];
-    for(let i=0;i<fields.length;i+=2){
-      const w = parseFloat(fields[i].value);
-      const r = parseInt(fields[i+1].value,10);
-      inputs.push({weight:w,reps:r,name:fields[i].dataset.name});
-    }
-    if(inputs.some(inp => !canLogSet(inp.weight, inp.reps))) {
-      alert('Invalid inputs');
-      return;
-    }
-    const set = {
-      set: currentExercise.sets.length + 1,
-      time: new Date().toISOString(),
-      restPlanned: useTimerEl.checked ? parseInt(restSecsInput.value,10) : null,
-      exercises: inputs.map(i => ({name:i.name,weight:i.weight,reps:i.reps}))
-    };
-    currentExercise.sets.push(set);
-    fields.forEach(f => f.value='');
-    if(useTimerEl.checked){
-      startRestTimer(set);
-    }
-  } else {
-    const w = parseFloat(weightInput.value);
-    const r = parseInt(repsInput.value,10);
-    if(!canLogSet(w,r)){
-      alert('Enter valid weight and reps');
-      return;
-    }
-    const set = {
-      set: currentExercise.sets.length + 1,
-      weight:w,reps:r,
-      time:new Date().toISOString(),
-      restPlanned: useTimerEl.checked ? parseInt(restSecsInput.value,10) : null
-    };
-    currentExercise.sets.push(set);
-    weightInput.value=''; repsInput.value='';
-    if(useTimerEl.checked){
-      startRestTimer(set);
-    }
-  }
+  showInterface();
   rebuildSetsList();
   updateSetCounter();
+  document.querySelector('#weight0').focus();
+}
+
+function setupSupersetInputs(arr){
+  supersetInputs.innerHTML='';
+  arr.forEach((name,i)=>{
+    const row=document.createElement('div');
+    row.className='inline-row';
+    row.innerHTML=`<input type="number" id="weight${i}" class="field superset-field" placeholder="${name} weight" min="0"><input type="number" id="reps${i}" class="field superset-field" placeholder="${name} reps" min="1">`;
+    supersetInputs.appendChild(row);
+  });
+}
+
+function showInterface(){
+  interfaceBox.classList.remove('hidden');
+  exerciseNameEl.textContent = currentExercise.name;
+}
+
+/* ------------------ LOG SET ------------------ */
+logBtn.addEventListener('click', function(){
+  if(currentExercise.isSuperset){
+    const setGroup = currentExercise.exercises.map((ex,i)=>{
+      const w=parseInt(document.getElementById(`weight${i}`).value,10);
+      const r=parseInt(document.getElementById(`reps${i}`).value,10);
+      return {name:ex, weight:w, reps:r};
+    });
+    if(setGroup.some(s=>!canLogSet(s.weight,s.reps))){
+      alert('Enter weight & reps for all exercises');
+      return;
+    }
+    const useTimer = useTimerEl.checked;
+    const planned = useTimer ? (parseInt(restSecsInput.value,10) || 0) : null;
+    currentExercise.sets.push({
+      set: currentExercise.nextSet,
+      exercises:setGroup,
+      time:new Date().toLocaleTimeString(),
+      restPlanned:planned,
+      restActual:null
+    });
+    addSetElement(currentExercise.sets[currentExercise.sets.length-1], currentExercise.sets.length-1);
+    currentExercise.nextSet++;
+    updateSetCounter();
+    currentExercise.exercises.forEach((_,i)=>{
+      document.getElementById(`weight${i}`).value='';
+      document.getElementById(`reps${i}`).value='';
+    });
+    if(useTimer && planned!=null){
+      startRest(planned, currentExercise.sets.length-1);
+    }
+    updateSummary();
+    saveState();
+    return;
+  }
+
+  const w = parseInt(weightInput.value, 10);
+  const r = parseInt(repsInput.value, 10);
+
+  if (!canLogSet(w, r)) {
+    alert('Enter weight & reps');
+    return;
+  }
+
+  const useTimer = useTimerEl.checked;
+  const planned = useTimer ? (parseInt(restSecsInput.value,10) || 0) : null;
+
+  currentExercise.sets.push({
+    set: currentExercise.nextSet,
+    weight: w,
+    reps: r,
+    time: new Date().toLocaleTimeString(),
+    restPlanned: planned,
+    restActual: null
+  });
+
+  addSetElement(currentExercise.sets[currentExercise.sets.length - 1], currentExercise.sets.length - 1);
+  currentExercise.nextSet++;
+  updateSetCounter();
+
+  weightInput.select();
+  repsInput.value = '';
+  repsInput.focus();
+
+  if (useTimer && planned != null) {
+    startRest(planned, currentExercise.sets.length - 1);
+  }
+
+  updateSummary();
   saveState();
 });
+function addSetElement(setObj,index){
+  const item = document.createElement('div');
+  item.className = 'set-item';
+  item.dataset.index = index;
+
+  const restInfo = setObj.restActual != null
+    ? ` • Rest: ${formatSec(setObj.restActual)}`
+    : (setObj.restPlanned != null ? ` • Rest planned: ${formatSec(setObj.restPlanned)}` : '');
+
+  let meta = '';
+  if(currentExercise.isSuperset){
+    meta = setObj.exercises.map(e=>`${e.name}: ${e.weight}×${e.reps}`).join(' |');
+  } else {
+    meta = `${setObj.weight} lbs × ${setObj.reps} reps`;
+  }
+
+  item.innerHTML = `
+    <div style="flex:1;min-width:150px;">
+      <div class="set-label">${currentExercise.name} – Set ${setObj.set}</div>
+      <div class="set-meta">${meta}${restInfo}</div>
+    </div>
+    <div class="set-actions">
+      <button class="btn-mini edit" data-action="edit">Edit</button>
+      <button class="btn-mini del"  data-action="del">Del</button>
+    </div>
+  `;
+  setsList.appendChild(item);
+}
 
 function rebuildSetsList(){
   setsList.innerHTML='';
-  session.exercises.forEach(ex => {
-    ex.sets.forEach(set => addSetRow(ex.name,set));
-  });
-  if(currentExercise){
-    currentExercise.sets.forEach(set => addSetRow(currentExercise.name,set));
-  }
+  if(!currentExercise) return;
+  currentExercise.sets.forEach((s,i)=> addSetElement(s,i));
 }
 
-function addSetRow(name,set){
-  const div = document.createElement('div');
-  div.className='set-item';
-  const label = document.createElement('div');
-  label.className='set-label';
-  label.textContent = `${name} - Set ${set.set}`;
-  const meta = document.createElement('div');
-  meta.className='set-meta';
-  if(set.exercises){
-    meta.textContent = set.exercises.map(s=>`${s.name}: ${s.weight}×${s.reps}`).join('; ');
-  } else {
-    meta.textContent = `${set.weight} lbs × ${set.reps}`;
-  }
-  div.appendChild(label); div.appendChild(meta);
-  setsList.appendChild(div);
-}
-
-/* ------------------ REST TIMER ------------------ */
-function startRestTimer(set){
-  restSecondsRemaining = set.restPlanned;
-  restSetIndex = set.set;
-  restStartMs = Date.now();
-  restDisplay.textContent = formatTime(restSecondsRemaining);
-  restBox.classList.remove('hidden');
-  restTimer = setInterval(()=>{
-    restSecondsRemaining--;
-    restDisplay.textContent = formatTime(restSecondsRemaining);
-    if(restSecondsRemaining <= 0){
-      clearInterval(restTimer);
-      restTimer = null;
-      alert('Rest over!');
-      restBox.classList.add('hidden');
-    }
-  },1000);
-}
-
-restBox.addEventListener('click', () => {
-  if(restTimer){
-    clearInterval(restTimer);
-    restTimer = null;
-    const actual = Math.round((Date.now()-restStartMs)/1000);
-    const exercise = currentExercise;
-    const set = exercise.sets.find(s=>s.set===restSetIndex);
-    if(set) set.restActual = actual;
-    restBox.classList.add('hidden');
-  }
+/* ------------------ EDIT / DELETE ------------------ */
+setsList.addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if(!btn) return;
+  const action = btn.dataset.action;
+  const item = btn.closest('.set-item');
+  const idx = parseInt(item.dataset.index, 10);
+  if(action==='del') deleteSet(idx);
+  else if(action==='edit') openEditForm(item, idx);
 });
 
-/* ------------------ NAVIGATION ------------------ */
+function deleteSet(idx){
+  if (!confirm('Delete this set?')) return;
+  currentExercise.sets.splice(idx, 1);
+  renumberSets();
+  rebuildSetsList();
+  updateSetCounter();
+  updateSummary();
+  saveState();
+}
+
+/* === FIXED EDIT FORM === */
+function openEditForm(item, idx){
+  if(item.querySelector('.edit-form')) return;
+  const s = currentExercise.sets[idx];
+
+  const form = document.createElement('div');
+  form.className = 'edit-form';
+  if(currentExercise.isSuperset){
+    let rows='';
+    s.exercises.forEach((ex,i)=>{
+      rows += `<div class="row"><span style="font-size:12px;flex-basis:100%;">${ex.name}</span><input type="number" class="editW${i}" value="${ex.weight}" min="0"><input type="number" class="editR${i}" value="${ex.reps}" min="1"></div>`;
+    });
+    form.innerHTML = `${rows}<div class="row2"><button type="button" class="btn-mini edit" data-edit-save>Save</button><button type="button" class="btn-mini del" data-edit-cancel>Cancel</button></div>`;
+  } else {
+    form.innerHTML = `
+      <div class="row">
+        <input type="number" class="editW" value="${s.weight}" min="0">
+        <input type="number" class="editR" value="${s.reps}"   min="1">
+      </div>
+      <div class="row">
+        <input type="number" class="editRestPlanned" value="${s.restPlanned ?? ''}" min="0" placeholder="Rest planned (sec)">
+        <input type="number" class="editRestActual"  value="${s.restActual  ?? ''}" min="0" placeholder="Rest actual (sec)">
+      </div>
+      <div class="row2">
+        <button type="button" class="btn-mini edit" data-edit-save>Save</button>
+        <button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button>
+      </div>
+    `;
+  }
+  item.appendChild(form);
+
+  form.addEventListener('click', ev => {
+    if (ev.target.hasAttribute('data-edit-save')) {
+      if(currentExercise.isSuperset){
+        let bad=false;
+        s.exercises.forEach((ex,i)=>{
+          const w=parseInt(form.querySelector(`.editW${i}`).value,10);
+          const r=parseInt(form.querySelector(`.editR${i}`).value,10);
+          if(isNaN(w)||isNaN(r)) bad=true;
+          ex.weight=w; ex.reps=r;
+        });
+        if(bad){
+          alert('Enter valid numbers');
+          return;
+        }
+      } else {
+        const newW  = parseInt(form.querySelector('.editW').value, 10);
+        const newR  = parseInt(form.querySelector('.editR').value, 10);
+        const vPlanned = form.querySelector('.editRestPlanned').value;
+        const vActual  = form.querySelector('.editRestActual').value;
+
+        const newPlanned = vPlanned === '' ? null : parseInt(vPlanned, 10);
+        const newActual  = vActual  === '' ? null : parseInt(vActual, 10);
+
+        if (isNaN(newW) || isNaN(newR)) {
+          alert('Enter valid weight & reps');
+          return;
+        }
+
+        s.weight = newW;
+        s.reps   = newR;
+        s.restPlanned = newPlanned;
+        s.restActual  = newActual;
+      }
+
+      saveState();
+      rebuildSetsList();
+      updateSummary();
+    }
+    if (ev.target.hasAttribute('data-edit-cancel')) {
+      form.remove();
+      return;
+    }
+    // close form after save
+    if (ev.target.hasAttribute('data-edit-save')) {
+      form.remove();
+    }
+  });
+}
+
+function renumberSets(){
+  currentExercise.sets.forEach((s,i)=> s.set = i + 1);
+  currentExercise.nextSet = currentExercise.sets.length + 1;
+}
+
+function updateSetCounter(){
+  if(!currentExercise) return;
+  setCounterEl.textContent = currentExercise.nextSet;
+  exerciseNameEl.textContent = currentExercise.name;
+}
+
+/* ------------------ NEXT EXERCISE ------------------ */
 nextExerciseBtn.addEventListener('click', () => {
   if(currentExercise && currentExercise.sets.length){
     pushOrMergeExercise(currentExercise);
   }
   currentExercise = null;
+  exerciseSelect.value = '';
   interfaceBox.classList.add('hidden');
-  exerciseSelect.classList.remove('hidden');
-  summaryText.textContent = buildSummaryText();
+  weightInput.value = '';
+  repsInput.value = '';
+
+  if (restTimer) {
+    clearInterval(restTimer);
+    restBox.classList.add('hidden');
+  }
+
+  updateSummary();
   saveState();
 });
 
-resetBtn.addEventListener('click', () => {
-  if(confirm('Reset session?')){
-    session = { exercises: [], startedAt: null };
-    currentExercise = null;
-    interfaceBox.classList.add('hidden');
-    exerciseSelect.classList.remove('hidden');
-    setsList.innerHTML='';
-    summaryText.textContent = 'Start your first exercise to begin tracking.';
-    restBox.classList.add('hidden');
-    restTimer = null;
-    restSecondsRemaining = 0;
-    saveState();
+function pushOrMergeExercise(ex){
+  const existing = session.exercises.find(e => e.name === ex.name);
+  if(existing){
+    ex.sets.forEach(s=>{
+      existing.sets.push(JSON.parse(JSON.stringify({...s, set: existing.sets.length + 1})));
+    });
+  } else {
+    session.exercises.push({
+      name: ex.name,
+      isSuperset: ex.isSuperset || false,
+      exercises: ex.exercises ? [...ex.exercises] : undefined,
+      sets: ex.sets.map(s=> ({...s}))
+    });
   }
+}
+
+/* ------------------ REST TIMER ------------------ */
+function startRest(seconds,setIndex){
+  stopRest();
+  restSecondsRemaining = seconds;
+  restStartMs = Date.now();
+  restSetIndex = setIndex;
+  updateRestDisplay();
+  restBox.classList.remove('hidden');
+  restTimer = setInterval(() => {
+    restSecondsRemaining--;
+    updateRestDisplay();
+    if(restSecondsRemaining <= 0){
+      finishRest();
+      restDisplay.textContent = 'Ready!';
+      setTimeout(() => restBox.classList.add('hidden'), 1500);
+    }
+  }, 1000);
+}
+
+function stopRest(){
+  if (restTimer) {
+    clearInterval(restTimer);
+    restTimer = null;
+  }
+}
+
+function finishRest(){
+  stopRest();
+  const elapsed = Math.round((Date.now() - restStartMs)/1000);
+  if(currentExercise && restSetIndex!=null && currentExercise.sets[restSetIndex]){
+    currentExercise.sets[restSetIndex].restActual = elapsed;
+    saveState();
+    rebuildSetsList();
+  }
+  restSetIndex = null;
+}
+
+function updateRestDisplay(){
+  const m = Math.floor(restSecondsRemaining/60);
+  const s = restSecondsRemaining % 60;
+  restDisplay.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+restBox.addEventListener('click', function(){
+  finishRest();
+  restBox.classList.add('hidden');
 });
 
-/* ------------------ EXPORT ------------------ */
-exportBtn.addEventListener('click', () => {
-  const exportExercises = [...session.exercises];
+/* ------------------ CALENDAR SAVE ------------------ */
+function saveSessionLinesToHistory(){
+  const snapshot = getSessionSnapshot();
+  if(!snapshot.length) return;
+  const lines = [];
+  snapshot.forEach(ex => {
+    if(ex.isSuperset){
+      ex.sets.forEach(set => {
+        set.exercises.forEach(sub => {
+          lines.push(`${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`);
+        });
+      });
+    } else {
+      ex.sets.forEach(set => {
+        lines.push(`${ex.name}: ${set.weight} lbs × ${set.reps} reps`);
+      });
+    }
+  });
+  const d = new Date();
+  const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  let history = JSON.parse(localStorage.getItem('wt_history')) || {};
+  if(!history[dateStr]) history[dateStr] = [];
+  lines.forEach(l => { if(!history[dateStr].includes(l)) history[dateStr].push(l); });
+  localStorage.setItem('wt_history', JSON.stringify(history));
+  window.dispatchEvent(new Event('wt-history-updated'));
+}
+
+function maybeSaveSessionToCalendar(){
+  const hasData = session.exercises.length || (currentExercise && currentExercise.sets.length);
+  if(hasData && confirm("Save today's session lines to calendar?")){
+    saveSessionLinesToHistory();
+  }
+}
+
+/* ------------------ RESET WORKOUT ------------------ */
+resetBtn.addEventListener('click', ()=>{
+  if(!confirm('Reset entire workout?')) return;
+  maybeSaveSessionToCalendar();
+  stopRest();
+  session = { exercises: [], startedAt:null };
+  currentExercise = null;
+  exerciseSelect.value='';
+  interfaceBox.classList.add('hidden');
+  setsList.innerHTML='';
+  weightInput.value=''; repsInput.value='';
+  updateSummary();
+  saveState();
+});
+/* ------------------ SUMMARY ------------------ */
+function updateSummary(){
+  let totalSets = 0;
+  const lines = [];
+  session.exercises.forEach((ex,i)=>{
+    totalSets += ex.sets.length;
+    lines.push(`<div class="summary-item">${ex.name}: ${ex.sets.length} sets <button class="btn-mini edit" data-summary-edit="${i}">Edit</button></div>`);
+  });
+  if (currentExercise && currentExercise.sets.length){
+    totalSets += currentExercise.sets.length;
+    lines.push(`<div class="summary-item">${currentExercise.name}: ${currentExercise.sets.length} sets (in progress)</div>`);
+  }
+
+  if(totalSets === 0){
+    summaryText.textContent = 'Start your first exercise to begin tracking.';
+  } else {
+    summaryText.innerHTML = `<strong>Total Sets: ${totalSets}</strong><br>${lines.join('')}`;
+  }
+}
+
+summaryText.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-summary-edit]');
+  if(!btn) return;
+  const idx = parseInt(btn.dataset.summaryEdit,10);
   if(currentExercise && currentExercise.sets.length){
-    exportExercises.push(currentExercise);
+    pushOrMergeExercise(currentExercise);
+  }
+  currentExercise = session.exercises.splice(idx,1)[0];
+  showInterface();
+  if(currentExercise.isSuperset){
+    setupSupersetInputs(currentExercise.exercises);
+    standardInputs.classList.add('hidden');
+    supersetInputs.classList.remove('hidden');
+  } else {
+    supersetInputs.classList.add('hidden');
+    standardInputs.classList.remove('hidden');
+  }
+  rebuildSetsList();
+  updateSetCounter();
+  updateSummary();
+});
+
+/* ------------------ EXPORT (JSON + AI + CSV) ------------------ */
+exportBtn.addEventListener('click', () => {
+  maybeSaveSessionToCalendar();
+  const exportExercises = session.exercises.map(e => ({...e, sets:[...e.sets]}));
+  if(currentExercise && currentExercise.sets.length){
+    const exExisting = exportExercises.find(e=> e.name===currentExercise.name);
+    if(exExisting){
+      currentExercise.sets.forEach(s=>{
+        exExisting.sets.push({
+          set: exExisting.sets.length+1,
+          weight:s.weight, reps:s.reps, time:s.time,
+          restPlanned:s.restPlanned, restActual:s.restActual
+        });
+      });
+    } else {
+      exportExercises.push({ name: currentExercise.name, sets: currentExercise.sets.map(s=>({...s})) });
+    }
   }
   if(!exportExercises.length){
     alert('No workout data yet.');
@@ -375,7 +640,6 @@ exportBtn.addEventListener('click', () => {
     alert('Exported JSON + CSV. Copy this manually:\n\n' + aiText);
   }
 });
-
 function triggerDownload(blob, filename){
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
@@ -397,34 +661,6 @@ function formatSec(sec){
   return `${m}m ${s}s`;
 }
 
-function formatTime(sec){
-  const m = String(Math.floor(sec/60)).padStart(2,'0');
-  const s = String(sec%60).padStart(2,'0');
-  return `${m}:${s}`;
-}
-
-function pushOrMergeExercise(ex){
-  const existing = session.exercises.find(e => e.name === ex.name && e.isSuperset === ex.isSuperset);
-  if(existing){
-    existing.sets.push(...ex.sets.map(s => ({...s, set: existing.sets.length + s.set})));
-  } else {
-    session.exercises.push(ex);
-  }
-  summaryText.textContent = buildSummaryText();
-}
-
-function buildSummaryText(){
-  return session.exercises.map(ex => {
-    const total = ex.sets.length;
-    return `${ex.name} (${total} set${total!==1?'s':''})`;
-  }).join(', ') || 'Start your first exercise to begin tracking.';
-}
-
-/* ------------------ EXPORT UTIL ------------------ */
-function formatSecOrBlank(sec){
-  return sec != null ? sec : '';
-}
-
 /* ------------------ SHORTCUTS ------------------ */
 repsInput.addEventListener('keydown', e => {
   if(e.key==='Enter') logBtn.click();
@@ -434,7 +670,6 @@ weightInput.addEventListener('keydown', e => {
 });
 }
 
-/* ------------------ SNAPSHOT ------------------ */
 function getSessionSnapshot(){
   const snapshot = session.exercises.map(ex => ({
     name: ex.name,
