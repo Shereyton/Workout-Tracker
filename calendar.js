@@ -1,3 +1,8 @@
+function parseDateLocal(str){
+  const [y,m,d] = str.split('-').map(Number);
+  return new Date(y, m-1, d);
+}
+
 if (typeof document !== 'undefined' && document.getElementById('calendar')) {
   const STORAGE_KEY = 'wt_history';
     let history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
@@ -17,6 +22,10 @@ if (typeof document !== 'undefined' && document.getElementById('calendar')) {
     const calPrev = document.getElementById('calPrev');
     const calNext = document.getElementById('calNext');
     const calTitle = document.getElementById('calTitle');
+    const pasteToggle = document.getElementById('pasteHistoryToggle');
+    const pasteBox = document.getElementById('pasteHistoryBox');
+    const pasteText = document.getElementById('pasteHistoryText');
+    const pasteImport = document.getElementById('pasteHistoryImport');
 
   function formatDate(d){
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -24,6 +33,15 @@ if (typeof document !== 'undefined' && document.getElementById('calendar')) {
 
   function save(){
     localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+  }
+
+  function mergeHistory(obj){
+    Object.keys(obj).forEach(date => {
+      if(Array.isArray(obj[date])){
+        if(!history[date]) history[date] = [];
+        history[date].push(...obj[date]);
+      }
+    });
   }
 
   function renderCalendar(){
@@ -68,9 +86,8 @@ if (typeof document !== 'undefined' && document.getElementById('calendar')) {
       }
       if(dateStr === selectedDate) cell.classList.add('selected');
       cell.addEventListener('click', () => {
-        selectedDate = dateStr;
-        current = new Date(dateObj);
-        current.setDate(1);
+        selectedDate = formatDate(dateObj);
+        current = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1);
         renderCalendar();
         renderDay();
       });
@@ -79,7 +96,7 @@ if (typeof document !== 'undefined' && document.getElementById('calendar')) {
   }
 
   function renderDay(){
-    dayTitle.textContent = new Date(selectedDate).toDateString();
+    dayTitle.textContent = parseDateLocal(selectedDate).toDateString();
     entriesEl.innerHTML = '';
     const list = history[selectedDate] || [];
     list.forEach((text, idx) => {
@@ -155,6 +172,29 @@ if (typeof document !== 'undefined' && document.getElementById('calendar')) {
     importFile.value='';
   });
 
+  pasteToggle.addEventListener('click', () => {
+    pasteBox.classList.toggle('hidden');
+  });
+
+  pasteImport.addEventListener('click', () => {
+    try {
+      const obj = JSON.parse(pasteText.value);
+      if(typeof obj === 'object' && obj){
+        mergeHistory(obj);
+        save();
+        renderCalendar();
+        renderDay();
+        alert('History imported');
+        pasteText.value='';
+        pasteBox.classList.add('hidden');
+      } else {
+        alert('Invalid JSON');
+      }
+    } catch(err){
+      alert('Invalid JSON');
+    }
+  });
+
   calPrev.addEventListener('click', () => {
     current.setMonth(current.getMonth()-1);
     selectedDate = formatDate(new Date(current.getFullYear(), current.getMonth(), 1));
@@ -202,4 +242,7 @@ if (typeof document !== 'undefined' && document.getElementById('calendar')) {
 
   renderCalendar();
   renderDay();
+}
+if (typeof module !== 'undefined') {
+  module.exports = { parseDateLocal };
 }
