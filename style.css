@@ -94,7 +94,7 @@ body.dark .set-item{background:#20242a;border-color:#2c323a;}
   cursor:pointer;font-weight:600;
 }
 .btn-mini.edit{background:#ffc107;color:#222;}
-.btn-mini.del{background:var(--danger);color:#fff;}
+btn-mini.del{background:var(--danger);color:#fff;}
 
 .edit-form{
   width:100%;background:#e3f2fd;
