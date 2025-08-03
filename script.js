@@ -72,6 +72,7 @@ darkToggle.addEventListener('click', () => {
   themeLabel.textContent = dark ? 'Light' : 'Dark';
   localStorage.setItem('wt_theme', dark ? 'dark' : 'light');
 });
+
 /* ------------------ CUSTOM EXERCISE ------------------ */
 addExerciseBtn.addEventListener('click', () => {
   const name = customExerciseInput.value.trim();
@@ -365,6 +366,7 @@ function openEditForm(item, idx){
       form.remove();
       return;
     }
+    // close form after save
     if (ev.target.hasAttribute('data-edit-save')) {
       form.remove();
     }
@@ -587,9 +589,11 @@ exportBtn.addEventListener('click', () => {
     exercises: exportExercises
   };
 
+  // JSON
   const jsonStr = JSON.stringify(payload,null,2);
   triggerDownload(new Blob([jsonStr], {type:'application/json'}), `workout_${payload.date}.json`);
 
+  // CSV (with rest columns)
   let csv = 'Exercise,Set,Weight,Reps,Time,RestPlanned(sec),RestActual(sec)\n';
   exportExercises.forEach(ex => {
     ex.sets.forEach(s => {
@@ -604,6 +608,7 @@ exportBtn.addEventListener('click', () => {
   });
   triggerDownload(new Blob([csv], {type:'text/csv'}), `workout_${payload.date}.csv`);
 
+  // AI text
   let aiText = `WORKOUT DATA - ${payload.date}\n\n`;
   exportExercises.forEach(ex=>{
     if(ex.isSuperset){
