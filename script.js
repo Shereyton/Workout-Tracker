@@ -154,7 +154,7 @@ function setupSupersetInputs(arr){
   arr.forEach((name,i)=>{
     const row=document.createElement('div');
     row.className='inline-row';
-    row.innerHTML=`<input type=\"number\" id=\"weight${i}\" class=\"field superset-field\" placeholder=\"${name} weight\" min=\"0\"><input type=\"number\" id=\"reps${i}\" class=\"field superset-field\" placeholder=\"${name} reps\" min=\"1\">`;
+    row.innerHTML=`<input type="number" id="weight${i}" class="field superset-field" placeholder="${name} weight" min="0"><input type="number" id="reps${i}" class="field superset-field" placeholder="${name} reps" min="1">`;
     supersetInputs.appendChild(row);
   });
 }
@@ -209,7 +209,7 @@ logBtn.addEventListener('click', function(){
   }
 
   const useTimer = useTimerEl.checked;
-  the planned = useTimer ? (parseInt(restSecsInput.value,10) || 0) : null;
+  const planned = useTimer ? (parseInt(restSecsInput.value,10) || 0) : null;
 
   currentExercise.sets.push({
     set: currentExercise.nextSet,
