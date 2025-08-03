@@ -24,7 +24,7 @@ body.dark .container{background:#262a33;}
 .date{font-size:13px;opacity:.85;}
 
 .section{padding:20px 20px 28px;}
-select,input[type=number],input[type=text]{
+select,input[type=number],input[type=text],textarea{
   width:100%;font-size:16px;
   padding:13px 14px;
   border:2px solid #e1e8ed;
@@ -34,7 +34,8 @@ select,input[type=number],input[type=text]{
   margin-bottom:12px;
   font-weight:500;
 }
-body.dark select,body.dark input{
+textarea{resize:vertical;min-height:80px;}
+body.dark select,body.dark input,body.dark textarea{
   background:#1e2127;border-color:#39414d;color:#f5f6fa;
 }
 select:focus,input:focus{outline:none;border-color:#667eea;}
