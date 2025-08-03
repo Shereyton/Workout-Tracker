@@ -24,7 +24,7 @@ body.dark .container{background:#262a33;}
 .date{font-size:13px;opacity:.85;}
 
 .section{padding:20px 20px 28px;}
-select,input[type=number],input[type=text],textarea{
+select,input[type=number],input[type=text],input[type=date],textarea{
   width:100%;font-size:16px;
   padding:13px 14px;
   border:2px solid #e1e8ed;
@@ -94,7 +94,7 @@ body.dark .set-item{background:#20242a;border-color:#2c323a;}
   cursor:pointer;font-weight:600;
 }
 .btn-mini.edit{background:#ffc107;color:#222;}
-btn-mini.del{background:var(--danger);color:#fff;}
+.btn-mini.del{background:var(--danger);color:#fff;}
 
 .edit-form{
   width:100%;background:#e3f2fd;
@@ -202,6 +202,7 @@ body.dark #calendarSection{
 .day-details ul{list-style:disc;margin-left:20px;margin-bottom:8px;}
 .history-actions{display:flex;gap:8px;flex-wrap:wrap;}
 .calendar-controls{display:flex;gap:8px;margin-bottom:8px;}
-.calendar-controls #calGoto{flex:1;}
+.calendar-controls #calGoto{flex:1;min-width:120px;}
+.calendar-controls .btn{width:auto;}
 #pasteImport{margin-top:8px;}
 #pasteImport textarea{width:100%;min-height:80px;}
