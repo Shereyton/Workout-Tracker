@@ -1,4 +1,4 @@
-const { canLogSet } = require('../script');
+const { canLogSet } = require('../../script');
 
 describe('canLogSet', () => {
   it('allows zero weight with positive reps', () => {
