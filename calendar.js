@@ -17,7 +17,7 @@ if (typeof document !== 'undefined' && document.getElementById('calendar')) {
   const addEntryBtn = document.getElementById('addEntry');
   const exportBtn = document.getElementById('exportHistory');
   const importBtn = document.getElementById('importHistory');
-  the importFile = document.getElementById('importHistoryFile');
+  const importFile = document.getElementById('importHistoryFile');
   const saveTodayBtn = document.getElementById('saveTodaySession');
   const calPrev = document.getElementById('calPrev');
   const calNext = document.getElementById('calNext');
@@ -109,8 +109,8 @@ if (typeof document !== 'undefined' && document.getElementById('calendar')) {
   }
 
   function renderDay(){
-    const [y,m,d] = selectedDate.split('-').map(Number);
-    dayTitle.textContent = new Date(y, m-1, d).toDateString();
+    const dateObj = parseDateLocal(selectedDate);
+    dayTitle.textContent = dateObj.toDateString();
     entriesEl.innerHTML = '';
     const list = history[selectedDate] || [];
     list.forEach((text, idx) => {
@@ -140,7 +140,6 @@ if (typeof document !== 'undefined' && document.getElementById('calendar')) {
       entriesEl.appendChild(li);
     });
   }
-
   addEntryBtn.addEventListener('click', () => {
     const val = entryInput.value.trim();
     if(!val) return;
