@@ -29,6 +29,7 @@ if (typeof document !== 'undefined') {
     const calGo = document.getElementById('calGo');
     const pasteJson = document.getElementById('pasteJson');
     const importFromPaste = document.getElementById('importFromPaste');
+    const clearDayBtn = document.getElementById('clearDay');
 
     function updateDateInput(){
       calGoto.value = selectedDate;
@@ -122,8 +123,19 @@ if (typeof document !== 'undefined') {
       const list = history[selectedDate] || [];
       list.forEach((text, idx) => {
         const li = document.createElement('li');
-        li.textContent = text;
-        li.addEventListener('click', () => {
+        li.className = 'entry-item';
+
+        const span = document.createElement('span');
+        span.textContent = text;
+        li.appendChild(span);
+
+        const actions = document.createElement('div');
+        actions.className = 'entry-actions';
+
+        const editBtn = document.createElement('button');
+        editBtn.textContent = 'Edit';
+        editBtn.className = 'btn-mini edit';
+        editBtn.addEventListener('click', () => {
           const updated = prompt('Edit entry', text);
           if(updated !== null){
             history[selectedDate][idx] = updated.trim();
@@ -134,8 +146,12 @@ if (typeof document !== 'undefined') {
             renderCalendar();
           }
         });
-        li.addEventListener('contextmenu', e => {
-          e.preventDefault();
+        actions.appendChild(editBtn);
+
+        const delBtn = document.createElement('button');
+        delBtn.textContent = 'Del';
+        delBtn.className = 'btn-mini del';
+        delBtn.addEventListener('click', () => {
           if(confirm('Delete entry?')){
             history[selectedDate].splice(idx,1);
             if(history[selectedDate].length === 0) delete history[selectedDate];
@@ -144,8 +160,14 @@ if (typeof document !== 'undefined') {
             renderCalendar();
           }
         });
+        actions.appendChild(delBtn);
+
+        li.appendChild(actions);
         entriesEl.appendChild(li);
       });
+      if(clearDayBtn){
+        clearDayBtn.disabled = list.length === 0;
+      }
       updateDateInput();
     }
     addEntryBtn.addEventListener('click', () => {
@@ -158,6 +180,26 @@ if (typeof document !== 'undefined') {
       renderDay();
       renderCalendar();
     });
+
+    if(clearDayBtn){
+      const handleClearDay = e => {
+        e.preventDefault();
+        console.log('Clear Day clicked for', selectedDate);
+        if(!history[selectedDate] || !history[selectedDate].length) return;
+        if(confirm('Clear all entries for this day?')){
+          delete history[selectedDate];
+          save();
+          renderDay();
+          renderCalendar();
+        }
+      };
+      clearDayBtn.addEventListener('click', handleClearDay);
+      clearDayBtn.addEventListener('keyup', e => {
+        if(e.key === 'Enter' || e.key === ' '){
+          handleClearDay(e);
+        }
+      });
+    }
 
     exportBtn.addEventListener('click', () => {
       const data = JSON.stringify(history, null, 2);
