@@ -182,6 +182,7 @@ if (typeof document !== 'undefined') {
     });
 
     if(clearDayBtn){
+      // Shared handler ensures desktop and mobile clicks behave consistently
       const handleClearDay = e => {
         e.preventDefault();
         if(!history[selectedDate] || !history[selectedDate].length) return;
