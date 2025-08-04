@@ -289,9 +289,21 @@ if (typeof document !== 'undefined') {
       let target = selectedDate;
       const header = lines[0].match(/WORKOUT DATA - (\d{4}-\d{2}-\d{2})/);
       if(header) target = header[1];
-      const regex = /^\s*(Set\s+\d+\s*[-–]\s*)?.+?:\s*\d+(?:\.\d+)?\s*(?:lbs|kg)\s*[×x]\s*\d+\s*reps.*$/i;
+      let current = '';
       const out = [];
-      lines.forEach(l=>{ if(regex.test(l)) out.push(l.trim()); });
+      const exRegex = /^\s*([^:]+):\s*$/;
+      const setRegex = /^\s*Set\s*\d+\s*:\s*(\d+(?:\.\d+)?)\s*(lbs|kg)\s*[×x]\s*(\d+)\s*reps/i;
+      lines.forEach(line => {
+        const ex = line.match(exRegex);
+        if(ex){
+          current = ex[1].trim();
+          return;
+        }
+        const set = line.match(setRegex);
+        if(set && current){
+          out.push(`${current}: ${set[1]} ${set[2]} × ${set[3]} reps`);
+        }
+      });
       if(out.length){
         return {[target]: out};
       }
