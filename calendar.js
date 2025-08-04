@@ -184,7 +184,6 @@ if (typeof document !== 'undefined') {
     if(clearDayBtn){
       const handleClearDay = e => {
         e.preventDefault();
-        console.log('Clear Day clicked for', selectedDate);
         if(!history[selectedDate] || !history[selectedDate].length) return;
         if(confirm('Clear all entries for this day?')){
           delete history[selectedDate];
