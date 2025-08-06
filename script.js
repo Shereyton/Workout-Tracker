@@ -219,11 +219,11 @@ beginSupersetBtn.addEventListener('click', () => {
 // called first, which reset the `<select>` and wiped out the chosen value. This
 // caused `startExercise` to receive an empty string and the UI showed no
 // exercise name (only "Set 1").
-exerciseSelect.addEventListener('change', e => {
-  const chosen = e.target.value;
+exerciseSelect.addEventListener('change', ({ target }) => {
+  const { value: chosen } = target;
   if (!chosen) return;
   // Clear filters for the next selection, rebuild the list, then start the
-  // chosen exercise.
+  // chosen exercise and reset the dropdown.
   exerciseSearch.value = '';
   muscleFilter.value = '';
   renderExerciseOptions();
