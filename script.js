@@ -86,39 +86,26 @@ function populateMuscleFilter(){
 
 function renderExerciseOptions(){
   exerciseSelect.innerHTML = '<option value="">Select Exercise</option>';
+  const q = exerciseSearch.value.trim().toLowerCase();
+  const cat = muscleFilter.value;
   const groups = {};
   allExercises.forEach(ex => {
+    if(cat && ex.category !== cat) return;
+    if(q && !ex.name.toLowerCase().includes(q)) return;
     if(!groups[ex.category]) groups[ex.category] = [];
     groups[ex.category].push(ex);
   });
-  Object.keys(groups).sort().forEach(cat => {
+  Object.keys(groups).sort().forEach(catName => {
     const og = document.createElement('optgroup');
-    og.label = cat;
-    groups[cat].sort((a,b)=>a.name.localeCompare(b.name)).forEach(ex => {
+    og.label = catName;
+    groups[catName].sort((a,b)=>a.name.localeCompare(b.name)).forEach(ex => {
       const opt = document.createElement('option');
       opt.value = ex.name;
       opt.textContent = ex.name;
-      opt.dataset.category = cat;
+      opt.dataset.category = ex.category;
       og.appendChild(opt);
     });
     exerciseSelect.appendChild(og);
-  });
-  filterExercises();
-}
-
-function filterExercises(){
-  const q = exerciseSearch.value.trim().toLowerCase();
-  const cat = muscleFilter.value;
-  const groups = exerciseSelect.querySelectorAll('optgroup');
-  groups.forEach(g => {
-    let show = false;
-    Array.from(g.children).forEach(opt => {
-      const matchQ = opt.textContent.toLowerCase().includes(q);
-      const matchC = !cat || opt.dataset.category === cat;
-      opt.hidden = !(matchQ && matchC);
-      if(!opt.hidden) show = true;
-    });
-    g.hidden = !show;
   });
 }
 
@@ -127,8 +114,8 @@ function saveCustomExercises(){
   localStorage.setItem('custom_exercises', JSON.stringify(custom));
 }
 
-exerciseSearch.addEventListener('input', filterExercises);
-muscleFilter.addEventListener('change', filterExercises);
+exerciseSearch.addEventListener('input', renderExerciseOptions);
+muscleFilter.addEventListener('change', renderExerciseOptions);
 
 loadExercises();
 
@@ -168,11 +155,11 @@ addExerciseBtn.addEventListener('click', () => {
     populateMuscleFilter();
     renderExerciseOptions();
   }
-  exerciseSelect.value = name;
-  customExerciseInput.value = '';
   exerciseSearch.value='';
   muscleFilter.value='';
-  filterExercises();
+  renderExerciseOptions();
+  exerciseSelect.value = name;
+  customExerciseInput.value = '';
   startExercise(name);
 });
 
@@ -189,7 +176,7 @@ startSupersetBtn.addEventListener('click', () => {
   if(!supersetBuilder.classList.contains('hidden')){
     exerciseSearch.value='';
     muscleFilter.value='';
-    filterExercises();
+    renderExerciseOptions();
     populateSupersetSelects();
   }
 });
@@ -210,7 +197,7 @@ exerciseSelect.addEventListener('change', e => {
   if(e.target.value){
     exerciseSearch.value='';
     muscleFilter.value='';
-    filterExercises();
+    renderExerciseOptions();
     startExercise(e.target.value);
   }
 });
