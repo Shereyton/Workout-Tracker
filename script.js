@@ -223,7 +223,8 @@ exerciseSelect.addEventListener('change', ({ target }) => {
   const { value: chosen } = target;
   if (!chosen) return;
   // Clear filters for the next selection, start the exercise with the
-  // captured value, rebuild the options list, and finally reset the dropdown.
+  // captured value, rebuild the options list, then reset the dropdown so the
+  // current exercise's name remains visible in the interface.
   exerciseSearch.value = '';
   muscleFilter.value = '';
   startExercise(chosen);
