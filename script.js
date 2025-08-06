@@ -59,7 +59,13 @@ async function loadExercises(){
     allExercises = await res.json();
   } catch (err) {
     console.error('Failed to load exercises via fetch', err);
-    allExercises = window.exercisesFallback || [];
+    try {
+      const mod = await import('./data/exercises.js');
+      allExercises = mod.default;
+    } catch (err2) {
+      console.error('Fallback import failed', err2);
+      allExercises = [];
+    }
   }
   const custom = JSON.parse(localStorage.getItem('custom_exercises')) || [];
   custom.forEach(n => allExercises.push({ name: n, category: 'Custom', equipment: '', custom: true }));

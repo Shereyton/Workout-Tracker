@@ -1,4 +1,4 @@
-const exercises = [
+export default [
   {"name":"Bench Press","category":"Chest","equipment":"Barbell"},
   {"name":"Incline Bench Press","category":"Chest","equipment":"Barbell"},
   {"name":"Push Up","category":"Chest","equipment":"Bodyweight"},
@@ -30,12 +30,3 @@ const exercises = [
   {"name":"Cycling","category":"Cardio","equipment":"Machine"},
   {"name":"Jump Rope","category":"Cardio","equipment":"Rope"}
 ];
-
-if (typeof window !== 'undefined') {
-  window.exercisesFallback = exercises;
-}
-
-// For Node/CommonJS environments
-if (typeof module !== 'undefined') {
-  module.exports = exercises;
-}
