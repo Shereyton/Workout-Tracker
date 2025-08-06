@@ -213,22 +213,22 @@ beginSupersetBtn.addEventListener('click', () => {
   startSuperset([n1,n2]);
 });
 
-/* ------------------ SELECT EXERCISE ------------------ */
-// When a user picks an exercise from the dropdown we need to grab the value
-// *before* regenerating the options. Previously `renderExerciseOptions()` was
-// called first, which reset the `<select>` and wiped out the chosen value. This
-// caused `startExercise` to receive an empty string and the UI showed no
-// exercise name (only "Set 1").
-exerciseSelect.addEventListener('change', ({ target }) => {
-  const { value: chosen } = target;
+// ------------------ SELECT EXERCISE ------------------
+exerciseSelect.addEventListener('change', (e) => {
+  const chosen = e.target.value;
   if (!chosen) return;
-  // Clear filters for the next selection, start the exercise with the
-  // captured value, rebuild the options list, then reset the dropdown so the
-  // current exercise's name remains visible in the interface.
+
+  // Clear filters so the list is fresh next time
   exerciseSearch.value = '';
   muscleFilter.value = '';
+
+  // Start the exercise BEFORE re-rendering, so we don't lose the selected value
   startExercise(chosen);
+
+  // Rebuild the options list
   renderExerciseOptions();
+
+  // Optional: clear the dropdown so it's ready for the next pick
   exerciseSelect.value = '';
 });
 
