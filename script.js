@@ -221,15 +221,14 @@ beginSupersetBtn.addEventListener('click', () => {
 // exercise name (only "Set 1").
 exerciseSelect.addEventListener('change', e => {
   const chosen = e.target.value;
-  if(chosen){
-    // Clear filters for the next selection and start the exercise with the
-    // captured value, then rebuild the list.
-    exerciseSearch.value='';
-    muscleFilter.value='';
-    startExercise(chosen);
-    renderExerciseOptions();
-    exerciseSelect.value = '';
-  }
+  if (!chosen) return;
+  // Clear filters for the next selection and start the exercise with the
+  // captured value, then rebuild the list.
+  exerciseSearch.value = '';
+  muscleFilter.value = '';
+  startExercise(chosen);
+  renderExerciseOptions();
+  exerciseSelect.value = '';
 });
 
 function startExercise(name){
