@@ -66,6 +66,7 @@ select:focus,input:focus{outline:none;border-color:#667eea;}
 .btn-primary{background:var(--grad-main);color:#fff;}
 .btn-secondary{background:#f0f3f6;color:#555;}
 .btn-reset{background:#6c757d;color:#fff;}
+.btn-finish{background:var(--grad-success);color:#fff;}
 .btn-export{background:var(--grad-success);color:#fff;}
 
 .sets-history{margin-top:20px;}
