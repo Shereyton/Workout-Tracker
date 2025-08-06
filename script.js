@@ -47,6 +47,83 @@ const supersetBuilder  = document.getElementById('supersetBuilder');
 const supersetSelect1  = document.getElementById('supersetSelect1');
 const supersetSelect2  = document.getElementById('supersetSelect2');
 const beginSupersetBtn = document.getElementById('beginSuperset');
+const exerciseSearch   = document.getElementById('exerciseSearch');
+const muscleFilter     = document.getElementById('muscleFilter');
+
+let allExercises = [];
+
+async function loadExercises(){
+  try {
+    const res = await fetch('data/exercises.json');
+    allExercises = await res.json();
+  } catch (err) {
+    console.error('Failed to load exercises', err);
+    allExercises = [];
+  }
+  const custom = JSON.parse(localStorage.getItem('custom_exercises')) || [];
+  custom.forEach(n => allExercises.push({ name: n, category: 'Custom', equipment: '', custom: true }));
+  populateMuscleFilter();
+  renderExerciseOptions();
+}
+
+function populateMuscleFilter(){
+  const cats = Array.from(new Set(allExercises.map(e=>e.category))).sort();
+  muscleFilter.innerHTML = '<option value="">All Categories</option>';
+  cats.forEach(cat => {
+    const opt = document.createElement('option');
+    opt.value = cat;
+    opt.textContent = cat;
+    muscleFilter.appendChild(opt);
+  });
+}
+
+function renderExerciseOptions(){
+  exerciseSelect.innerHTML = '<option value="">Select Exercise</option>';
+  const groups = {};
+  allExercises.forEach(ex => {
+    if(!groups[ex.category]) groups[ex.category] = [];
+    groups[ex.category].push(ex);
+  });
+  Object.keys(groups).sort().forEach(cat => {
+    const og = document.createElement('optgroup');
+    og.label = cat;
+    groups[cat].sort((a,b)=>a.name.localeCompare(b.name)).forEach(ex => {
+      const opt = document.createElement('option');
+      opt.value = ex.name;
+      opt.textContent = ex.name;
+      opt.dataset.category = cat;
+      og.appendChild(opt);
+    });
+    exerciseSelect.appendChild(og);
+  });
+  filterExercises();
+}
+
+function filterExercises(){
+  const q = exerciseSearch.value.trim().toLowerCase();
+  const cat = muscleFilter.value;
+  const groups = exerciseSelect.querySelectorAll('optgroup');
+  groups.forEach(g => {
+    let show = false;
+    Array.from(g.children).forEach(opt => {
+      const matchQ = opt.textContent.toLowerCase().includes(q);
+      const matchC = !cat || opt.dataset.category === cat;
+      opt.hidden = !(matchQ && matchC);
+      if(!opt.hidden) show = true;
+    });
+    g.hidden = !show;
+  });
+}
+
+function saveCustomExercises(){
+  const custom = allExercises.filter(e => e.custom).map(e => e.name);
+  localStorage.setItem('custom_exercises', JSON.stringify(custom));
+}
+
+exerciseSearch.addEventListener('input', filterExercises);
+muscleFilter.addEventListener('change', filterExercises);
+
+loadExercises();
 
 /* ------------------ INIT ------------------ */
 todayEl.textContent = new Date().toLocaleDateString('en-US',{
@@ -78,11 +155,17 @@ darkToggle.addEventListener('click', () => {
 addExerciseBtn.addEventListener('click', () => {
   const name = customExerciseInput.value.trim();
   if(!name) return;
-  const opt = document.createElement('option');
-  opt.textContent = name;
-  exerciseSelect.appendChild(opt);
+  if(!allExercises.some(e => e.name.toLowerCase() === name.toLowerCase())){
+    allExercises.push({ name, category: 'Custom', equipment: '', custom: true });
+    saveCustomExercises();
+    populateMuscleFilter();
+    renderExerciseOptions();
+  }
   exerciseSelect.value = name;
   customExerciseInput.value = '';
+  exerciseSearch.value='';
+  muscleFilter.value='';
+  filterExercises();
   startExercise(name);
 });
 
@@ -97,6 +180,9 @@ function populateSupersetSelects(){
 startSupersetBtn.addEventListener('click', () => {
   supersetBuilder.classList.toggle('hidden');
   if(!supersetBuilder.classList.contains('hidden')){
+    exerciseSearch.value='';
+    muscleFilter.value='';
+    filterExercises();
     populateSupersetSelects();
   }
 });
@@ -114,7 +200,12 @@ beginSupersetBtn.addEventListener('click', () => {
 
 /* ------------------ SELECT EXERCISE ------------------ */
 exerciseSelect.addEventListener('change', e => {
-  if(e.target.value) startExercise(e.target.value);
+  if(e.target.value){
+    exerciseSearch.value='';
+    muscleFilter.value='';
+    filterExercises();
+    startExercise(e.target.value);
+  }
 });
 
 function startExercise(name){
