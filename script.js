@@ -222,8 +222,8 @@ beginSupersetBtn.addEventListener('click', () => {
 exerciseSelect.addEventListener('change', ({ target }) => {
   const { value: chosen } = target;
   if (!chosen) return;
-  // Clear filters for the next selection, rebuild the list, then start the
-  // chosen exercise and reset the dropdown.
+  // Clear filters for the next selection, rebuild the list, start the chosen
+  // exercise, and finally reset the dropdown.
   exerciseSearch.value = '';
   muscleFilter.value = '';
   renderExerciseOptions();
