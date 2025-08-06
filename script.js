@@ -214,13 +214,22 @@ beginSupersetBtn.addEventListener('click', () => {
 });
 
 /* ------------------ SELECT EXERCISE ------------------ */
-exerciseSelect.addEventListener('change', e => {
-  if(e.target.value){
-    exerciseSearch.value='';
-    muscleFilter.value='';
-    renderExerciseOptions();
-    startExercise(e.target.value);
-  }
+exerciseSelect.addEventListener('change', (e) => {
+  const chosen = e.target.value;
+  if (!chosen) return;
+
+  // Clear filters so the list is fresh next time
+  exerciseSearch.value = '';
+  muscleFilter.value = '';
+
+  // Start the exercise BEFORE re-rendering, so we don't lose the selected value
+  startExercise(chosen);
+
+  // Rebuild the options list
+  renderExerciseOptions();
+
+  // Optional: clear the dropdown so it's ready for the next pick
+  exerciseSelect.value = '';
 });
 
 function startExercise(name){
