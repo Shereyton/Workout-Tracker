@@ -15,6 +15,10 @@ function canLogSet(w, r){
   return !Number.isNaN(w) && !Number.isNaN(r) && r > 0;
 }
 
+function canLogCardio(d, t){
+  return !Number.isNaN(d) && d >= 0 && !Number.isNaN(t) && t > 0;
+}
+
 /* ------------------ ELEMENTS ------------------ */
 if (typeof document !== 'undefined' && document.getElementById('today')) {
 const todayEl          = document.getElementById('today');
@@ -43,6 +47,9 @@ const customExerciseInput = document.getElementById('customExercise');
 const startSupersetBtn = document.getElementById('startSuperset');
 const supersetInputs   = document.getElementById('supersetInputs');
 const standardInputs   = document.getElementById('standardInputs');
+const cardioInputs     = document.getElementById('cardioInputs');
+const distanceInput    = document.getElementById('distance');
+const durationInput    = document.getElementById('duration');
 const supersetBuilder  = document.getElementById('supersetBuilder');
 const supersetSelect1  = document.getElementById('supersetSelect1');
 const supersetSelect2  = document.getElementById('supersetSelect2');
@@ -55,10 +62,17 @@ let allExercises = [];
 async function loadExercises(){
   try {
     const res = await fetch('data/exercises.json');
+    if(!res.ok) throw new Error('HTTP '+res.status);
     allExercises = await res.json();
   } catch (err) {
-    console.error('Failed to load exercises', err);
-    allExercises = [];
+    console.error('Failed to load exercises via fetch', err);
+    try {
+      const mod = await import('./data/exercises.js');
+      allExercises = mod.default;
+    } catch (err2) {
+      console.error('Fallback import failed', err2);
+      allExercises = [];
+    }
   }
   const custom = JSON.parse(localStorage.getItem('custom_exercises')) || [];
   custom.forEach(n => allExercises.push({ name: n, category: 'Custom', equipment: '', custom: true }));
@@ -79,39 +93,26 @@ function populateMuscleFilter(){
 
 function renderExerciseOptions(){
   exerciseSelect.innerHTML = '<option value="">Select Exercise</option>';
+  const q = exerciseSearch.value.trim().toLowerCase();
+  const cat = muscleFilter.value;
   const groups = {};
   allExercises.forEach(ex => {
+    if(cat && ex.category !== cat) return;
+    if(q && !ex.name.toLowerCase().includes(q)) return;
     if(!groups[ex.category]) groups[ex.category] = [];
     groups[ex.category].push(ex);
   });
-  Object.keys(groups).sort().forEach(cat => {
+  Object.keys(groups).sort().forEach(catName => {
     const og = document.createElement('optgroup');
-    og.label = cat;
-    groups[cat].sort((a,b)=>a.name.localeCompare(b.name)).forEach(ex => {
+    og.label = catName;
+    groups[catName].sort((a,b)=>a.name.localeCompare(b.name)).forEach(ex => {
       const opt = document.createElement('option');
       opt.value = ex.name;
       opt.textContent = ex.name;
-      opt.dataset.category = cat;
+      opt.dataset.category = ex.category;
       og.appendChild(opt);
     });
     exerciseSelect.appendChild(og);
-  });
-  filterExercises();
-}
-
-function filterExercises(){
-  const q = exerciseSearch.value.trim().toLowerCase();
-  const cat = muscleFilter.value;
-  const groups = exerciseSelect.querySelectorAll('optgroup');
-  groups.forEach(g => {
-    let show = false;
-    Array.from(g.children).forEach(opt => {
-      const matchQ = opt.textContent.toLowerCase().includes(q);
-      const matchC = !cat || opt.dataset.category === cat;
-      opt.hidden = !(matchQ && matchC);
-      if(!opt.hidden) show = true;
-    });
-    g.hidden = !show;
   });
 }
 
@@ -120,8 +121,8 @@ function saveCustomExercises(){
   localStorage.setItem('custom_exercises', JSON.stringify(custom));
 }
 
-exerciseSearch.addEventListener('input', filterExercises);
-muscleFilter.addEventListener('change', filterExercises);
+exerciseSearch.addEventListener('input', renderExerciseOptions);
+muscleFilter.addEventListener('change', renderExerciseOptions);
 
 loadExercises();
 
@@ -132,6 +133,20 @@ todayEl.textContent = new Date().toLocaleDateString('en-US',{
 
 if (currentExercise) {
   showInterface();
+  if(currentExercise.isSuperset){
+    setupSupersetInputs(currentExercise.exercises);
+    standardInputs.classList.add('hidden');
+    cardioInputs.classList.add('hidden');
+    supersetInputs.classList.remove('hidden');
+  } else if(currentExercise.isCardio){
+    supersetInputs.classList.add('hidden');
+    standardInputs.classList.add('hidden');
+    cardioInputs.classList.remove('hidden');
+  } else {
+    supersetInputs.classList.add('hidden');
+    cardioInputs.classList.add('hidden');
+    standardInputs.classList.remove('hidden');
+  }
   rebuildSetsList();
   updateSetCounter();
 }
@@ -161,11 +176,11 @@ addExerciseBtn.addEventListener('click', () => {
     populateMuscleFilter();
     renderExerciseOptions();
   }
-  exerciseSelect.value = name;
-  customExerciseInput.value = '';
   exerciseSearch.value='';
   muscleFilter.value='';
-  filterExercises();
+  renderExerciseOptions();
+  exerciseSelect.value = name;
+  customExerciseInput.value = '';
   startExercise(name);
 });
 
@@ -182,7 +197,7 @@ startSupersetBtn.addEventListener('click', () => {
   if(!supersetBuilder.classList.contains('hidden')){
     exerciseSearch.value='';
     muscleFilter.value='';
-    filterExercises();
+    renderExerciseOptions();
     populateSupersetSelects();
   }
 });
@@ -203,7 +218,7 @@ exerciseSelect.addEventListener('change', e => {
   if(e.target.value){
     exerciseSearch.value='';
     muscleFilter.value='';
-    filterExercises();
+    renderExerciseOptions();
     startExercise(e.target.value);
   }
 });
@@ -213,15 +228,26 @@ function startExercise(name){
   if(currentExercise && currentExercise.sets.length){
     pushOrMergeExercise(currentExercise);
   }
-  currentExercise = { name, sets: [], nextSet: 1 };
+  const meta = allExercises.find(e=>e.name===name);
+  currentExercise = { name, sets: [], nextSet: 1, isCardio: meta && meta.category === 'Cardio' };
   supersetInputs.classList.add('hidden');
-  standardInputs.classList.remove('hidden');
+  if(currentExercise.isCardio){
+    standardInputs.classList.add('hidden');
+    cardioInputs.classList.remove('hidden');
+  } else {
+    cardioInputs.classList.add('hidden');
+    standardInputs.classList.remove('hidden');
+  }
   supersetBuilder.classList.add('hidden');
   saveState();
   showInterface();
   rebuildSetsList();
   updateSetCounter();
-  weightInput.focus();
+  if(currentExercise.isCardio){
+    distanceInput.focus();
+  } else {
+    weightInput.focus();
+  }
 }
 
 function startSuperset(namesArr){
@@ -233,6 +259,7 @@ function startSuperset(namesArr){
   currentExercise = { name: clean.join(' + '), isSuperset:true, exercises:[...clean], sets:[], nextSet:1 };
   setupSupersetInputs(clean);
   standardInputs.classList.add('hidden');
+  cardioInputs.classList.add('hidden');
   supersetInputs.classList.remove('hidden');
   supersetBuilder.classList.add('hidden');
   saveState();
@@ -293,6 +320,36 @@ logBtn.addEventListener('click', function(){
     return;
   }
 
+  if(currentExercise.isCardio){
+    const d = parseFloat(distanceInput.value);
+    const t = parseInt(durationInput.value, 10);
+    if(!canLogCardio(d, t)){
+      alert('Enter distance & duration');
+      return;
+    }
+    const useTimer = useTimerEl.checked;
+    const planned = useTimer ? (parseInt(restSecsInput.value,10) || 0) : null;
+    currentExercise.sets.push({
+      set: currentExercise.nextSet,
+      distance: d,
+      duration: t,
+      time:new Date().toLocaleTimeString(),
+      restPlanned:planned,
+      restActual:null
+    });
+    addSetElement(currentExercise.sets[currentExercise.sets.length-1], currentExercise.sets.length-1);
+    currentExercise.nextSet++;
+    updateSetCounter();
+    distanceInput.value='';
+    durationInput.value='';
+    if(useTimer && planned!=null){
+      startRest(planned, currentExercise.sets.length-1);
+    }
+    updateSummary();
+    saveState();
+    return;
+  }
+
   const w = parseInt(weightInput.value, 10);
   const r = parseInt(repsInput.value, 10);
 
@@ -341,6 +398,10 @@ function addSetElement(setObj,index){
   let meta = '';
   if(currentExercise.isSuperset){
     meta = setObj.exercises.map(e=>`${e.name}: ${e.weight}×${e.reps}`).join(' |');
+  } else if(currentExercise.isCardio){
+    const dist = setObj.distance != null ? `${setObj.distance} mi` : '';
+    const dur = `${setObj.duration} min`;
+    meta = dist ? `${dist} in ${dur}` : dur;
   } else {
     meta = `${setObj.weight} lbs × ${setObj.reps} reps`;
   }
@@ -398,6 +459,21 @@ function openEditForm(item, idx){
       rows += `<div class="row"><span style="font-size:12px;flex-basis:100%;">${ex.name}</span><input type="number" class="editW${i}" value="${ex.weight}" min="0"><input type="number" class="editR${i}" value="${ex.reps}" min="1"></div>`;
     });
     form.innerHTML = `${rows}<div class="row2"><button type="button" class="btn-mini edit" data-edit-save>Save</button><button type="button" class="btn-mini del" data-edit-cancel>Cancel</button></div>`;
+  } else if(currentExercise.isCardio){
+    form.innerHTML = `
+      <div class="row">
+        <input type="number" class="editD" value="${s.distance ?? ''}" min="0" step="0.01">
+        <input type="number" class="editDur" value="${s.duration}" min="1">
+      </div>
+      <div class="row">
+        <input type="number" class="editRestPlanned" value="${s.restPlanned ?? ''}" min="0" placeholder="Rest planned (sec)">
+        <input type="number" class="editRestActual"  value="${s.restActual  ?? ''}" min="0" placeholder="Rest actual (sec)">
+      </div>
+      <div class="row2">
+        <button type="button" class="btn-mini edit" data-edit-save>Save</button>
+        <button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button>
+      </div>
+    `;
   } else {
     form.innerHTML = `
       <div class="row">
@@ -430,6 +506,21 @@ function openEditForm(item, idx){
           alert('Enter valid numbers');
           return;
         }
+      } else if(currentExercise.isCardio){
+        const newD  = parseFloat(form.querySelector('.editD').value);
+        const newDur = parseInt(form.querySelector('.editDur').value, 10);
+        const vPlanned = form.querySelector('.editRestPlanned').value;
+        const vActual  = form.querySelector('.editRestActual').value;
+        const newPlanned = vPlanned === '' ? null : parseInt(vPlanned, 10);
+        const newActual  = vActual  === '' ? null : parseInt(vActual, 10);
+        if(!canLogCardio(newD, newDur)){
+          alert('Enter valid distance & duration');
+          return;
+        }
+        s.distance = newD;
+        s.duration = newDur;
+        s.restPlanned = newPlanned;
+        s.restActual  = newActual;
       } else {
         const newW  = parseInt(form.querySelector('.editW').value, 10);
         const newR  = parseInt(form.querySelector('.editR').value, 10);
@@ -486,6 +577,9 @@ nextExerciseBtn.addEventListener('click', () => {
   interfaceBox.classList.add('hidden');
   weightInput.value = '';
   repsInput.value = '';
+  distanceInput.value = '';
+  durationInput.value = '';
+  cardioInputs.classList.add('hidden');
 
   if (restTimer) {
     clearInterval(restTimer);
@@ -500,12 +594,13 @@ function pushOrMergeExercise(ex){
   const existing = session.exercises.find(e => e.name === ex.name);
   if(existing){
     ex.sets.forEach(s=>{
-      existing.sets.push(JSON.parse(JSON.stringify({...s, set: existing.sets.length + 1})));
+      existing.sets.push({...s, set: existing.sets.length + 1});
     });
   } else {
     session.exercises.push({
       name: ex.name,
       isSuperset: ex.isSuperset || false,
+      isCardio: ex.isCardio || false,
       exercises: ex.exercises ? [...ex.exercises] : undefined,
       sets: ex.sets.map(s=> ({...s}))
     });
@@ -650,9 +745,15 @@ summaryText.addEventListener('click', e => {
   if(currentExercise.isSuperset){
     setupSupersetInputs(currentExercise.exercises);
     standardInputs.classList.add('hidden');
+    cardioInputs.classList.add('hidden');
     supersetInputs.classList.remove('hidden');
+  } else if(currentExercise.isCardio){
+    supersetInputs.classList.add('hidden');
+    standardInputs.classList.add('hidden');
+    cardioInputs.classList.remove('hidden');
   } else {
     supersetInputs.classList.add('hidden');
+    cardioInputs.classList.add('hidden');
     standardInputs.classList.remove('hidden');
   }
   rebuildSetsList();
@@ -668,14 +769,16 @@ exportBtn.addEventListener('click', () => {
     const exExisting = exportExercises.find(e=> e.name===currentExercise.name);
     if(exExisting){
       currentExercise.sets.forEach(s=>{
-        exExisting.sets.push({
-          set: exExisting.sets.length+1,
-          weight:s.weight, reps:s.reps, time:s.time,
-          restPlanned:s.restPlanned, restActual:s.restActual
-        });
+        exExisting.sets.push({...s, set: exExisting.sets.length+1});
       });
     } else {
-      exportExercises.push({ name: currentExercise.name, sets: currentExercise.sets.map(s=>({...s})) });
+      exportExercises.push({
+        name: currentExercise.name,
+        isSuperset: currentExercise.isSuperset || false,
+        isCardio: currentExercise.isCardio || false,
+        exercises: currentExercise.exercises ? [...currentExercise.exercises] : undefined,
+        sets: currentExercise.sets.map(s=>({...s}))
+      });
     }
   }
   if(!exportExercises.length){
@@ -696,15 +799,17 @@ exportBtn.addEventListener('click', () => {
   triggerDownload(new Blob([jsonStr], {type:'application/json'}), `workout_${payload.date}.json`);
 
   // CSV (with rest columns)
-  let csv = 'Exercise,Set,Weight,Reps,Time,RestPlanned(sec),RestActual(sec)\n';
+  let csv = 'Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)\n';
   exportExercises.forEach(ex => {
     ex.sets.forEach(s => {
       if(ex.isSuperset){
         s.exercises.forEach(sub=>{
-          csv += `${sub.name},${s.set},${sub.weight},${sub.reps},${s.time},${s.restPlanned ?? ''},${s.restActual ?? ''}\n`;
+          csv += `${sub.name},${s.set},${sub.weight},${sub.reps},,,${s.time},${s.restPlanned ?? ''},${s.restActual ?? ''}\n`;
         });
+      } else if(ex.isCardio){
+        csv += `${ex.name},${s.set},,,${s.distance ?? ''},${s.duration ?? ''},${s.time},${s.restPlanned ?? ''},${s.restActual ?? ''}\n`;
       } else {
-        csv += `${ex.name},${s.set},${s.weight},${s.reps},${s.time},${s.restPlanned ?? ''},${s.restActual ?? ''}\n`;
+        csv += `${ex.name},${s.set},${s.weight},${s.reps},,,${s.time},${s.restPlanned ?? ''},${s.restActual ?? ''}\n`;
       }
     });
   });
@@ -721,6 +826,14 @@ exportBtn.addEventListener('click', () => {
         s.exercises.forEach(sub=>{
           aiText += `  Set ${s.set} - ${sub.name}: ${sub.weight} lbs × ${sub.reps} reps${rp||ra? (rp?rp:'')+(ra?ra:''):''}\n`;
         });
+      });
+    } else if(ex.isCardio){
+      aiText += `${ex.name}:\n`;
+      ex.sets.forEach(s=>{
+        const rp = s.restPlanned!=null ? ` (planned ${formatSec(s.restPlanned)}` : '';
+        const ra = s.restActual !=null ? `${rp?'; ': ' ('}actual ${formatSec(s.restActual)})` : (rp?')':'');
+        const dist = s.distance != null ? `${s.distance} mi in ` : '';
+        aiText += `  Set ${s.set}: ${dist}${s.duration} min${rp||ra? (rp?rp:'')+(ra?ra:''):''}\n`;
       });
     } else {
       aiText += `${ex.name}:\n`;
@@ -771,12 +884,19 @@ repsInput.addEventListener('keydown', e => {
 weightInput.addEventListener('keydown', e => {
   if(e.key==='Enter') repsInput.focus();
 });
+durationInput.addEventListener('keydown', e => {
+  if(e.key==='Enter') logBtn.click();
+});
+distanceInput.addEventListener('keydown', e => {
+  if(e.key==='Enter') durationInput.focus();
+});
 }
 
 function getSessionSnapshot(){
   const snapshot = session.exercises.map(ex => ({
     name: ex.name,
     isSuperset: ex.isSuperset || false,
+    isCardio: ex.isCardio || false,
     exercises: ex.exercises ? [...ex.exercises] : undefined,
     sets: ex.sets.map(s => ({...s}))
   }));
@@ -784,6 +904,7 @@ function getSessionSnapshot(){
     snapshot.push({
       name: currentExercise.name,
       isSuperset: currentExercise.isSuperset || false,
+      isCardio: currentExercise.isCardio || false,
       exercises: currentExercise.exercises ? [...currentExercise.exercises] : undefined,
       sets: currentExercise.sets.map(s => ({...s}))
     });
@@ -796,5 +917,5 @@ if (typeof window !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { canLogSet };
+  module.exports = { canLogSet, canLogCardio };
 }
