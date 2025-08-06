@@ -31,6 +31,7 @@ const logBtn           = document.getElementById('logBtn');
 const setsList         = document.getElementById('setsList');
 const summaryText      = document.getElementById('summaryText');
 const nextExerciseBtn  = document.getElementById('nextExerciseBtn');
+const finishBtn        = document.getElementById('finishBtn');
 const resetBtn         = document.getElementById('resetBtn');
 const exportBtn        = document.getElementById('exportBtn');
 const restBox          = document.getElementById('restBox');
@@ -502,9 +503,7 @@ function maybeSaveSessionToCalendar(){
   }
 }
 
-/* ------------------ RESET WORKOUT ------------------ */
-resetBtn.addEventListener('click', ()=>{
-  if(!confirm('Reset entire workout?')) return;
+function endWorkout(){
   maybeSaveSessionToCalendar();
   stopRest();
   session = { exercises: [], startedAt:null };
@@ -515,6 +514,18 @@ resetBtn.addEventListener('click', ()=>{
   weightInput.value=''; repsInput.value='';
   updateSummary();
   saveState();
+}
+
+/* ------------------ RESET WORKOUT ------------------ */
+resetBtn.addEventListener('click', ()=>{
+  if(!confirm('Reset entire workout?')) return;
+  endWorkout();
+});
+
+/* ------------------ FINISH WORKOUT ------------------ */
+finishBtn.addEventListener('click', ()=>{
+  if(!confirm('Finish workout?')) return;
+  endWorkout();
 });
 /* ------------------ SUMMARY ------------------ */
 function updateSummary(){
