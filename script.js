@@ -18,6 +18,7 @@ function canLogSet(w, r){
 function canLogCardio(d, t, name){
   const durOk = !Number.isNaN(t) && t > 0;
   const distMissing = d == null || Number.isNaN(d);
+  // Jump Rope and Plank allow duration-only logging
   if(name === 'Jump Rope' || name === 'Plank'){
     const distOk = distMissing || d >= 0;
     return distOk && durOk;
