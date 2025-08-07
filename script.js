@@ -541,9 +541,15 @@ function openEditForm(item, idx){
       } else if(currentExercise.isCardio){
         const rawD = parseFloat(form.querySelector('.editD').value);
         const newD  = form.querySelector('.editD').value === '' ? null : rawD;
-        const m = parseInt(form.querySelector('.editDurMin').value, 10) || 0;
-        const se = parseInt(form.querySelector('.editDurSec').value, 10) || 0;
-        const newDur = m * 60 + se;
+        const durField = form.querySelector('.editDur');
+        let newDur;
+        if (durField) {
+          newDur = parseInt(durField.value, 10);
+        } else {
+          const m = parseInt(form.querySelector('.editDurMin').value, 10) || 0;
+          const se = parseInt(form.querySelector('.editDurSec').value, 10) || 0;
+          newDur = m * 60 + se;
+        }
         const vPlanned = form.querySelector('.editRestPlanned').value;
         const vActual  = form.querySelector('.editRestActual').value;
         const newPlanned = vPlanned === '' ? null : parseInt(vPlanned, 10);
