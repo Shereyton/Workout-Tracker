@@ -3,6 +3,55 @@ function parseDateLocal(str){
   return new Date(y, m-1, d);
 }
 
+// Parse AI formatted text or exported AI text into history object
+function parseAiText(text, selectedDate){
+  const lines = text.split(/\r?\n/);
+  let target = selectedDate;
+  const header = lines[0].match(/WORKOUT DATA - (\d{4}-\d{2}-\d{2})/i);
+  if(header) target = header[1];
+  const out = [];
+  let currentExercise = null;
+  lines.forEach(l => {
+    const trimmed = l.trim();
+    if(!trimmed) return;
+    const exHeader = trimmed.match(/^([^:]+):\s*$/);
+    if(exHeader){
+      currentExercise = exHeader[1].trim();
+      return;
+    }
+    const setMatch = trimmed.match(/^(?:Set\s+\d+\s*[-–:]?\s*)?(.*?):\s*(\d+(?:\.\d+)?)\s*(?:lbs|kg)\s*[×xX]\s*(\d+)\s*reps/i);
+    if(setMatch){
+      let name = setMatch[1].trim();
+      if(!name && currentExercise) name = currentExercise;
+      if(name){
+        out.push(`${name}: ${setMatch[2]} lbs × ${setMatch[3]} reps`);
+      }
+    }
+  });
+  if(out.length){
+    return {[target]: out};
+  }
+  return null;
+}
+
+// Parse CSV (export format) into history object
+function parseCsv(text, selectedDate){
+  if(!/Exercise\s*,\s*Set\s*,\s*Weight\s*,\s*Reps/i.test(text)) return null;
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  lines.shift();
+  const out = [];
+  lines.forEach(l=>{
+    const cols = l.split(',');
+    if(cols.length >=4){
+      out.push(`${cols[0].trim()}: ${cols[2].trim()} lbs × ${cols[3].trim()} reps`);
+    }
+  });
+  if(out.length){
+    return {[selectedDate]: out};
+  }
+  return null;
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
     if(!document.getElementById('calendar')) return;
@@ -213,6 +262,7 @@ if (typeof document !== 'undefined') {
         const obj = safeParseJson(reader.result);
         if(obj){
           const res = mergeHistory(obj);
+          if(res.dates.length) selectedDate = res.dates[0];
           save();
           renderCalendar();
           renderDay();
@@ -235,20 +285,23 @@ if (typeof document !== 'undefined') {
       const jsonObj = safeParseJson(text);
       if(jsonObj && typeof jsonObj === 'object'){
         const res = mergeHistory(jsonObj);
+        if(res.dates.length) selectedDate = res.dates[0];
         save(); renderCalendar(); renderDay();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
       }
-      const ai = parseAiText(text);
+      const ai = parseAiText(text, selectedDate);
       if(ai){
         const res = mergeHistory(ai);
+        if(res.dates.length) selectedDate = res.dates[0];
         save(); renderCalendar(); renderDay();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
       }
-      const csv = parseCsv(text);
+      const csv = parseCsv(text, selectedDate);
       if(csv){
         const res = mergeHistory(csv);
+        if(res.dates.length) selectedDate = res.dates[0];
         save(); renderCalendar(); renderDay();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
@@ -272,37 +325,6 @@ if (typeof document !== 'undefined') {
       const match = cleaned.match(/({[\s\S]*}|\[[\s\S]*\])/);
       if(match){
         return match[0].replace(/,\s*([}\]])/g,'$1');
-      }
-      return null;
-    }
-
-    function parseAiText(text){
-      const lines = text.split(/\r?\n/);
-      let target = selectedDate;
-      const header = lines[0].match(/WORKOUT DATA - (\d{4}-\d{2}-\d{2})/);
-      if(header) target = header[1];
-      const regex = /^\s*(Set\s+\d+\s*[-–]\s*)?.+?:\s*\d+(?:\.\d+)?\s*(?:lbs|kg)\s*[×x]\s*\d+\s*reps.*$/i;
-      const out = [];
-      lines.forEach(l=>{ if(regex.test(l)) out.push(l.trim()); });
-      if(out.length){
-        return {[target]: out};
-      }
-      return null;
-    }
-
-    function parseCsv(text){
-      if(!/Exercise\s*,\s*Set\s*,\s*Weight\s*,\s*Reps/i.test(text)) return null;
-      const lines = text.trim().split(/\r?\n/).filter(Boolean);
-      lines.shift();
-      const out = [];
-      lines.forEach(l=>{
-        const cols = l.split(',');
-        if(cols.length >=4){
-          out.push(`${cols[0].trim()}: ${cols[2].trim()} lbs × ${cols[3].trim()} reps`);
-        }
-      });
-      if(out.length){
-        return {[selectedDate]: out};
       }
       return null;
     }
@@ -383,5 +405,5 @@ if (typeof document !== 'undefined') {
   });
 }
 if (typeof module !== 'undefined') {
-  module.exports = { parseDateLocal };
+  module.exports = { parseDateLocal, parseAiText, parseCsv };
 }

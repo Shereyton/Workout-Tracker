@@ -1,8 +1,20 @@
-const { parseDateLocal } = require('../calendar');
+const { parseDateLocal, parseAiText } = require('../calendar');
 
 test('parseDateLocal returns exact date', () => {
   const d = parseDateLocal('2025-08-01');
   expect(d.getFullYear()).toBe(2025);
   expect(d.getMonth()).toBe(7);
   expect(d.getDate()).toBe(1);
+});
+
+test('parseAiText parses exported AI text format', () => {
+  const sample = `WORKOUT DATA - 2024-07-04\n\nBench Press:\n  Set 1: 185 lbs × 5 reps\n  Set 2: 185 lbs × 5 reps\n\nSquat:\n  Set 1: 225 lbs × 5 reps`;
+  const res = parseAiText(sample, '2024-07-04');
+  expect(res).toEqual({
+    '2024-07-04': [
+      'Bench Press: 185 lbs × 5 reps',
+      'Bench Press: 185 lbs × 5 reps',
+      'Squat: 225 lbs × 5 reps'
+    ]
+  });
 });
