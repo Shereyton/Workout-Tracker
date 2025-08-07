@@ -250,6 +250,15 @@ function startExercise(name){
   if(currentExercise.isCardio){
     standardInputs.classList.add('hidden');
     cardioInputs.classList.remove('hidden');
+    if(name === 'Jump Rope'){
+      distanceInput.classList.add('hidden');
+      distanceInput.value='';
+      durationInput.focus();
+    } else {
+      distanceInput.classList.remove('hidden');
+      durationInput.classList.remove('hidden');
+      distanceInput.focus();
+    }
   } else {
     cardioInputs.classList.add('hidden');
     standardInputs.classList.remove('hidden');
@@ -259,9 +268,7 @@ function startExercise(name){
   showInterface();
   rebuildSetsList();
   updateSetCounter();
-  if(currentExercise.isCardio){
-    distanceInput.focus();
-  } else {
+  if(!currentExercise.isCardio){
     weightInput.focus();
   }
 }
@@ -491,6 +498,10 @@ function openEditForm(item, idx){
         <button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button>
       </div>
     `;
+    if(currentExercise.name === 'Jump Rope'){
+      form.querySelector('.editD').classList.add('hidden');
+      form.querySelector('.editD').value='';
+    }
   } else {
     form.innerHTML = `
       <div class="row">
