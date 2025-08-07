@@ -19,7 +19,10 @@ describe('canLogCardio', () => {
   it('allows missing distance for Jump Rope', () => {
     expect(canLogCardio(null, 15, 'Jump Rope')).toBe(true); // 15 seconds
   });
-  it('allows durations under a minute', () => {
+  it('allows sub-minute durations', () => {
     expect(canLogCardio(0, 45)).toBe(true);
+  });
+  it('allows missing distance for Plank', () => {
+    expect(canLogCardio(null, 30, 'Plank')).toBe(true); // 30 seconds
   });
 });

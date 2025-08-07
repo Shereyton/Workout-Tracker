@@ -18,7 +18,8 @@ function canLogSet(w, r){
 function canLogCardio(d, t, name){
   const durOk = !Number.isNaN(t) && t > 0;
   const distMissing = d == null || Number.isNaN(d);
-  if(name === 'Jump Rope'){
+  // Jump Rope and Plank allow duration-only logging
+  if(name === 'Jump Rope' || name === 'Plank'){
     const distOk = distMissing || d >= 0;
     return distOk && durOk;
   }
@@ -246,12 +247,13 @@ function startExercise(name){
     pushOrMergeExercise(currentExercise);
   }
   const meta = allExercises.find(e=>e.name===name);
-  currentExercise = { name, sets: [], nextSet: 1, isCardio: meta && meta.category === 'Cardio' };
+  const isCardio = (meta && meta.category === 'Cardio') || name === 'Plank';
+  currentExercise = { name, sets: [], nextSet: 1, isCardio };
   supersetInputs.classList.add('hidden');
   if(currentExercise.isCardio){
     standardInputs.classList.add('hidden');
     cardioInputs.classList.remove('hidden');
-    if(name === 'Jump Rope'){
+    if(name === 'Jump Rope' || name === 'Plank'){
       distanceInput.classList.add('hidden');
       distanceInput.value='';
       durationMinInput.focus();
@@ -350,7 +352,7 @@ logBtn.addEventListener('click', function(){
     const s = parseInt(durationSecInput.value, 10) || 0;
     const t = m * 60 + s;
     if(!canLogCardio(d, t, currentExercise.name)){
-      alert(currentExercise.name === 'Jump Rope' ? 'Enter duration' : 'Enter distance & duration');
+      alert(['Jump Rope','Plank'].includes(currentExercise.name) ? 'Enter duration' : 'Enter distance & duration');
       return;
     }
     const useTimer = useTimerEl.checked;
@@ -487,7 +489,7 @@ function openEditForm(item, idx){
     });
     form.innerHTML = `${rows}<div class="row2"><button type="button" class="btn-mini edit" data-edit-save>Save</button><button type="button" class="btn-mini del" data-edit-cancel>Cancel</button></div>`;
   } else if(currentExercise.isCardio){
-    if(currentExercise.name === 'Jump Rope'){
+    if(currentExercise.name === 'Jump Rope' || currentExercise.name === 'Plank'){
       const mins = Math.floor(s.duration / 60);
       const secs = s.duration % 60;
       form.innerHTML = `
@@ -570,7 +572,7 @@ function openEditForm(item, idx){
         const newPlanned = vPlanned === '' ? null : parseInt(vPlanned, 10);
         const newActual  = vActual  === '' ? null : parseInt(vActual, 10);
         if(!canLogCardio(newD, newDur, currentExercise.name)){
-          alert(currentExercise.name === 'Jump Rope' ? 'Enter valid duration' : 'Enter valid distance & duration');
+          alert(['Jump Rope','Plank'].includes(currentExercise.name) ? 'Enter valid duration' : 'Enter valid distance & duration');
           return;
         }
         s.distance = newD;
