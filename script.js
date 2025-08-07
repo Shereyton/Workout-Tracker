@@ -56,7 +56,8 @@ const supersetInputs   = document.getElementById('supersetInputs');
 const standardInputs   = document.getElementById('standardInputs');
 const cardioInputs     = document.getElementById('cardioInputs');
 const distanceInput    = document.getElementById('distance');
-const durationInput    = document.getElementById('duration');
+const durationMinInput = document.getElementById('durationMin');
+const durationSecInput = document.getElementById('durationSec');
 const supersetBuilder  = document.getElementById('supersetBuilder');
 const supersetSelect1  = document.getElementById('supersetSelect1');
 const supersetSelect2  = document.getElementById('supersetSelect2');
@@ -253,10 +254,9 @@ function startExercise(name){
     if(name === 'Jump Rope'){
       distanceInput.classList.add('hidden');
       distanceInput.value='';
-      durationInput.focus();
+      durationMinInput.focus();
     } else {
       distanceInput.classList.remove('hidden');
-      durationInput.classList.remove('hidden');
       distanceInput.focus();
     }
   } else {
@@ -346,7 +346,9 @@ logBtn.addEventListener('click', function(){
   if(currentExercise.isCardio){
     const rawD = parseFloat(distanceInput.value);
     const d = distanceInput.value === '' ? null : rawD;
-    const t = parseInt(durationInput.value, 10);
+    const m = parseInt(durationMinInput.value, 10) || 0;
+    const s = parseInt(durationSecInput.value, 10) || 0;
+    const t = m * 60 + s;
     if(!canLogCardio(d, t, currentExercise.name)){
       alert(currentExercise.name === 'Jump Rope' ? 'Enter duration' : 'Enter distance & duration');
       return;
@@ -365,7 +367,8 @@ logBtn.addEventListener('click', function(){
     currentExercise.nextSet++;
     updateSetCounter();
     distanceInput.value='';
-    durationInput.value='';
+    durationMinInput.value='';
+    durationSecInput.value='';
     if(useTimer && planned!=null){
       startRest(planned, currentExercise.sets.length-1);
     }
@@ -424,7 +427,7 @@ function addSetElement(setObj,index){
     meta = setObj.exercises.map(e=>`${e.name}: ${e.weight}×${e.reps}`).join(' |');
   } else if(currentExercise.isCardio){
     const dist = setObj.distance != null ? `${setObj.distance} mi` : '';
-    const dur = `${setObj.duration} min`;
+    const dur = formatSec(setObj.duration);
     meta = dist ? `${dist} in ${dur}` : dur;
   } else {
     meta = `${setObj.weight} lbs × ${setObj.reps} reps`;
@@ -484,23 +487,38 @@ function openEditForm(item, idx){
     });
     form.innerHTML = `${rows}<div class="row2"><button type="button" class="btn-mini edit" data-edit-save>Save</button><button type="button" class="btn-mini del" data-edit-cancel>Cancel</button></div>`;
   } else if(currentExercise.isCardio){
-    form.innerHTML = `
-      <div class="row">
-        <input type="number" class="editD" value="${s.distance ?? ''}" min="0" step="0.01">
-        <input type="number" class="editDur" value="${s.duration}" min="1">
-      </div>
-      <div class="row">
-        <input type="number" class="editRestPlanned" value="${s.restPlanned ?? ''}" min="0" placeholder="Rest planned (sec)">
-        <input type="number" class="editRestActual"  value="${s.restActual  ?? ''}" min="0" placeholder="Rest actual (sec)">
-      </div>
-      <div class="row2">
-        <button type="button" class="btn-mini edit" data-edit-save>Save</button>
-        <button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button>
-      </div>
-    `;
     if(currentExercise.name === 'Jump Rope'){
-      form.querySelector('.editD').classList.add('hidden');
-      form.querySelector('.editD').value='';
+      const mins = Math.floor(s.duration / 60);
+      const secs = s.duration % 60;
+      form.innerHTML = `
+        <div class="row">
+          <input type="number" class="editDurMin" value="${mins}" min="0">
+          <input type="number" class="editDurSec" value="${secs}" min="0" max="59">
+        </div>
+        <div class="row">
+          <input type="number" class="editRestPlanned" value="${s.restPlanned ?? ''}" min="0" placeholder="Rest planned (sec)">
+          <input type="number" class="editRestActual"  value="${s.restActual  ?? ''}" min="0" placeholder="Rest actual (sec)">
+        </div>
+        <div class="row2">
+          <button type="button" class="btn-mini edit" data-edit-save>Save</button>
+          <button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button>
+        </div>
+      `;
+    } else {
+      form.innerHTML = `
+        <div class="row">
+          <input type="number" class="editD" value="${s.distance ?? ''}" min="0" step="0.01">
+          <input type="number" class="editDur" value="${s.duration}" min="1">
+        </div>
+        <div class="row">
+          <input type="number" class="editRestPlanned" value="${s.restPlanned ?? ''}" min="0" placeholder="Rest planned (sec)">
+          <input type="number" class="editRestActual"  value="${s.restActual  ?? ''}" min="0" placeholder="Rest actual (sec)">
+        </div>
+        <div class="row2">
+          <button type="button" class="btn-mini edit" data-edit-save>Save</button>
+          <button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button>
+        </div>
+      `;
     }
   } else {
     form.innerHTML = `
@@ -535,9 +553,18 @@ function openEditForm(item, idx){
           return;
         }
       } else if(currentExercise.isCardio){
-        const rawD = parseFloat(form.querySelector('.editD').value);
-        const newD  = form.querySelector('.editD').value === '' ? null : rawD;
-        const newDur = parseInt(form.querySelector('.editDur').value, 10);
+        const dField = form.querySelector('.editD');
+        const rawD = dField ? parseFloat(dField.value) : null;
+        const newD = dField ? (dField.value === '' ? null : rawD) : null;
+        const durField = form.querySelector('.editDur');
+        let newDur;
+        if(durField){
+          newDur = parseInt(durField.value, 10);
+        } else {
+          const m = parseInt(form.querySelector('.editDurMin').value, 10) || 0;
+          const se = parseInt(form.querySelector('.editDurSec').value, 10) || 0;
+          newDur = m * 60 + se;
+        }
         const vPlanned = form.querySelector('.editRestPlanned').value;
         const vActual  = form.querySelector('.editRestActual').value;
         const newPlanned = vPlanned === '' ? null : parseInt(vPlanned, 10);
@@ -607,7 +634,8 @@ nextExerciseBtn.addEventListener('click', () => {
   weightInput.value = '';
   repsInput.value = '';
   distanceInput.value = '';
-  durationInput.value = '';
+  durationMinInput.value = '';
+  durationSecInput.value = '';
   cardioInputs.classList.add('hidden');
 
   if (restTimer) {
@@ -862,7 +890,8 @@ exportBtn.addEventListener('click', () => {
         const rp = s.restPlanned!=null ? ` (planned ${formatSec(s.restPlanned)}` : '';
         const ra = s.restActual !=null ? `${rp?'; ': ' ('}actual ${formatSec(s.restActual)})` : (rp?')':'');
         const dist = s.distance != null ? `${s.distance} mi in ` : '';
-        aiText += `  Set ${s.set}: ${dist}${s.duration} min${rp||ra? (rp?rp:'')+(ra?ra:''):''}\n`;
+        const dur = formatSec(s.duration);
+        aiText += `  Set ${s.set}: ${dist}${dur}${rp||ra? (rp?rp:'')+(ra?ra:''):''}\n`;
       });
     } else {
       aiText += `${ex.name}:\n`;
@@ -913,11 +942,14 @@ repsInput.addEventListener('keydown', e => {
 weightInput.addEventListener('keydown', e => {
   if(e.key==='Enter') repsInput.focus();
 });
-durationInput.addEventListener('keydown', e => {
+durationMinInput.addEventListener('keydown', e => {
+  if(e.key==='Enter') durationSecInput.focus();
+});
+durationSecInput.addEventListener('keydown', e => {
   if(e.key==='Enter') logBtn.click();
 });
 distanceInput.addEventListener('keydown', e => {
-  if(e.key==='Enter') durationInput.focus();
+  if(e.key==='Enter') durationMinInput.focus();
 });
 }
 
