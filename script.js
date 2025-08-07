@@ -15,8 +15,15 @@ function canLogSet(w, r){
   return !Number.isNaN(w) && !Number.isNaN(r) && r > 0;
 }
 
-function canLogCardio(d, t){
-  return !Number.isNaN(d) && d >= 0 && !Number.isNaN(t) && t > 0;
+function canLogCardio(d, t, name){
+  const durOk = !Number.isNaN(t) && t > 0;
+  const distMissing = d == null || Number.isNaN(d);
+  if(name === 'Jump Rope'){
+    const distOk = distMissing || d >= 0;
+    return distOk && durOk;
+  }
+  const distOk = !distMissing && d >= 0;
+  return distOk && durOk;
 }
 
 /* ------------------ ELEMENTS ------------------ */
@@ -243,6 +250,15 @@ function startExercise(name){
   if(currentExercise.isCardio){
     standardInputs.classList.add('hidden');
     cardioInputs.classList.remove('hidden');
+    if(name === 'Jump Rope'){
+      distanceInput.classList.add('hidden');
+      distanceInput.value='';
+      durationInput.focus();
+    } else {
+      distanceInput.classList.remove('hidden');
+      durationInput.classList.remove('hidden');
+      distanceInput.focus();
+    }
   } else {
     cardioInputs.classList.add('hidden');
     standardInputs.classList.remove('hidden');
@@ -252,9 +268,7 @@ function startExercise(name){
   showInterface();
   rebuildSetsList();
   updateSetCounter();
-  if(currentExercise.isCardio){
-    distanceInput.focus();
-  } else {
+  if(!currentExercise.isCardio){
     weightInput.focus();
   }
 }
@@ -330,10 +344,11 @@ logBtn.addEventListener('click', function(){
   }
 
   if(currentExercise.isCardio){
-    const d = parseFloat(distanceInput.value);
+    const rawD = parseFloat(distanceInput.value);
+    const d = distanceInput.value === '' ? null : rawD;
     const t = parseInt(durationInput.value, 10);
-    if(!canLogCardio(d, t)){
-      alert('Enter distance & duration');
+    if(!canLogCardio(d, t, currentExercise.name)){
+      alert(currentExercise.name === 'Jump Rope' ? 'Enter duration' : 'Enter distance & duration');
       return;
     }
     const useTimer = useTimerEl.checked;
@@ -483,6 +498,10 @@ function openEditForm(item, idx){
         <button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button>
       </div>
     `;
+    if(currentExercise.name === 'Jump Rope'){
+      form.querySelector('.editD').classList.add('hidden');
+      form.querySelector('.editD').value='';
+    }
   } else {
     form.innerHTML = `
       <div class="row">
@@ -516,14 +535,15 @@ function openEditForm(item, idx){
           return;
         }
       } else if(currentExercise.isCardio){
-        const newD  = parseFloat(form.querySelector('.editD').value);
+        const rawD = parseFloat(form.querySelector('.editD').value);
+        const newD  = form.querySelector('.editD').value === '' ? null : rawD;
         const newDur = parseInt(form.querySelector('.editDur').value, 10);
         const vPlanned = form.querySelector('.editRestPlanned').value;
         const vActual  = form.querySelector('.editRestActual').value;
         const newPlanned = vPlanned === '' ? null : parseInt(vPlanned, 10);
         const newActual  = vActual  === '' ? null : parseInt(vActual, 10);
-        if(!canLogCardio(newD, newDur)){
-          alert('Enter valid distance & duration');
+        if(!canLogCardio(newD, newDur, currentExercise.name)){
+          alert(currentExercise.name === 'Jump Rope' ? 'Enter valid duration' : 'Enter valid distance & duration');
           return;
         }
         s.distance = newD;

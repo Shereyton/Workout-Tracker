@@ -16,4 +16,7 @@ describe('canLogCardio', () => {
   it('rejects invalid duration', () => {
     expect(canLogCardio(1, 0)).toBe(false);
   });
+  it('allows missing distance for Jump Rope', () => {
+    expect(canLogCardio(null, 15, 'Jump Rope')).toBe(true);
+  });
 });
