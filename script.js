@@ -797,7 +797,8 @@ function buildExportExercises(){
 function endWorkout(){
   const snapshot = buildExportExercises();
   if(snapshot.length){
-    localStorage.setItem('wt_lastWorkout', JSON.stringify(snapshot));
+    const dateStr = new Date().toISOString().split('T')[0];
+    localStorage.setItem('wt_lastWorkout', JSON.stringify({ date: dateStr, exercises: snapshot }));
   } else {
     localStorage.removeItem('wt_lastWorkout');
   }
@@ -877,12 +878,13 @@ exportBtn.addEventListener('click', () => {
   let exportExercises = buildExportExercises();
   let exportDate = new Date().toISOString().split('T')[0];
   if(exportExercises.length){
-    localStorage.setItem('wt_lastWorkout', JSON.stringify(exportExercises));
+    localStorage.setItem('wt_lastWorkout', JSON.stringify({ date: exportDate, exercises: exportExercises }));
     maybeSaveSessionToCalendar();
   } else {
-    const last = JSON.parse(localStorage.getItem('wt_lastWorkout') || 'null');
-    if(last && last.length){
-      exportExercises = last;
+    const lastObj = JSON.parse(localStorage.getItem('wt_lastWorkout') || 'null');
+    if(lastObj && lastObj.exercises && lastObj.exercises.length){
+      exportExercises = lastObj.exercises;
+      if(lastObj.date) exportDate = lastObj.date;
     } else if(window.wtCalendarSelectedDate){
       const workouts = JSON.parse(localStorage.getItem('wt_workouts') || '{}');
       const fromDay = workouts[window.wtCalendarSelectedDate];
