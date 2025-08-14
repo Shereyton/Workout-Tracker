@@ -251,6 +251,13 @@ if (typeof document !== 'undefined') {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      if(navigator.clipboard){
+        navigator.clipboard.writeText(data).then(()=>{
+          alert('History exported and copied to clipboard ✅');
+        }).catch(()=> alert('History exported (clipboard copy failed)'));
+      } else {
+        alert('History exported. Copy manually:\n\n' + data);
+      }
     });
 
     importBtn.addEventListener('click', () => importFile.click());

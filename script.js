@@ -766,7 +766,35 @@ function maybeSaveSessionToCalendar(){
   }
 }
 
+// Build a deep copy of all exercises including the in-progress one
+function buildExportExercises(){
+  const exportExercises = session.exercises.map(e => ({...e, sets:[...e.sets]}));
+  if(currentExercise && currentExercise.sets.length){
+    const exExisting = exportExercises.find(e=> e.name===currentExercise.name);
+    if(exExisting){
+      currentExercise.sets.forEach(s=>{
+        exExisting.sets.push({...s, set: exExisting.sets.length+1});
+      });
+    } else {
+      exportExercises.push({
+        name: currentExercise.name,
+        isSuperset: currentExercise.isSuperset || false,
+        isCardio: currentExercise.isCardio || false,
+        exercises: currentExercise.exercises ? [...currentExercise.exercises] : undefined,
+        sets: currentExercise.sets.map(s=>({...s}))
+      });
+    }
+  }
+  return exportExercises;
+}
+
 function endWorkout(){
+  const snapshot = buildExportExercises();
+  if(snapshot.length){
+    localStorage.setItem('wt_lastWorkout', JSON.stringify(snapshot));
+  } else {
+    localStorage.removeItem('wt_lastWorkout');
+  }
   maybeSaveSessionToCalendar();
   stopRest();
   session = { exercises: [], startedAt:null };
@@ -840,27 +868,18 @@ summaryText.addEventListener('click', e => {
 
 /* ------------------ EXPORT (JSON + AI + CSV) ------------------ */
 exportBtn.addEventListener('click', () => {
-  maybeSaveSessionToCalendar();
-  const exportExercises = session.exercises.map(e => ({...e, sets:[...e.sets]}));
-  if(currentExercise && currentExercise.sets.length){
-    const exExisting = exportExercises.find(e=> e.name===currentExercise.name);
-    if(exExisting){
-      currentExercise.sets.forEach(s=>{
-        exExisting.sets.push({...s, set: exExisting.sets.length+1});
-      });
+  let exportExercises = buildExportExercises();
+  if(exportExercises.length){
+    localStorage.setItem('wt_lastWorkout', JSON.stringify(exportExercises));
+    maybeSaveSessionToCalendar();
+  } else {
+    const last = JSON.parse(localStorage.getItem('wt_lastWorkout') || 'null');
+    if(last && last.length){
+      exportExercises = last;
     } else {
-      exportExercises.push({
-        name: currentExercise.name,
-        isSuperset: currentExercise.isSuperset || false,
-        isCardio: currentExercise.isCardio || false,
-        exercises: currentExercise.exercises ? [...currentExercise.exercises] : undefined,
-        sets: currentExercise.sets.map(s=>({...s}))
-      });
+      alert('No workout data yet.');
+      return;
     }
-  }
-  if(!exportExercises.length){
-    alert('No workout data yet.');
-    return;
   }
   const totalSets = exportExercises.reduce((sum,e)=> sum+e.sets.length,0);
   const payload = {
