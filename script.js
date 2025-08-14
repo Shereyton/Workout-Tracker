@@ -64,6 +64,7 @@ const supersetSelect1  = document.getElementById('supersetSelect1');
 const supersetSelect2  = document.getElementById('supersetSelect2');
 const beginSupersetBtn = document.getElementById('beginSuperset');
 const exerciseSearch   = document.getElementById('exerciseSearch');
+const exerciseList     = document.getElementById('exerciseList');
 const muscleFilter     = document.getElementById('muscleFilter');
 
 let allExercises = [];
@@ -102,14 +103,17 @@ function populateMuscleFilter(){
 
 function renderExerciseOptions(){
   exerciseSelect.innerHTML = '<option value="">Select Exercise</option>';
+  exerciseList.innerHTML = '';
   const q = exerciseSearch.value.trim().toLowerCase();
   const cat = muscleFilter.value;
   const groups = {};
+  const matches = [];
   allExercises.forEach(ex => {
     if(cat && ex.category !== cat) return;
     if(q && !ex.name.toLowerCase().includes(q)) return;
     if(!groups[ex.category]) groups[ex.category] = [];
     groups[ex.category].push(ex);
+    matches.push(ex);
   });
   Object.keys(groups).sort().forEach(catName => {
     const og = document.createElement('optgroup');
@@ -123,6 +127,11 @@ function renderExerciseOptions(){
     });
     exerciseSelect.appendChild(og);
   });
+  matches.sort((a,b)=>a.name.localeCompare(b.name)).forEach(ex => {
+    const opt = document.createElement('option');
+    opt.value = ex.name;
+    exerciseList.appendChild(opt);
+  });
 }
 
 function saveCustomExercises(){
@@ -132,6 +141,15 @@ function saveCustomExercises(){
 
 exerciseSearch.addEventListener('input', renderExerciseOptions);
 muscleFilter.addEventListener('change', renderExerciseOptions);
+exerciseSearch.addEventListener('change', () => {
+  const val = exerciseSearch.value.trim();
+  if(!val) return;
+  const match = allExercises.find(e => e.name.toLowerCase() === val.toLowerCase());
+  if(match){
+    exerciseSelect.value = match.name;
+    exerciseSelect.dispatchEvent(new Event('change'));
+  }
+});
 
 loadExercises();
 
