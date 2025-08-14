@@ -15,17 +15,15 @@ function canLogSet(w, r){
   return !Number.isNaN(w) && !Number.isNaN(r) && r > 0;
 }
 
-function canLogCardio(d, t, name){
-  const durOk = !Number.isNaN(t) && t > 0;
-  const distMissing = d == null || Number.isNaN(d);
-  // Jump Rope and Plank allow duration-only logging
-  if(name === 'Jump Rope' || name === 'Plank'){
-    const distOk = distMissing || d >= 0;
-    return distOk && durOk;
+  function canLogCardio(distance, duration, name){
+    const durationOk = Number.isFinite(duration) && duration > 0;
+    const distanceMissing = distance === null || Number.isNaN(distance);
+    const allowsNoDistance = name === 'Jump Rope' || name === 'Plank';
+    const distanceOk = allowsNoDistance
+      ? (distanceMissing || distance >= 0)
+      : (!distanceMissing && distance >= 0);
+    return distanceOk && durationOk;
   }
-  const distOk = !distMissing && d >= 0;
-  return distOk && durOk;
-}
 
 /* ------------------ ELEMENTS ------------------ */
 if (typeof document !== 'undefined' && document.getElementById('today')) {
@@ -942,7 +940,7 @@ exportBtn.addEventListener('click', () => {
     }
     aiText += '\n';
   });
-  aiText += `Summary: ${payload.totalExercises} exercises, ${payload.totalSets}total sets.\n\n`;
+  aiText += `Summary: ${payload.totalExercises} exercises, ${payload.totalSets} total sets.\n\n`;
   aiText += `Please analyze progress vs previous sessions, suggest next targets, identify weak points, and recommend optimal weight/rep progressions.`;
 
   if(navigator.clipboard){

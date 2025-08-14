@@ -25,4 +25,7 @@ describe('canLogCardio', () => {
   it('allows missing distance for Plank', () => {
     expect(canLogCardio(null, 30, 'Plank')).toBe(true); // 30 seconds
   });
+  it('rejects negative distance', () => {
+    expect(canLogCardio(-1, 60, 'Run')).toBe(false);
+  });
 });
