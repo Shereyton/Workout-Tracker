@@ -756,6 +756,12 @@ function saveSessionLinesToHistory(){
   if(!history[dateStr]) history[dateStr] = [];
   lines.forEach(l => { if(!history[dateStr].includes(l)) history[dateStr].push(l); });
   localStorage.setItem('wt_history', JSON.stringify(history));
+
+  // also store full workout snapshot for export
+  let workouts = JSON.parse(localStorage.getItem('wt_workouts') || '{}');
+  workouts[dateStr] = snapshot;
+  localStorage.setItem('wt_workouts', JSON.stringify(workouts));
+
   window.dispatchEvent(new Event('wt-history-updated'));
 }
 
@@ -766,7 +772,35 @@ function maybeSaveSessionToCalendar(){
   }
 }
 
+// Build a deep copy of all exercises including the in-progress one
+function buildExportExercises(){
+  const exportExercises = session.exercises.map(e => ({...e, sets:[...e.sets]}));
+  if(currentExercise && currentExercise.sets.length){
+    const exExisting = exportExercises.find(e=> e.name===currentExercise.name);
+    if(exExisting){
+      currentExercise.sets.forEach(s=>{
+        exExisting.sets.push({...s, set: exExisting.sets.length+1});
+      });
+    } else {
+      exportExercises.push({
+        name: currentExercise.name,
+        isSuperset: currentExercise.isSuperset || false,
+        isCardio: currentExercise.isCardio || false,
+        exercises: currentExercise.exercises ? [...currentExercise.exercises] : undefined,
+        sets: currentExercise.sets.map(s=>({...s}))
+      });
+    }
+  }
+  return exportExercises;
+}
+
 function endWorkout(){
+  const snapshot = buildExportExercises();
+  if(snapshot.length){
+    localStorage.setItem('wt_lastWorkout', JSON.stringify(snapshot));
+  } else {
+    localStorage.removeItem('wt_lastWorkout');
+  }
   maybeSaveSessionToCalendar();
   stopRest();
   session = { exercises: [], startedAt:null };
@@ -840,31 +874,31 @@ summaryText.addEventListener('click', e => {
 
 /* ------------------ EXPORT (JSON + AI + CSV) ------------------ */
 exportBtn.addEventListener('click', () => {
-  maybeSaveSessionToCalendar();
-  const exportExercises = session.exercises.map(e => ({...e, sets:[...e.sets]}));
-  if(currentExercise && currentExercise.sets.length){
-    const exExisting = exportExercises.find(e=> e.name===currentExercise.name);
-    if(exExisting){
-      currentExercise.sets.forEach(s=>{
-        exExisting.sets.push({...s, set: exExisting.sets.length+1});
-      });
-    } else {
-      exportExercises.push({
-        name: currentExercise.name,
-        isSuperset: currentExercise.isSuperset || false,
-        isCardio: currentExercise.isCardio || false,
-        exercises: currentExercise.exercises ? [...currentExercise.exercises] : undefined,
-        sets: currentExercise.sets.map(s=>({...s}))
-      });
+  let exportExercises = buildExportExercises();
+  let exportDate = new Date().toISOString().split('T')[0];
+  if(exportExercises.length){
+    localStorage.setItem('wt_lastWorkout', JSON.stringify(exportExercises));
+    maybeSaveSessionToCalendar();
+  } else {
+    const last = JSON.parse(localStorage.getItem('wt_lastWorkout') || 'null');
+    if(last && last.length){
+      exportExercises = last;
+    } else if(window.wtCalendarSelectedDate){
+      const workouts = JSON.parse(localStorage.getItem('wt_workouts') || '{}');
+      const fromDay = workouts[window.wtCalendarSelectedDate];
+      if(fromDay && fromDay.length){
+        exportExercises = fromDay;
+        exportDate = window.wtCalendarSelectedDate;
+      }
     }
-  }
-  if(!exportExercises.length){
-    alert('No workout data yet.');
-    return;
+    if(!exportExercises.length){
+      alert('No workout data yet.');
+      return;
+    }
   }
   const totalSets = exportExercises.reduce((sum,e)=> sum+e.sets.length,0);
   const payload = {
-    date: new Date().toISOString().split('T')[0],
+    date: exportDate,
     timestamp: new Date().toISOString(),
     totalExercises: exportExercises.length,
     totalSets,

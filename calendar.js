@@ -56,10 +56,13 @@ if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
     if(!document.getElementById('calendar')) return;
     const STORAGE_KEY = 'wt_history';
+    const WORKOUTS_KEY = 'wt_workouts';
     let history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+    let workouts = JSON.parse(localStorage.getItem(WORKOUTS_KEY) || '{}');
     let current = new Date();
     current.setDate(1);
     let selectedDate = formatDate(new Date());
+    window.wtCalendarSelectedDate = selectedDate;
 
     const calendarEl = document.getElementById('calendar');
     const dayTitle = document.getElementById('dayTitle');
@@ -92,6 +95,7 @@ if (typeof document !== 'undefined') {
 
     function save(){
       localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      localStorage.setItem(WORKOUTS_KEY, JSON.stringify(workouts));
     }
 
     function mergeHistory(obj){
@@ -157,6 +161,7 @@ if (typeof document !== 'undefined') {
         if(dateStr === selectedDate) cell.classList.add('selected');
         cell.addEventListener('click', () => {
           selectedDate = dateStr;
+          window.wtCalendarSelectedDate = selectedDate;
           current = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1);
           renderCalendar();
           renderDay();
@@ -235,6 +240,7 @@ if (typeof document !== 'undefined') {
         if(!history[selectedDate] || !history[selectedDate].length) return;
         if(confirm('Clear all entries for this day?')){
           delete history[selectedDate];
+          delete workouts[selectedDate];
           save();
           renderDay();
           renderCalendar();
@@ -251,6 +257,13 @@ if (typeof document !== 'undefined') {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      if(navigator.clipboard){
+        navigator.clipboard.writeText(data).then(()=>{
+          alert('History exported and copied to clipboard ✅');
+        }).catch(()=> alert('History exported (clipboard copy failed)'));
+      } else {
+        alert('History exported. Copy manually:\n\n' + data);
+      }
     });
 
     importBtn.addEventListener('click', () => importFile.click());
@@ -262,7 +275,10 @@ if (typeof document !== 'undefined') {
         const obj = safeParseJson(reader.result);
         if(obj){
           const res = mergeHistory(obj);
-          if(res.dates.length) selectedDate = res.dates[0];
+          if(res.dates.length) {
+            selectedDate = res.dates[0];
+            window.wtCalendarSelectedDate = selectedDate;
+          }
           save();
           renderCalendar();
           renderDay();
@@ -285,7 +301,10 @@ if (typeof document !== 'undefined') {
       const jsonObj = safeParseJson(text);
       if(jsonObj && typeof jsonObj === 'object'){
         const res = mergeHistory(jsonObj);
-        if(res.dates.length) selectedDate = res.dates[0];
+        if(res.dates.length) {
+          selectedDate = res.dates[0];
+          window.wtCalendarSelectedDate = selectedDate;
+        }
         save(); renderCalendar(); renderDay();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
@@ -293,7 +312,10 @@ if (typeof document !== 'undefined') {
       const ai = parseAiText(text, selectedDate);
       if(ai){
         const res = mergeHistory(ai);
-        if(res.dates.length) selectedDate = res.dates[0];
+        if(res.dates.length) {
+          selectedDate = res.dates[0];
+          window.wtCalendarSelectedDate = selectedDate;
+        }
         save(); renderCalendar(); renderDay();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
@@ -301,7 +323,10 @@ if (typeof document !== 'undefined') {
       const csv = parseCsv(text, selectedDate);
       if(csv){
         const res = mergeHistory(csv);
-        if(res.dates.length) selectedDate = res.dates[0];
+        if(res.dates.length) {
+          selectedDate = res.dates[0];
+          window.wtCalendarSelectedDate = selectedDate;
+        }
         save(); renderCalendar(); renderDay();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
@@ -332,6 +357,7 @@ if (typeof document !== 'undefined') {
     calPrev.addEventListener('click', () => {
       current.setMonth(current.getMonth()-1);
       selectedDate = formatDate(new Date(current.getFullYear(), current.getMonth(),1));
+      window.wtCalendarSelectedDate = selectedDate;
       renderCalendar();
       renderDay();
     });
@@ -339,6 +365,7 @@ if (typeof document !== 'undefined') {
     calNext.addEventListener('click', () => {
       current.setMonth(current.getMonth()+1);
       selectedDate = formatDate(new Date(current.getFullYear(), current.getMonth(),1));
+      window.wtCalendarSelectedDate = selectedDate;
       renderCalendar();
       renderDay();
     });
@@ -346,6 +373,7 @@ if (typeof document !== 'undefined') {
     calToday.addEventListener('click', () => {
       const now = new Date();
       selectedDate = formatDate(now);
+      window.wtCalendarSelectedDate = selectedDate;
       current = new Date(now.getFullYear(), now.getMonth(),1);
       renderCalendar();
       renderDay();
@@ -359,6 +387,7 @@ if (typeof document !== 'undefined') {
       if(!calGoto.value) return;
       const [y,m,d] = calGoto.value.split('-').map(Number);
       selectedDate = formatDate(new Date(y,m-1,d));
+      window.wtCalendarSelectedDate = selectedDate;
       current = new Date(y,m-1,1);
       renderCalendar();
       renderDay();
@@ -396,6 +425,8 @@ if (typeof document !== 'undefined') {
     });
 
     window.addEventListener('wt-history-updated', () => {
+      history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+      workouts = JSON.parse(localStorage.getItem(WORKOUTS_KEY) || '{}');
       renderCalendar();
       renderDay();
     });
