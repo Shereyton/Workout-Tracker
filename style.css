@@ -6,6 +6,9 @@
   --danger:#dc3545;
   --radius:20px;
   --transition:0.25s cubic-bezier(.4,.0,.2,1);
+  --muted-fg:#666;
+  --input-border:#e1e8ed;
+  --focus-ring:#222;
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
 body{
@@ -13,7 +16,13 @@ body{
   background:var(--grad-main);min-height:100vh;padding:10px;color:#222;
   transition:background .4s,color .3s;
 }
-body.dark{background:#181a1f;color:#f5f6fa;}
+body.dark{
+  background:#181a1f;
+  color:#f5f6fa;
+  --muted-fg:#aaa;
+  --input-border:#39414d;
+  --focus-ring:#f5f6fa;
+}
 .container{max-width:520px;margin:0 auto;background:#fff;border-radius:var(--radius);
   box-shadow:0 12px 32px -8px rgba(0,0,0,.25);overflow:hidden;animation:fadeIn .4s;}
 body.dark .container{background:#262a33;}
@@ -25,9 +34,10 @@ body.dark .container{background:#262a33;}
 
 .section{padding:20px 20px 28px;}
 select,input[type=number],input[type=text],input[type=date],textarea{
-  width:100%;font-size:16px;
-  padding:13px 14px;
-  border:2px solid #e1e8ed;
+  width:100%;
+  font-size:17px;
+  padding:14px 16px;
+  border:2px solid var(--input-border);
   border-radius:14px;
   background:#fff;
   transition:var(--transition);
@@ -36,7 +46,9 @@ select,input[type=number],input[type=text],input[type=date],textarea{
 }
 textarea{resize:vertical;min-height:80px;}
 body.dark select,body.dark input,body.dark textarea{
-  background:#1e2127;border-color:#39414d;color:#f5f6fa;
+  background:#1e2127;
+  border-color:var(--input-border);
+  color:#f5f6fa;
 }
 select:focus,input:focus{outline:none;border-color:#667eea;}
 
@@ -56,13 +68,21 @@ select:focus,input:focus{outline:none;border-color:#667eea;}
 .current-exercise .set-info{font-size:13px;opacity:.95;}
 
 .btn{
-  width:100%;border:none;cursor:pointer;
-  padding:15px 16px;font-size:16px;font-weight:600;
-  border-radius:14px;margin-bottom:12px;
+  width:100%;
+  border:none;
+  cursor:pointer;
+  min-height:40px;
+  padding:8px 14px;
+  font-size:16px;
+  font-weight:600;
+  border-radius:10px;
+  margin-bottom:12px;
   transition:var(--transition);
   letter-spacing:.3px;
 }
 .btn:active{transform:scale(.97);}
+button:disabled{opacity:.5;cursor:not-allowed;}
+button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;}
 .btn-primary{background:var(--grad-main);color:#fff;}
 .btn-secondary{background:#f0f3f6;color:#555;}
 .btn-reset{background:#6c757d;color:#fff;}
@@ -71,12 +91,13 @@ select:focus,input:focus{outline:none;border-color:#667eea;}
 
 .sets-history{margin-top:20px;}
 .sets-history h3{font-size:16px;margin-bottom:12px;letter-spacing:.5px;}
+#setsList{border:1px solid var(--input-border);border-radius:10px;overflow:hidden;}
 .set-item{
   background:#f8f9fa;
-  border:1px solid #e5e9ef;
   padding:10px 14px;
-  border-radius:10px;
-  margin-bottom:8px;
+  border:none;
+  border-radius:0;
+  margin:0;
   display:flex;
   justify-content:space-between;
   gap:10px;
@@ -84,15 +105,22 @@ select:focus,input:focus{outline:none;border-color:#667eea;}
   flex-wrap:wrap;
   font-size:14px;
 }
-body.dark .set-item{background:#20242a;border-color:#2c323a;}
+.set-item+ .set-item{border-top:1px solid var(--input-border);}
+body.dark .set-item{background:#20242a;}
+body.dark .set-item+ .set-item{border-top:1px solid var(--input-border);}
 .set-label{font-weight:600;}
 .set-meta{opacity:.85;}
 .set-actions{display:flex;gap:6px;}
 
 .btn-mini{
-  border:none;padding:4px 8px;
-  font-size:12px;border-radius:6px;
-  cursor:pointer;font-weight:600;
+  border:none;
+  padding:6px 10px;
+  font-size:12px;
+  border-radius:8px;
+  cursor:pointer;
+  font-weight:600;
+  width:44px;
+  text-align:center;
 }
 .btn-mini.edit{background:#ffc107;color:#222;}
 .btn-mini.del{background:var(--danger);color:#fff;}
@@ -210,4 +238,15 @@ body.dark #calendarSection{
 .calendar-controls .btn{width:auto;}
 #pasteImport{margin-top:8px;}
 #pasteImport textarea{width:100%;min-height:80px;}
+
+#today+span,#today+span+span{font-size:12px!important;color:var(--muted-fg)!important;}
+#today+span{margin-left:0!important;}
+#today+span+span{margin-left:8px!important;}
+
+@media(max-width:480px){
+  .inline-row{flex-direction:column;}
+  .inline-row .field{width:100%;}
+  .calendar-controls{flex-direction:column;}
+  .calendar-controls #calGoto,.calendar-controls .btn{width:100%;}
+}
 
