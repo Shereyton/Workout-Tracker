@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+ codex/create-interactive-chart-for-workout-data-b7y0r3
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>Workout Tracker — Progress Charts</title>
@@ -58,5 +59,79 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
   <script src="charts.js"></script>
+=======
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>Workout Tracker — Progress Charts</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:16px;}
+  header{display:flex;align-items:center;gap:8px;margin-bottom:16px;}
+  header a{text-decoration:none;color:inherit;font-size:14px;}
+  .controls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:flex-end;}
+  .controls label{display:flex;flex-direction:column;font-size:14px;gap:4px;}
+  #refreshBtn,#seedBtn{
+    height:40px; width:100%;
+    position:relative; z-index:10; /* keep buttons clickable above anything */
+    cursor:pointer;
+  }
+  #mainChart{max-width:100%;height:300px;}
+  .small-charts{display:flex;flex-direction:column;gap:16px;margin-top:16px;}
+  .small-charts canvas{flex:1;height:200px;}
+  @media(min-width:700px){.small-charts{flex-direction:row;}}
+  .sample-note{font-size:12px;opacity:0.7;margin-top:8px;}
+  .message{font-size:14px;opacity:0.8;text-align:center;margin:10px 0;}
+  .manual-import textarea{width:100%;height:80px;}
+  .manual-import{margin-bottom:12px;}
+</style>
+</head>
+<body>
+<header>
+  <a href="index.html">&#8592; Back</a>
+  <h1>Progress Charts</h1>
+</header>
+
+<div id="sample-note" class="sample-note" style="display:none;">Showing sample data (no local data found).</div>
+
+<div class="manual-import">
+  <textarea id="manualData" placeholder="Paste exported workout JSON here"></textarea>
+  <button id="loadManualBtn" class="btn btn-secondary" style="margin-top:8px;">Load Data</button>
+</div>
+
+<div class="controls">
+  <label>Lift
+    <select id="liftSelect">
+      <option value="bench">Bench Press</option>
+      <option value="squat">Squat</option>
+      <option value="incline">Incline</option>
+      <option value="deadlift">Deadlift</option>
+    </select>
+  </label>
+  <label>Metric
+    <select id="metricSelect">
+      <option value="e1rm">Estimated 1RM</option>
+      <option value="top">Top Set Weight</option>
+      <option value="volume">Daily Volume (lbs)</option>
+    </select>
+  </label>
+</div>
+
+<button id="refreshBtn" class="btn btn-secondary">Refresh</button>
+<button id="seedBtn" class="btn btn-secondary">Seed Sample</button>
+
+<div id="empty-message" class="message" style="display:none;">No data for this lift.</div>
+
+<canvas id="mainChart"></canvas>
+
+<small class="sample-note">E1RM = estimated 1-rep max (Epley); Top Set = heaviest set; Volume = total lbs (weight × reps) per day.</small>
+
+<div class="small-charts">
+  <canvas id="benchChart"></canvas>
+  <canvas id="squatChart"></canvas>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+<script src="charts.js"></scrimain
 </body>
 </html>
