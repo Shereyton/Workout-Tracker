@@ -1,13 +1,25 @@
+/**
+ * Lightweight calendar/history renderer injected without HTML changes.
+ * Provides collapsible day cards with inline editing, quick add,
+ * delete and undo. Everything is mounted dynamically.
+ */
+
+const LINE_RE = /^(.*?):\s*(\d+(?:\.\d+)?)\s*lbs\s*[×x]\s*(\d+)\s*reps\s*$/i;
+function parseHistoryLine(str){
+  const m = String(str||'').match(LINE_RE);
+  if(!m) return null;
+  return { name: m[1].trim(), weight: +m[2], reps: +m[3] };
+}
+
 function parseDateLocal(str){
-  const [y,m,d] = str.split('-').map(Number);
+  const [y,m,d] = String(str).split('-').map(Number);
   return new Date(y, m-1, d);
 }
 
-// Parse AI formatted text or exported AI text into history object
 function parseAiText(text, selectedDate){
-  const lines = text.split(/\r?\n/);
+  const lines = String(text||'').split(/\r?\n/);
   let target = selectedDate;
-  const header = lines[0].match(/WORKOUT DATA - (\d{4}-\d{2}-\d{2})/i);
+  const header = lines[0] && lines[0].match(/WORKOUT DATA - (\d{4}-\d{2}-\d{2})/i);
   if(header) target = header[1];
   const out = [];
   let currentExercise = null;
@@ -34,388 +46,304 @@ function parseAiText(text, selectedDate){
   return null;
 }
 
-// Parse CSV (export format) into history object
-function parseCsv(text, selectedDate){
-  if(!/Exercise\s*,\s*Set\s*,\s*Weight\s*,\s*Reps/i.test(text)) return null;
-  const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  lines.shift();
-  const out = [];
-  lines.forEach(l=>{
-    const cols = l.split(',');
-    if(cols.length >=4){
-      out.push(`${cols[0].trim()}: ${cols[2].trim()} lbs × ${cols[3].trim()} reps`);
-    }
-  });
-  if(out.length){
-    return {[selectedDate]: out};
-  }
-  return null;
-}
-
-// Convert a session snapshot into history lines with set numbers
 function snapshotToLines(snapshot){
   const lines = [];
-  snapshot.forEach(ex => {
+  (snapshot||[]).forEach(ex => {
     if(ex.isSuperset){
       ex.sets.forEach((set, setIdx) => {
-        set.exercises.forEach(sub => {
+        (set.exercises||[]).forEach(sub => {
           lines.push(`${sub.name}: Set ${setIdx+1} - ${sub.weight} lbs × ${sub.reps} reps`);
         });
       });
     } else {
-      ex.sets.forEach((set, setIdx) => {
+      (ex.sets||[]).forEach((set, setIdx) => {
         lines.push(`${ex.name}: Set ${setIdx+1} - ${set.weight} lbs × ${set.reps} reps`);
       });
     }
   });
   return lines;
 }
+function computeDayTotals(lines){
+  let sets=0, volume=0;
+  (Array.isArray(lines)?lines:[]).forEach(l=>{
+    const p=parseHistoryLine(l);
+    if(p){ sets++; volume += p.weight*p.reps; }
+  });
+  return { sets, volume };
+}
 
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
-    if(!document.getElementById('calendar')) return;
-    const STORAGE_KEY = 'wt_history';
-    let history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-    let current = new Date();
-    current.setDate(1);
-    let selectedDate = formatDate(new Date());
-
-    const calendarEl = document.getElementById('calendar');
-    const dayTitle = document.getElementById('dayTitle');
-    const entriesEl = document.getElementById('entries');
-    const entryInput = document.getElementById('entryInput');
-    const addEntryBtn = document.getElementById('addEntry');
-    const exportBtn = document.getElementById('exportHistory');
-    const importBtn = document.getElementById('importHistory');
-    const importFile = document.getElementById('importHistoryFile');
-    const saveTodayBtn = document.getElementById('saveTodaySession');
-    const calPrev = document.getElementById('calPrev');
-    const calNext = document.getElementById('calNext');
-    const calTitle = document.getElementById('calTitle');
-    const calToday = document.getElementById('calToday');
-    const calGoto = document.getElementById('calGoto');
-    const calGo = document.getElementById('calGo');
-    const pasteJson = document.getElementById('pasteJson');
-    const importFromPaste = document.getElementById('importFromPaste');
-      const resetDayBtn = document.getElementById('resetDay');
-
-    function updateDateInput(){
-      calGoto.value = selectedDate;
-      calGo.disabled = !calGoto.value;
+    // mount
+    let mount = document.getElementById('calendar') || document.getElementById('calendarRoot') || document.querySelector('section[data-role="calendar"]');
+    if(!mount){
+      mount = document.createElement('section');
+      mount.id = 'calendar';
+      const h1 = document.querySelector('h1');
+      if(h1 && h1.parentNode){ h1.insertAdjacentElement('afterend', mount); }
+      else document.body.insertBefore(mount, document.body.firstChild);
     }
-    updateDateInput();
+    mount.classList.add('wt-cal');
 
-    function formatDate(d){
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    // style
+    const style = document.createElement('style');
+    style.textContent = `
+.wt-cal{font-family:sans-serif;}
+.wt-cal .wt-cal-controls{display:flex;gap:8px;margin-bottom:8px;}
+.wt-cal-day{border:1px solid #ccc;border-radius:6px;margin-bottom:8px;}
+.wt-cal-day-header{width:100%;background:none;border:0;padding:8px;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;text-align:left;font-size:1rem;}
+.wt-cal-day-header:focus{outline:2px solid #09f;}
+.wt-cal-chevron{transition:transform .2s ease;}
+.wt-cal-day-header[aria-expanded="false"] .wt-cal-chevron{transform:rotate(-90deg);}
+.wt-cal-day-body{padding:0 8px 8px;}
+.wt-cal-entry{display:flex;justify-content:space-between;align-items:center;padding:4px 0;}
+.wt-cal-entry .actions{display:flex;gap:4px;}
+.wt-cal-entry button{font-size:.8rem;}
+.wt-cal-add .add-row{display:flex;flex-direction:column;gap:4px;margin-top:4px;}
+.wt-cal-add input{width:100%;}
+.wt-cal-error{color:#d00;font-size:.75rem;}
+.wt-cal-live{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;}
+`;
+    document.head.appendChild(style);
+
+    // live region
+    const live = document.createElement('div');
+    live.className='wt-cal-live';
+    live.setAttribute('role','status');
+    live.setAttribute('aria-live','polite');
+    document.body.appendChild(live);
+    function announce(msg){ live.textContent=''; setTimeout(()=>{ live.textContent=msg; },10); }
+
+    // data
+    const STORAGE_KEY='wt_history';
+    let rawHistory={};
+    try{ rawHistory = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }catch(e){ rawHistory = {}; }
+    let undoSnapshot=null;
+    let saveTimer=null;
+    function scheduleSave(){
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(()=>{ localStorage.setItem(STORAGE_KEY, JSON.stringify(rawHistory)); },80);
+    }
+    function getEntries(date){
+      const v = rawHistory[date];
+      return Array.isArray(v)? v.slice() : [];
     }
 
-    function save(){
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    // helpers
+    function formatHuman(dateStr){ return parseDateLocal(dateStr).toLocaleDateString(undefined,{weekday:'short',year:'numeric',month:'short',day:'numeric'}); }
+
+    const cards=[];
+
+    function offerUndo(message, snapshot){
+      undoSnapshot = snapshot;
+      if(typeof showToast === 'function'){
+        showToast(message, { actionLabel:'Undo', onAction: undo });
+        setTimeout(()=>{ undoSnapshot=null; },8000);
+      } else {
+        const bar = document.createElement('div');
+        bar.style.position='fixed';bar.style.bottom='10px';bar.style.left='50%';bar.style.transform='translateX(-50%)';
+        bar.style.background='#333';bar.style.color='#fff';bar.style.padding='8px';bar.style.borderRadius='4px';
+        const btn=document.createElement('button');btn.textContent='Undo';btn.style.marginLeft='8px';
+        btn.addEventListener('click',()=>{ undo(); document.body.removeChild(bar); });
+        bar.textContent=message; bar.appendChild(btn);
+        document.body.appendChild(bar);
+        setTimeout(()=>{ if(bar.parentNode) bar.parentNode.removeChild(bar); undoSnapshot=null; },8000);
+      }
+    }
+    function undo(){
+      if(!undoSnapshot) return;
+      rawHistory = JSON.parse(undoSnapshot);
+      undoSnapshot=null;
+      scheduleSave();
+      renderDays();
+      announce('Undo complete.');
     }
 
-    function mergeHistory(obj){
-      const dates = new Set();
-      let added = 0;
-      let skipped = 0;
-      Object.keys(obj).forEach(date => {
-        if(Array.isArray(obj[date])){
-          if(!history[date]) history[date] = [];
-          obj[date].forEach(line => {
-            if(!history[date].includes(line)){
-              history[date].push(line);
-              added++; dates.add(date);
-            } else {
-              skipped++;
+    document.addEventListener('keydown', e=>{
+      if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z'){
+        if(undoSnapshot){ e.preventDefault(); undo(); }
+      }
+    });
+
+    // controls
+    mount.innerHTML='';
+    const controls = document.createElement('div');
+    controls.className='wt-cal-controls';
+    const expandAll = document.createElement('button');
+    expandAll.type='button'; expandAll.textContent='Expand All';
+    const collapseAll = document.createElement('button');
+    collapseAll.type='button'; collapseAll.textContent='Collapse All';
+    controls.appendChild(expandAll); controls.appendChild(collapseAll);
+    mount.appendChild(controls);
+
+    const container = document.createElement('div');
+    mount.appendChild(container);
+
+    expandAll.addEventListener('click', ()=>{
+      cards.forEach(c=>{ c.header.setAttribute('aria-expanded','true'); c.body.style.display=''; c.build(true); });
+    });
+    collapseAll.addEventListener('click', ()=>{
+      cards.forEach(c=>{ c.header.setAttribute('aria-expanded','false'); c.body.style.display='none'; });
+    });
+
+    function renderDays(){
+      container.innerHTML='';
+      cards.length=0;
+      const dates = Object.keys(rawHistory).sort((a,b)=>b.localeCompare(a)).slice(0,90);
+      if(dates.length===0){ container.textContent='No history'; return; }
+      dates.forEach((date, idx)=>{
+        const card = createDayCard(date, idx<7, idx<14);
+        container.appendChild(card.el);
+        cards.push(card);
+      });
+    }
+
+    function createDayCard(date, expandedDefault, buildNow){
+      const cardEl = document.createElement('div'); cardEl.className='wt-cal-day';
+      const header = document.createElement('button');
+      header.type='button';
+      header.className='wt-cal-day-header';
+      header.setAttribute('aria-expanded', expandedDefault? 'true':'false');
+      const dateSpan=document.createElement('span'); dateSpan.textContent=formatHuman(date);
+      const totalsSpan=document.createElement('span'); totalsSpan.className='wt-cal-totals';
+      const chev=document.createElement('span'); chev.className='wt-cal-chevron'; chev.textContent='▾';
+      header.appendChild(dateSpan); header.appendChild(totalsSpan); header.appendChild(chev);
+      cardEl.appendChild(header);
+      const body=document.createElement('div'); body.className='wt-cal-day-body';
+      if(!expandedDefault) body.style.display='none';
+      cardEl.appendChild(body);
+
+      function refreshTotals(){
+        const t = computeDayTotals(getEntries(date));
+        totalsSpan.textContent = `Sets: ${t.sets} • Volume: ${t.volume} lbs`;
+      }
+
+      let built=false;
+      function build(force=false){
+        if(built && !force) return;
+        body.innerHTML='';
+        const ul=document.createElement('ul');
+        getEntries(date).forEach((line,i)=>{ ul.appendChild(createEntry(date,line,i)); });
+        body.appendChild(ul);
+        body.appendChild(createAddRow(date));
+        built=true;
+      }
+
+      if(expandedDefault && buildNow) build();
+
+      header.addEventListener('click', ()=>{
+         const exp = header.getAttribute('aria-expanded')==='true';
+         header.setAttribute('aria-expanded', exp? 'false':'true');
+         if(exp){ body.style.display='none'; }
+         else { body.style.display=''; build(); }
+      });
+
+      const card={ el:cardEl, header, body, build, refreshTotals };
+      refreshTotals();
+      return card;
+
+      function createEntry(date,line,index){
+        const li=document.createElement('li'); li.className='wt-cal-entry';
+        const span=document.createElement('span'); span.textContent=line; li.appendChild(span);
+        const actions=document.createElement('span'); actions.className='actions'; li.appendChild(actions);
+        const edit=document.createElement('button'); edit.type='button'; edit.textContent='Edit'; edit.setAttribute('aria-label','Edit entry'); actions.appendChild(edit);
+        const del=document.createElement('button'); del.type='button'; del.textContent='Del'; del.setAttribute('aria-label','Delete entry'); actions.appendChild(del);
+
+        edit.addEventListener('click', ()=>enterEdit());
+        del.addEventListener('click', ()=>{
+          const prev = JSON.stringify(rawHistory);
+          const arr = getEntries(date);
+          arr.splice(index,1);
+          if(arr.length) rawHistory[date]=arr; else delete rawHistory[date];
+          scheduleSave();
+          announce('Deleted entry.');
+          offerUndo('Entry deleted', prev);
+          build(true);
+          refreshTotals();
+        });
+
+        function enterEdit(){
+          const input=document.createElement('input'); input.type='text'; input.value=line;
+          input.className='wt-cal-edit';
+          li.insertBefore(input, span); li.removeChild(span);
+          edit.style.display='none';
+          const err=document.createElement('div'); err.className='wt-cal-error'; li.appendChild(err);
+          input.focus();
+          function save(){
+            const val=input.value.trim();
+            if(!val){ err.textContent='Required'; return; }
+            const parsed=parseHistoryLine(val);
+            if(!parsed){
+              err.textContent='Invalid format';
+              if(!confirm('Invalid format. Keep as free text?')) return;
             }
+            const prev = JSON.stringify(rawHistory);
+            const arr = getEntries(date);
+            arr[index]=val;
+            rawHistory[date]=arr;
+            scheduleSave();
+            announce('Edited entry on '+formatHuman(date)+'.');
+            offerUndo('Entry updated', prev);
+            build(true);
+            refreshTotals();
+          }
+          function cancel(){ err.remove(); build(true); }
+          input.addEventListener('keydown', e=>{
+            if(e.key==='Enter'){ e.preventDefault(); save(); }
+            else if(e.key==='Escape'){ e.preventDefault(); cancel(); }
           });
         }
-      });
-      return {dates:[...dates], added, skipped};
-    }
 
-    function renderCalendar(){
-      calendarEl.innerHTML='';
-      const year = current.getFullYear();
-      const month = current.getMonth();
-      calTitle.textContent = current.toLocaleString('default',{month:'long',year:'numeric'});
-
-      const weekDays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-      weekDays.forEach(d => {
-        const head = document.createElement('div');
-        head.textContent = d;
-        head.className = 'cal-header';
-        calendarEl.appendChild(head);
-      });
-
-      const first = new Date(year, month, 1);
-      const start = first.getDay();
-      const days = new Date(year, month+1, 0).getDate();
-      const prevDays = new Date(year, month, 0).getDate();
-      const totalCells = 42;
-      for(let i=0;i<totalCells;i++){
-        const cell = document.createElement('div');
-        cell.className = 'calendar-day';
-        let dayNum; let dateObj;
-        if(i < start){
-          dayNum = prevDays - start + 1 + i;
-          dateObj = new Date(year, month-1, dayNum);
-          cell.classList.add('muted');
-        } else if(i >= start + days){
-          dayNum = i - start - days + 1;
-          dateObj = new Date(year, month+1, dayNum);
-          cell.classList.add('muted');
-        } else {
-          dayNum = i - start + 1;
-          dateObj = new Date(year, month, dayNum);
-        }
-        const dateStr = formatDate(dateObj);
-        cell.textContent = dayNum;
-        if(history[dateStr] && history[dateStr].length){
-          cell.classList.add('has-data');
-        }
-        if(dateStr === selectedDate) cell.classList.add('selected');
-        cell.addEventListener('click', () => {
-          selectedDate = dateStr;
-          current = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1);
-          renderCalendar();
-          renderDay();
-        });
-        calendarEl.appendChild(cell);
+        return li;
       }
-    }
 
-    function renderDay(){
-      const dateObj = parseDateLocal(selectedDate);
-      dayTitle.textContent = dateObj.toDateString();
-      entriesEl.innerHTML = '';
-      const list = history[selectedDate] || [];
-      list.forEach((text, idx) => {
-        const li = document.createElement('li');
-        li.className = 'entry-item';
-
-        const span = document.createElement('span');
-        span.textContent = text;
-        li.appendChild(span);
-
-        const actions = document.createElement('div');
-        actions.className = 'entry-actions';
-
-        const editBtn = document.createElement('button');
-        editBtn.textContent = 'Edit';
-        editBtn.className = 'btn-mini edit';
-        editBtn.addEventListener('click', () => {
-          const updated = prompt('Edit entry', text);
-          if(updated !== null){
-            history[selectedDate][idx] = updated.trim();
-            if(!history[selectedDate][idx]) history[selectedDate].splice(idx,1);
-            if(history[selectedDate].length === 0) delete history[selectedDate];
-            save();
-            renderDay();
-            renderCalendar();
+      function createAddRow(date){
+        const wrap=document.createElement('div'); wrap.className='wt-cal-add';
+        const btn=document.createElement('button'); btn.type='button'; btn.textContent='+ Add'; wrap.appendChild(btn);
+        let row=null;
+        btn.addEventListener('click', ()=>{
+          if(row) return;
+          btn.style.display='none';
+          row=document.createElement('div'); row.className='add-row';
+          const input=document.createElement('input'); input.type='text'; input.placeholder='Exercise: 100 lbs × 5 reps';
+          const err=document.createElement('div'); err.className='wt-cal-error';
+          row.appendChild(input); row.appendChild(err); wrap.appendChild(row); input.focus();
+          function save(){
+            const val=input.value.trim();
+            if(!val){ err.textContent='Required'; return; }
+            const parsed=parseHistoryLine(val);
+            if(!parsed){
+              err.textContent='Invalid format';
+              if(!confirm('Invalid format. Keep as free text?')) return;
+            }
+            const prev = JSON.stringify(rawHistory);
+            const arr=getEntries(date);
+            arr.push(val);
+            rawHistory[date]=arr;
+            scheduleSave();
+            announce('Added entry.');
+            offerUndo('Entry added', prev);
+            build(true);
+            refreshTotals();
+            row.remove(); row=null; btn.style.display='';
+            setTimeout(()=>{
+              const items=body.querySelectorAll('li');
+              if(items.length) items[items.length-1].scrollIntoView({behavior:'smooth',block:'center'});
+            },50);
           }
+          function cancel(){ row.remove(); row=null; btn.style.display=''; }
+          input.addEventListener('keydown', e=>{
+            if(e.key==='Enter'){ e.preventDefault(); save(); }
+            else if(e.key==='Escape'){ e.preventDefault(); cancel(); }
+          });
         });
-        actions.appendChild(editBtn);
-
-        const delBtn = document.createElement('button');
-        delBtn.textContent = 'Del';
-        delBtn.className = 'btn-mini del';
-        delBtn.addEventListener('click', () => {
-          if(confirm('Delete entry?')){
-            history[selectedDate].splice(idx,1);
-            if(history[selectedDate].length === 0) delete history[selectedDate];
-            save();
-            renderDay();
-            renderCalendar();
-          }
-        });
-        actions.appendChild(delBtn);
-
-        li.appendChild(actions);
-        entriesEl.appendChild(li);
-      });
-      if(resetDayBtn){
-        resetDayBtn.disabled = list.length === 0;
+        return wrap;
       }
-      updateDateInput();
-    }
-    addEntryBtn.addEventListener('click', () => {
-      const val = entryInput.value.trim();
-      if(!val) return;
-      if(!history[selectedDate]) history[selectedDate] = [];
-      if(!history[selectedDate].includes(val)) history[selectedDate].push(val);
-      entryInput.value='';
-      save();
-      renderDay();
-      renderCalendar();
-    });
-
-    if(resetDayBtn){
-      resetDayBtn.addEventListener('click', () => {
-        if(confirm('Clear all entries for this day?')){
-          delete history[selectedDate];
-          save();
-          renderDay();
-          renderCalendar();
-        }
-      });
     }
 
-    exportBtn.addEventListener('click', () => {
-      const data = JSON.stringify(history, null, 2);
-      const blob = new Blob([data], {type:'application/json'});
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = 'workout_history.json';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      if(navigator.clipboard){
-        navigator.clipboard.writeText(data).then(()=>{
-          alert('History exported and copied to clipboard ✅');
-        }).catch(()=> alert('History exported (clipboard copy failed)'));
-      } else {
-        alert('History exported. Copy manually:\n\n' + data);
-      }
-    });
-
-    importBtn.addEventListener('click', () => importFile.click());
-    importFile.addEventListener('change', e => {
-      const file = e.target.files[0];
-      if(!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const obj = safeParseJson(reader.result);
-        if(obj){
-          const res = mergeHistory(obj);
-          if(res.dates.length) selectedDate = res.dates[0];
-          save();
-          renderCalendar();
-          renderDay();
-          alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
-        } else {
-          alert('Invalid file');
-        }
-      };
-      reader.readAsText(file);
-      importFile.value='';
-    });
-
-    importFromPaste.addEventListener('click', () => {
-      const text = pasteJson.value;
-      if(!text.trim()) return;
-      if(handlePaste(text)) pasteJson.value='';
-    });
-
-    function handlePaste(text){
-      const jsonObj = safeParseJson(text);
-      if(jsonObj && typeof jsonObj === 'object'){
-        const res = mergeHistory(jsonObj);
-        if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay();
-        alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
-        return true;
-      }
-      const ai = parseAiText(text, selectedDate);
-      if(ai){
-        const res = mergeHistory(ai);
-        if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay();
-        alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
-        return true;
-      }
-      const csv = parseCsv(text, selectedDate);
-      if(csv){
-        const res = mergeHistory(csv);
-        if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay();
-        alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
-        return true;
-      }
-      alert('Could not parse input. Supported: JSON, AI text, CSV. Input: '+text.slice(0,120));
-      return false;
-    }
-
-    function safeParseJson(text){
-      try{ return JSON.parse(text); }catch(e){}
-      const extracted = extractJsonFromText(text);
-      if(!extracted) return null;
-      try{ return JSON.parse(extracted); }catch(e){}
-      return null;
-    }
-
-    function extractJsonFromText(text){
-      let cleaned = text.replace(/^\uFEFF/, '');
-      cleaned = cleaned.replace(/```(?:json)?|```/gi,'');
-      cleaned = cleaned.replace(/[“”]/g,'"').replace(/[‘’]/g,"'");
-      const match = cleaned.match(/({[\s\S]*}|\[[\s\S]*\])/);
-      if(match){
-        return match[0].replace(/,\s*([}\]])/g,'$1');
-      }
-      return null;
-    }
-
-    calPrev.addEventListener('click', () => {
-      current.setMonth(current.getMonth()-1);
-      selectedDate = formatDate(new Date(current.getFullYear(), current.getMonth(),1));
-      renderCalendar();
-      renderDay();
-    });
-
-    calNext.addEventListener('click', () => {
-      current.setMonth(current.getMonth()+1);
-      selectedDate = formatDate(new Date(current.getFullYear(), current.getMonth(),1));
-      renderCalendar();
-      renderDay();
-    });
-
-    calToday.addEventListener('click', () => {
-      const now = new Date();
-      selectedDate = formatDate(now);
-      current = new Date(now.getFullYear(), now.getMonth(),1);
-      renderCalendar();
-      renderDay();
-    });
-
-    calGoto.addEventListener('input', () => {
-      calGo.disabled = !calGoto.value;
-    });
-
-    calGo.addEventListener('click', () => {
-      if(!calGoto.value) return;
-      const [y,m,d] = calGoto.value.split('-').map(Number);
-      selectedDate = formatDate(new Date(y,m-1,d));
-      current = new Date(y,m-1,1);
-      renderCalendar();
-      renderDay();
-    });
-
-    saveTodayBtn.addEventListener('click', () => {
-      if (typeof window.getSessionSnapshot !== 'function') {
-        alert('Session not available');
-        return;
-      }
-      const snapshot = window.getSessionSnapshot();
-      if (!snapshot.length) {
-        alert('No session data to save');
-        return;
-      }
-      const lines = snapshotToLines(snapshot);
-      const res = mergeHistory({[selectedDate]: lines});
-      save();
-      renderDay();
-      renderCalendar();
-      alert(`Saved ${res.added} lines, ${res.skipped} duplicates`);
-    });
-
-    window.addEventListener('wt-history-updated', () => {
-      renderCalendar();
-      renderDay();
-    });
-
-    renderCalendar();
-    renderDay();
+    renderDays();
   });
 }
-if (typeof module !== 'undefined') {
-  module.exports = { parseDateLocal, parseAiText, parseCsv, snapshotToLines };
-}
+
+// for tests
+if(typeof module !== 'undefined'){ module.exports = { parseHistoryLine, computeDayTotals, parseDateLocal, parseAiText, snapshotToLines }; }
