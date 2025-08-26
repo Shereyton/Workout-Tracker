@@ -291,3 +291,33 @@ body.dark #calendarSection{
   #repeatLastBtn { border-color:#333; color:#ddd; }
 }
 
+.wt-cal { margin-top: 16px; border-radius: 12px; background: var(--panel, #fff4); padding: 12px; }
+.wt-cal .cal-header { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; align-items: center; margin-bottom: 8px; }
+.wt-cal .cal-title { text-align: center; font-weight: 600; }
+.wt-cal .btn { padding: 8px 12px; min-height: 40px; }
+.wt-cal .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.wt-cal .dow { text-align: center; font-size: 12px; color: var(--muted-fg, #777); padding: 6px 0; }
+.wt-cal .cell { border: 1px solid var(--hairline, #e5e5e5); border-radius: 10px; min-height: 68px; padding: 6px; position: relative; background: var(--bg, #fff); }
+.wt-cal .cell.out { opacity: 0.45; }
+.wt-cal .daynum { font-size: 12px; color: var(--muted-fg, #777); }
+.wt-cal .badges { margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap; }
+.wt-cal .badge { font-size: 11px; padding: 2px 6px; border-radius: 999px; background: var(--panel, #f5f5f5); border: 1px solid var(--hairline, #e5e5e5); }
+.wt-cal .cell[aria-selected="true"] { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #4a90e2) 25%, transparent); }
+.wt-cal .card { margin-top: 6px; border-top: 1px dashed var(--hairline, #e5e5e5); padding-top: 6px; max-height: 200px; overflow: auto; }
+.wt-cal .entry { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 14px; }
+.wt-cal .entry .actions { display: flex; gap: 6px; }
+.wt-cal .sr-only { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
+@media (max-width: 768px) {
+  .wt-cal .cell { min-height: 72px; }
+  .wt-cal .btn { min-height: 44px; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .wt-cal { background: #1a1a1a; }
+  .wt-cal .cell { background: #111; border-color: #333; }
+  .wt-cal .badge { background: #161616; border-color: #333; }
+  .wt-cal .dow, .wt-cal .daynum { color: #aaa; }
+}
+
+
