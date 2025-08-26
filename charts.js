@@ -29,52 +29,71 @@ function e1rm(weight, reps){
 
 async function loadWorkouts(){
   let raw = null;
-  try{
-    const ls = localStorage.getItem('workouts') || localStorage.getItem('wt_history');
-    if(ls) raw = JSON.parse(ls);
-  }catch{}
-  if(!raw){
-    try{
-      const res = await fetch('data/workouts.json', {cache:'no-store'});
-      if(res.ok) raw = await res.json();
-    }catch{}
+
+  try {
+    const keys = ['workouts', 'wt_history', 'wt_lastWorkout'];
+    for (const k of keys) {
+      const ls = localStorage.getItem(k);
+      if (ls) {
+        raw = JSON.parse(ls);
+        if (k === 'wt_lastWorkout' && Array.isArray(raw)) {
+          const day = new Date().toISOString().slice(0,10);
+          const lines = [];
+          raw.forEach(ex => (ex.sets||[]).forEach(s => {
+            if (ex.isCardio) return;
+            lines.push(`${ex.name || ex.lift}: ${s.weight} lbs × ${s.reps} reps`);
+          }));
+          raw = { [day]: lines };
+        }
+        break;
+      }
+    }
+  } catch(e){}
+
+  if (!raw) {
+    try {
+      const res = await fetch('data/workouts.json', { cache: 'no-store' });
+      if (res.ok) raw = await res.json();
+    } catch(e){}
   }
-  if(!raw){
+
+  if (!raw) {
     raw = SAMPLE_DATA;
     const note = document.getElementById('sample-note');
-    if(note) note.style.display='block';
+    if (note) note.style.display = 'block';
   }
+
   return normalizeWorkouts(raw);
 }
 
 function normalizeWorkouts(raw){
-  // If array already
-  if(Array.isArray(raw)){
-    return raw.map(r=>({
-      date: r.date,
-      lift: canonicalLift(r.lift),
-      sets: r.sets ? r.sets.map(s=>({weight:+s.weight,reps:+s.reps})) : []
+  if (Array.isArray(raw)) {
+    return raw.map(r => ({
+      date: toDayISO(r.date),
+      lift: canonicalLift(r.lift || r.name),
+      sets: (r.sets || []).map(s => ({ weight:+s.weight, reps:+s.reps }))
     }));
   }
-  // assume object keyed by date -> ["Bench Press: 100 lbs × 5 reps"]
+
   const workouts = [];
-  for(const [date, entries] of Object.entries(raw||{})){
+  for (const [date, entries] of Object.entries(raw || {})) {
+    const day = toDayISO(date);
     const lifts = {};
-    entries.forEach(line=>{
+    (entries || []).forEach(line => {
       const m = line.match(/^(.*?):\s*(\d+)\s*lbs\s*[x×]\s*(\d+)\s*reps?/i);
-      if(!m) return;
-      let [, name, w, r] = m;
-      const lift = canonicalLift(name);
-      if(!lifts[lift]) lifts[lift] = { date, lift, sets: [] };
-      lifts[lift].sets.push({ weight:+w, reps:+r });
+      if (!m) return;
+      const [, name, w, r] = m;
+      const key = canonicalLift(name);
+      if (!lifts[key]) lifts[key] = { date: day, lift: key, sets: [] };
+      lifts[key].sets.push({ weight:+w, reps:+r });
     });
     workouts.push(...Object.values(lifts));
   }
   return workouts;
 }
 
-function canonicalLift(name){
-  const n = (name||'').toLowerCase();
+function canonicalLift(name=''){
+  const n = String(name).toLowerCase();
   if(n.includes('bench')) return 'bench';
   if(n.includes('squat')) return 'squat';
   if(n.includes('incline')) return 'incline';
@@ -84,7 +103,7 @@ function canonicalLift(name){
 
 function computeDaily(workouts, lift, metric){
   const daily = {};
-  const target = lift.toLowerCase();
+  const target = canonicalLift(lift);
   workouts.filter(w => canonicalLift(w.lift) === target).forEach(w=>{
     const day = toDayISO(w.date);
     if(!daily[day]) daily[day] = { e1rmMax:0, topSet:0, volume:0 };
@@ -121,9 +140,21 @@ async function init(){
   const squatCtx = document.getElementById('squatChart').getContext('2d');
   let mainChart = null;
   function renderMain(){
+    const liftLabel = liftSelect.options[liftSelect.selectedIndex].text;
+    const metricLabel = metricSelect.options[metricSelect.selectedIndex].text;
     const data = computeDaily(workouts, liftSelect.value, metricSelect.value);
-    if(mainChart) mainChart.destroy();
-    mainChart = makeLineChart(mainCtx, `${liftSelect.value} - ${metricSelect.options[metricSelect.selectedIndex].text}`, data);
+    if(mainChart){
+      mainChart.destroy();
+      mainChart = null;
+    }
+    if(!data.length){
+      document.getElementById('mainChart').style.display = 'none';
+      document.getElementById('empty-message').style.display = 'block';
+      return;
+    }
+    document.getElementById('mainChart').style.display = 'block';
+    document.getElementById('empty-message').style.display = 'none';
+    mainChart = makeLineChart(mainCtx, `${liftLabel} - ${metricLabel}`, data);
   }
   refreshBtn.addEventListener('click', renderMain);
   window.addEventListener('resize', renderMain);
