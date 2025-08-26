@@ -47,6 +47,16 @@
     </select>
   </label>
   <button id="refreshBtn" class="btn btn-secondary">Refresh</button>
+  <button id="seedBtn" class="btn btn-secondary" style="height:32px;">Seed Sample</button>
+  <script>
+    document.getElementById('seedBtn').addEventListener('click', () => {
+      localStorage.setItem('wt_history', JSON.stringify({
+        "2024-08-25": ["Bench Press: 185 lbs × 5 reps","Squat: 225 lbs × 5 reps"],
+        "2024-08-26": ["Bench Press: 190 lbs × 5 reps","Squat: 235 lbs × 5 reps"]
+      }));
+      alert('Seeded! Click Refresh above.');
+    });
+  </script>
 </div>
 
 <canvas id="mainChart"></canvas>
@@ -61,6 +71,6 @@
 <!-- Chart.js + date adapter -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-<script src="charts.js"></script>
+<script src="charts.js?v=8"></script>
 </body>
 </html>

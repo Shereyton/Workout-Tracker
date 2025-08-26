@@ -70,7 +70,8 @@ async function loadWorkouts(){
   /* 3️⃣  sample fallback so page is never blank */
   let workouts = normalizeWorkouts(raw);
   if(!workouts.length){
-    document.getElementById('sample-note')?.style.setProperty('display','block');
+    const note = document.getElementById('sample-note');
+    if(note) note.style.display = 'block';
     workouts = normalizeWorkouts(SAMPLE_DATA);
   }
   return workouts;
