@@ -312,8 +312,13 @@ async function init(){
   await refresh();
 }
 
-if(typeof window !== 'undefined'){
-  window.addEventListener('DOMContentLoaded', init);
+if (typeof window !== 'undefined') {
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', init);
+  } else {
+    // If the script loads after DOMContentLoaded, run now.
+    init();
+  }
 }
 
 if(typeof module !== 'undefined'){
