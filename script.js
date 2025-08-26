@@ -69,6 +69,30 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseList = document.getElementById("exerciseList");
   const muscleFilter = document.getElementById("muscleFilter");
 
+  // Screen reader live region
+  const srStatus = document.createElement("div");
+  srStatus.setAttribute("aria-live", "polite");
+  srStatus.setAttribute("aria-atomic", "true");
+  srStatus.style.position = "absolute";
+  srStatus.style.width = "1px";
+  srStatus.style.height = "1px";
+  srStatus.style.overflow = "hidden";
+  srStatus.style.clip = "rect(1px, 1px, 1px, 1px)";
+  srStatus.style.whiteSpace = "nowrap";
+  document.body.appendChild(srStatus);
+  function announce(msg) {
+    srStatus.textContent = msg;
+  }
+
+  // Button aria-labels
+  logBtn.setAttribute("aria-label", "Log set");
+  nextExerciseBtn.setAttribute(
+    "aria-label",
+    "Finish exercise and choose next",
+  );
+  finishBtn.setAttribute("aria-label", "Finish workout");
+  resetBtn.setAttribute("aria-label", "Reset workout");
+
   const sessionTimerEl = document.createElement("span");
   sessionTimerEl.style.fontSize = "0.9em";
   sessionTimerEl.style.color = "#666";
@@ -525,6 +549,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       updateSetsToday();
       saveState();
       updateLogButtonState();
+      announce(`Logged set ${currentExercise.nextSet - 1} for ${currentExercise.name}`);
+      document.getElementById("weight0").focus();
       return;
     }
 
@@ -568,6 +594,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       updateSetsToday();
       saveState();
       updateLogButtonState();
+      announce(`Logged set ${currentExercise.nextSet - 1} for ${currentExercise.name}`);
+      if (distanceInput.classList.contains("hidden")) {
+        durationMinInput.focus();
+      } else {
+        distanceInput.focus();
+      }
       return;
     }
 
@@ -598,9 +630,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     currentExercise.nextSet++;
     updateSetCounter();
 
+    weightInput.focus();
     weightInput.select();
     repsInput.value = "";
-    repsInput.focus();
 
     if (useTimer && planned != null) {
       startRest(planned, currentExercise.sets.length - 1);
@@ -610,6 +642,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateSetsToday();
     saveState();
     updateLogButtonState();
+    announce(`Logged set ${currentExercise.nextSet - 1} for ${currentExercise.name}`);
   });
 
   function addSetElement(setObj, index) {
@@ -649,6 +682,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       <button class="btn-mini del"  data-action="del">Del</button>
     </div>
   `;
+    const editBtn = item.querySelector('button[data-action="edit"]');
+    editBtn.setAttribute(
+      "aria-label",
+      `Edit set ${setObj.set} for ${currentExercise.name}`,
+    );
+    const delBtn = item.querySelector('button[data-action="del"]');
+    delBtn.setAttribute(
+      "aria-label",
+      `Delete set ${setObj.set} for ${currentExercise.name}`,
+    );
     setsList.appendChild(item);
   }
 
@@ -681,6 +724,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function deleteSet(idx) {
     if (!confirm("Delete this set?")) return;
+    announce(`Deleted set ${idx + 1} for ${currentExercise.name}`);
     currentExercise.sets.splice(idx, 1);
     renumberSets();
     rebuildSetsList();
@@ -757,6 +801,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     `;
     }
     item.appendChild(form);
+    const firstField = form.querySelector("input");
+    if (firstField) firstField.focus();
 
     form.addEventListener("click", (ev) => {
       if (ev.target.hasAttribute("data-edit-save")) {
@@ -821,21 +867,24 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           s.weight = newW;
           s.reps = newR;
           s.restPlanned = newPlanned;
-        s.restActual = newActual;
-      }
+          s.restActual = newActual;
+        }
 
-      saveState();
-      rebuildSetsList();
-      updateSummary();
-      updateSetsToday();
-    }
+        saveState();
+        rebuildSetsList();
+        updateSummary();
+        updateSetsToday();
+        form.remove();
+        const editBtn = setsList.querySelector(
+          `.set-item[data-index="${idx}"] button[data-action="edit"]`,
+        );
+        if (editBtn) editBtn.focus();
+      }
       if (ev.target.hasAttribute("data-edit-cancel")) {
         form.remove();
+        const editBtn = item.querySelector('button[data-action="edit"]');
+        if (editBtn) editBtn.focus();
         return;
-      }
-      // close form after save
-      if (ev.target.hasAttribute("data-edit-save")) {
-        form.remove();
       }
     });
   }
@@ -853,6 +902,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   /* ------------------ NEXT EXERCISE ------------------ */
   nextExerciseBtn.addEventListener("click", () => {
+    const finishedName = currentExercise ? currentExercise.name : "";
     if (currentExercise && currentExercise.sets.length) {
       pushOrMergeExercise(currentExercise);
     }
@@ -875,6 +925,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateSetsToday();
     saveState();
     updateLogButtonState();
+    if (finishedName) announce(`Finished ${finishedName}`);
   });
 
   function pushOrMergeExercise(ex) {
@@ -902,6 +953,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     restSetIndex = setIndex;
     updateRestDisplay();
     restBox.classList.remove("hidden");
+    announce(`Rest started for ${formatSec(seconds)}`);
     restTimer = setInterval(() => {
       restSecondsRemaining--;
       updateRestDisplay();
@@ -922,6 +974,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function finishRest() {
     stopRest();
+    announce("Rest finished");
     const elapsed = Math.round((Date.now() - restStartMs) / 1000);
     if (
       currentExercise &&
@@ -1028,12 +1081,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   resetBtn.addEventListener("click", () => {
     if (!confirm("Reset entire workout?")) return;
     endWorkout();
+    announce("Workout reset");
   });
 
   /* ------------------ FINISH WORKOUT ------------------ */
   finishBtn.addEventListener("click", () => {
     if (!confirm("Finish workout?")) return;
     endWorkout();
+    announce("Workout finished");
   });
 
   /* ------------------ SUMMARY ------------------ */
@@ -1252,6 +1307,29 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
   distanceInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") durationMinInput.focus();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      if (
+        !logBtn.disabled &&
+        document.activeElement &&
+        document.activeElement.tagName === "INPUT"
+      ) {
+        logBtn.click();
+      }
+    } else if (e.key === "Escape") {
+      const openForm = document.querySelector(".edit-form");
+      if (openForm) {
+        const parent = openForm.parentElement;
+        openForm.remove();
+        const editBtn = parent.querySelector('button[data-action="edit"]');
+        if (editBtn) editBtn.focus();
+      } else if (!restBox.classList.contains("hidden")) {
+        finishRest();
+        restBox.classList.add("hidden");
+      }
+    }
   });
 }
 
