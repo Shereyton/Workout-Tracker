@@ -68,6 +68,45 @@ async function loadWorkouts(){
         break;
       }
     }
+    if(!raw){
+      const sessionStr = localStorage.getItem('wt_session');
+      const currentStr = localStorage.getItem('wt_currentExercise');
+      if(sessionStr || currentStr){
+        const day = toDayISO(new Date());
+        const lines = [];
+        try{
+          const session = sessionStr ? JSON.parse(sessionStr) : {exercises:[]};
+          const current = currentStr ? JSON.parse(currentStr) : null;
+          const snapshot = Array.isArray(session.exercises)
+            ? session.exercises.map(e=>({...e, sets:[...(e.sets||[])]}))
+            : [];
+          if(current && Array.isArray(current.sets) && current.sets.length){
+            const existing = snapshot.find(e=>e.name === current.name);
+            if(existing){
+              current.sets.forEach(s=>existing.sets.push({...s, set: existing.sets.length+1}));
+            } else {
+              snapshot.push({...current, sets:[...(current.sets||[])]});
+            }
+          }
+          snapshot.forEach(ex=>{
+            if(ex.isSuperset && Array.isArray(ex.sets)){
+              ex.sets.forEach(s=>{
+                (s.exercises||[]).forEach(sub=>{
+                  lines.push(`${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`);
+                });
+              });
+            } else if(ex.isCardio){
+              // skip cardio
+            } else {
+              (ex.sets||[]).forEach(s=>{
+                lines.push(`${ex.name}: ${s.weight} lbs × ${s.reps} reps`);
+              });
+            }
+          });
+          if(lines.length) raw = { [day]: lines };
+        }catch{}
+      }
+    }
   }catch{}
 
   // 2) Try static JSON fallback

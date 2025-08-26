@@ -841,7 +841,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const hasData =
       session.exercises.length ||
       (currentExercise && currentExercise.sets.length);
-    if (hasData && confirm("Save today's session lines to calendar?")) {
+    if (hasData) {
+      // Automatically persist session summary so charts can use it
       saveSessionLinesToHistory();
     }
   }
