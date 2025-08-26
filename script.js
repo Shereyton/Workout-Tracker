@@ -6,7 +6,10 @@ const WT_KEYS = {
   history: 'wt_history',
   custom: 'custom_exercises',
   theme: 'wt_theme',
-  schema: 'wt_schema_version'
+  schema: 'wt_schema_version',
+  ffQuery: 'wt_ff_query',
+  ffFilter: 'wt_ff_filter',
+  recent: 'wt_recent_exercises'
 };
 
 const WT_SCHEMA_VERSION = 2;
@@ -254,6 +257,29 @@ function canLogCardio(distance, duration, name) {
   return distanceOk && durationOk;
 }
 
+function isCardioExercise(ex) {
+  return (
+    ex?.isCardio ||
+    ex?.category === "Cardio" ||
+    ex?.name === "Plank"
+  );
+}
+
+function ffMatchesFilter(ex, filter) {
+  switch (filter) {
+    case "strength":
+      return !isCardioExercise(ex) && !ex.isSuperset;
+    case "cardio":
+      return isCardioExercise(ex);
+    case "custom":
+      return !!ex.custom;
+    case "superset":
+      return !!ex.isSuperset;
+    default:
+      return true;
+  }
+}
+
 /* ------------------ ELEMENTS ------------------ */
 if (typeof document !== "undefined" && document.getElementById("today")) {
   const todayEl = document.getElementById("today");
@@ -293,6 +319,55 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseSearch = document.getElementById("exerciseSearch");
   const exerciseList = document.getElementById("exerciseList");
   const muscleFilter = document.getElementById("muscleFilter");
+  if (muscleFilter) muscleFilter.remove();
+
+  // ---- Fast Find UI ----
+  let ffQuery = wtStorage.get(WT_KEYS.ffQuery, "");
+  let ffFilter = wtStorage.get(WT_KEYS.ffFilter, "all");
+
+  exerciseSearch.type = "search";
+  exerciseSearch.setAttribute("role", "searchbox");
+  exerciseSearch.setAttribute("aria-label", "Search exercises");
+  exerciseSearch.placeholder = "Search exercises…";
+  exerciseSearch.value = ffQuery;
+
+  const ffRow = document.createElement("div");
+  ffRow.id = "wt-fast-find";
+  const ffChips = document.createElement("div");
+  ffChips.className = "wt-ff-chips";
+  const filters = ["all", "strength", "cardio", "custom", "superset"];
+  filters.forEach((f) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = f.charAt(0).toUpperCase() + f.slice(1);
+    b.dataset.filter = f;
+    b.className = "wt-ff-chip";
+    ffChips.appendChild(b);
+  });
+  ffRow.appendChild(exerciseSearch);
+  ffRow.appendChild(ffChips);
+  exerciseSelect.parentNode.insertBefore(ffRow, exerciseSelect);
+
+  const ffStyle = document.createElement("style");
+  ffStyle.textContent = `
+    #wt-fast-find{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;}
+    #wt-fast-find input{flex:1;min-width:150px;}
+    #wt-fast-find .wt-ff-chips{display:flex;flex-wrap:wrap;gap:4px;}
+    #wt-fast-find .wt-ff-chip{padding:2px 6px;border:1px solid #888;border-radius:12px;background:transparent;font-size:12px;cursor:pointer;}
+    #wt-fast-find .wt-ff-chip[aria-pressed="true"]{background:#888;color:#fff;}
+    body.dark #wt-fast-find .wt-ff-chip{border-color:#aaa;color:#ddd;}
+    body.dark #wt-fast-find .wt-ff-chip[aria-pressed="true"]{background:#555;color:#fff;}
+    @media(max-width:480px){#wt-fast-find{flex-direction:column;}#wt-fast-find .wt-ff-chips{margin-top:4px;}}
+  `;
+  document.head.appendChild(ffStyle);
+
+  function updateFilterChips() {
+    ffChips.querySelectorAll("button").forEach((btn) => {
+      const active = btn.dataset.filter === ffFilter;
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+  updateFilterChips();
 
   // --- Import UI ---
   const importInput = document.createElement('input');
@@ -729,60 +804,136 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         custom: true,
       }),
     );
-    populateMuscleFilter();
     renderExerciseOptions();
   }
 
-  function populateMuscleFilter() {
-    const cats = Array.from(
-      new Set(allExercises.map((e) => e.category)),
-    ).sort();
-    muscleFilter.innerHTML = '<option value="">All Categories</option>';
-    cats.forEach((cat) => {
-      const opt = document.createElement("option");
-      opt.value = cat;
-      opt.textContent = cat;
-      muscleFilter.appendChild(opt);
+  function getSupersetExercises() {
+    const out = [];
+    const seen = new Set();
+    [...session.exercises, currentExercise].forEach((ex) => {
+      if (ex && (ex.isSuperset || (ex.name && ex.name.includes(" + ")))) {
+        if (!seen.has(ex.name)) {
+          seen.add(ex.name);
+          out.push({
+            name: ex.name,
+            category: "Superset",
+            isSuperset: true,
+            exercises: ex.exercises ? [...ex.exercises] : ex.name.split(" + "),
+          });
+        }
+      }
     });
+    return out;
   }
 
-  function renderExerciseOptions() {
+  function matchesQuery(ex, q) {
+    if (!q) return true;
+    const term = q.toLowerCase();
+    return (
+      ex.name.toLowerCase().includes(term) ||
+      (ex.category && ex.category.toLowerCase().includes(term)) ||
+      (ex.equipment && ex.equipment.toLowerCase().includes(term))
+    );
+  }
+
+  function updateSupersetChip() {
+    const chip = document.querySelector('#wt-fast-find [data-filter="superset"]');
+    if (!chip) return;
+    const has = getSupersetExercises().length > 0;
+    chip.disabled = !has;
+    if (!has) {
+      chip.setAttribute('aria-disabled', 'true');
+      if (ffFilter === 'superset') {
+        ffFilter = 'all';
+        wtStorage.set(WT_KEYS.ffFilter, ffFilter);
+        updateFilterChips();
+      }
+    } else {
+      chip.removeAttribute('aria-disabled');
+    }
+  }
+
+  function renderExerciseOptions({ query = ffQuery, filter = ffFilter } = {}) {
+    const q = query.toLowerCase();
+    const supersetExercises = getSupersetExercises();
+    updateSupersetChip();
+
     exerciseSelect.innerHTML = '<option value="">Select Exercise</option>';
-    exerciseList.innerHTML = "";
-    const q = exerciseSearch.value.trim().toLowerCase();
-    const cat = muscleFilter.value;
+    exerciseList.innerHTML = '';
+
+    let base = filter === 'superset' ? supersetExercises : allExercises.slice();
+    const matches = base.filter(
+      (ex) => ffMatchesFilter(ex, filter) && matchesQuery(ex, q),
+    );
+
+    if (!q) {
+      const recNames = wtStorage.get(WT_KEYS.recent, []);
+      const recItems = recNames
+        .map((n) => {
+          let ex =
+            allExercises.find((e) => e.name === n) ||
+            supersetExercises.find((s) => s.name === n);
+          if (!ex) {
+            ex = { name: n, category: 'Recent', isSuperset: n.includes(' + ') };
+          }
+          return ex;
+        })
+        .filter((ex) => ffMatchesFilter(ex, filter));
+      if (recItems.length) {
+        const og = document.createElement('optgroup');
+        og.label = 'Recent';
+        recItems.forEach((ex) => {
+          const opt = document.createElement('option');
+          opt.value = ex.name;
+          opt.textContent = ex.name;
+          if (ex.isSuperset && ex.exercises) {
+            opt.dataset.superset = '1';
+            opt.dataset.exercises = JSON.stringify(ex.exercises);
+          }
+          opt.dataset.category = ex.category;
+          og.appendChild(opt);
+        });
+        exerciseSelect.appendChild(og);
+      }
+    }
+
     const groups = {};
-    const matches = [];
-    allExercises.forEach((ex) => {
-      if (cat && ex.category !== cat) return;
-      if (q && !ex.name.toLowerCase().includes(q)) return;
-      if (!groups[ex.category]) groups[ex.category] = [];
-      groups[ex.category].push(ex);
-      matches.push(ex);
+    matches.forEach((ex) => {
+      const cat = ex.category || 'Other';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(ex);
     });
+
     Object.keys(groups)
       .sort()
       .forEach((catName) => {
-        const og = document.createElement("optgroup");
+        const og = document.createElement('optgroup');
         og.label = catName;
         groups[catName]
           .sort((a, b) => a.name.localeCompare(b.name))
           .forEach((ex) => {
-            const opt = document.createElement("option");
+            const opt = document.createElement('option');
             opt.value = ex.name;
             opt.textContent = ex.name;
+            if (ex.isSuperset && ex.exercises) {
+              opt.dataset.superset = '1';
+              opt.dataset.exercises = JSON.stringify(ex.exercises);
+            }
             opt.dataset.category = ex.category;
             og.appendChild(opt);
           });
         exerciseSelect.appendChild(og);
       });
+
     matches
       .sort((a, b) => a.name.localeCompare(b.name))
       .forEach((ex) => {
-        const opt = document.createElement("option");
+        const opt = document.createElement('option');
         opt.value = ex.name;
         exerciseList.appendChild(opt);
       });
+
+    announce(`${matches.length} exercises found`);
   }
 
   function saveCustomExercises() {
@@ -790,20 +941,53 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     wtStorage.set(WT_KEYS.custom, custom);
   }
 
-  const renderExerciseOptionsDebounced = debounce(renderExerciseOptions, 150);
-  exerciseSearch.addEventListener("input", renderExerciseOptionsDebounced);
-  muscleFilter.addEventListener("change", renderExerciseOptions);
-  exerciseSearch.addEventListener("change", () => {
-    const val = exerciseSearch.value.trim();
-    if (!val) return;
-    const match = allExercises.find(
-      (e) => e.name.toLowerCase() === val.toLowerCase(),
-    );
-    if (match) {
-      exerciseSelect.value = match.name;
-      exerciseSelect.dispatchEvent(new Event("change"));
+  const renderExerciseOptionsDebounced = debounce(() => {
+    ffQuery = exerciseSearch.value.trim();
+    wtStorage.set(WT_KEYS.ffQuery, ffQuery);
+    renderExerciseOptions();
+  }, 150);
+
+  exerciseSearch.addEventListener('input', renderExerciseOptionsDebounced);
+  exerciseSearch.addEventListener('search', () => {
+    ffQuery = '';
+    wtStorage.set(WT_KEYS.ffQuery, ffQuery);
+    renderExerciseOptions();
+  });
+  exerciseSearch.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (exerciseSelect.options.length > 1) exerciseSelect.selectedIndex = 1;
+      exerciseSelect.focus();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const opt = exerciseSelect.options[1];
+      if (opt) {
+        if (opt.dataset.superset === '1') {
+          const arr = JSON.parse(opt.dataset.exercises || '[]');
+          startSuperset(arr);
+        } else {
+          startExercise(opt.value);
+        }
+        renderExerciseOptions();
+        exerciseSelect.value = '';
+      }
     }
   });
+
+  ffChips.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn || btn.disabled) return;
+    ffFilter = btn.dataset.filter;
+    wtStorage.set(WT_KEYS.ffFilter, ffFilter);
+    updateFilterChips();
+    renderExerciseOptions();
+  });
+
+  function pushRecent(name) {
+    const arr = wtStorage.get(WT_KEYS.recent, []);
+    const updated = [name, ...arr.filter((n) => n !== name)].slice(0, 5);
+    wtStorage.set(WT_KEYS.recent, updated);
+  }
 
   loadExercises();
 
@@ -874,30 +1058,52 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         custom: true,
       });
       saveCustomExercises();
-      populateMuscleFilter();
       renderExerciseOptions();
     }
-    exerciseSearch.value = "";
-    muscleFilter.value = "";
-    renderExerciseOptions();
+    ffQuery = '';
+    exerciseSearch.value = '';
+    wtStorage.set(WT_KEYS.ffQuery, ffQuery);
     exerciseSelect.value = name;
-    customExerciseInput.value = "";
+    customExerciseInput.value = '';
     startExercise(name);
+    renderExerciseOptions();
   });
 
   /* ------------------ SUPERSET ------------------ */
   function populateSupersetSelects() {
+    const groups = {};
+    allExercises.forEach((ex) => {
+      const cat = ex.category || 'Other';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(ex);
+    });
+    let html = '<option value="">Select Exercise</option>';
+    Object.keys(groups)
+      .sort()
+      .forEach((cat) => {
+        html += `<optgroup label="${cat}">`;
+        groups[cat]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .forEach((ex) => {
+            html += `<option value="${ex.name}">${ex.name}</option>`;
+          });
+        html += '</optgroup>';
+      });
     [supersetSelect1, supersetSelect2].forEach((sel) => {
-      sel.innerHTML = exerciseSelect.innerHTML;
-      sel.value = "";
+      sel.innerHTML = html;
+      sel.value = '';
     });
   }
 
   startSupersetBtn.addEventListener("click", () => {
     supersetBuilder.classList.toggle("hidden");
     if (!supersetBuilder.classList.contains("hidden")) {
-      exerciseSearch.value = "";
-      muscleFilter.value = "";
+      ffQuery = '';
+      exerciseSearch.value = '';
+      wtStorage.set(WT_KEYS.ffQuery, ffQuery);
+      ffFilter = 'all';
+      wtStorage.set(WT_KEYS.ffFilter, ffFilter);
+      updateFilterChips();
       renderExerciseOptions();
       populateSupersetSelects();
     }
@@ -912,28 +1118,25 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     supersetBuilder.classList.add("hidden");
     startSuperset([n1, n2]);
+    renderExerciseOptions();
   });
 
   /* ------------------ SELECT EXERCISE ------------------ */
   exerciseSelect.addEventListener("change", (e) => {
-    const chosen = e.target.value;
-    if (!chosen) return;
-
-    // Clear filters so the list is fresh next time
-    exerciseSearch.value = "";
-    muscleFilter.value = "";
-
-    // Start the exercise BEFORE re-rendering, so we don't lose the selected value
-    startExercise(chosen);
-
-    // Rebuild the options list
+    const opt = e.target.selectedOptions[0];
+    if (!opt || !opt.value) return;
+    if (opt.dataset.superset === '1') {
+      const arr = JSON.parse(opt.dataset.exercises || '[]');
+      startSuperset(arr);
+    } else {
+      startExercise(opt.value);
+    }
     renderExerciseOptions();
-
-    // Optional: clear the dropdown so it's ready for the next pick
     exerciseSelect.value = "";
   });
 
   function startExercise(name) {
+    pushRecent(name);
     if (!session.startedAt) session.startedAt = new Date().toISOString();
     startSessionTimer();
     if (currentExercise && currentExercise.sets.length) {
@@ -970,12 +1173,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   function startSuperset(namesArr) {
+    const clean = namesArr.filter(Boolean);
+    pushRecent(clean.join(" + "));
     if (!session.startedAt) session.startedAt = new Date().toISOString();
     startSessionTimer();
     if (currentExercise && currentExercise.sets.length) {
       pushOrMergeExercise(currentExercise);
     }
-    const clean = namesArr.filter(Boolean);
     currentExercise = {
       name: clean.join(" + "),
       isSuperset: true,
@@ -1901,5 +2105,5 @@ if (typeof window !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload };
+module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter };
 }
