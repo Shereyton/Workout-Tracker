@@ -272,3 +272,22 @@ body.dark #calendarSection{
   .calendar-controls #calGoto,.calendar-controls .btn{width:100%;}
 }
 
+/* Quick adjust controls */
+.wt-adjust { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.wt-adjust .btn-mini {
+  padding: 6px 10px; border-radius: 10px; border: 1px solid var(--hairline, #ddd);
+  background: var(--panel, #f6f6f6); font-size: 13px; line-height: 1; cursor: pointer;
+}
+.wt-adjust .btn-mini:active { transform: scale(0.98); }
+@media (prefers-color-scheme: dark) {
+  .wt-adjust .btn-mini { background:#1b1b1b; border-color:#333; color:#ddd; }
+}
+/* Repeat last */
+#repeatLastBtn {
+  margin-left: 8px; padding: 8px 12px; border-radius:10px; border:1px solid var(--hairline, #ddd);
+  background: transparent; font-size: 14px; cursor: pointer;
+}
+@media (prefers-color-scheme: dark) {
+  #repeatLastBtn { border-color:#333; color:#ddd; }
+}
+
