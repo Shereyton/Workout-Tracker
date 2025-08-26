@@ -8,6 +8,11 @@ const SAMPLE_DATA = [
   { date: '2024-08-26', lift: 'incline', sets: [ { weight: 160, reps: 8 } ] },
 ];
 
+function safeParse(str, fallback = null){
+  try{ return JSON.parse(str); }
+  catch{ return fallback; }
+}
+
 function e1rm(weight, reps){
   if(!isFinite(weight) || !isFinite(reps) || weight<=0 || reps<=0) return 0;
   return Math.round(weight * (1 + reps/30));
@@ -26,64 +31,56 @@ function dateFromISODay(dayISO){
 }
 
 async function loadWorkouts(){
-  let raw = null;
-  try{
-    const manual = localStorage.getItem('charts_manual');
-    if(manual) raw = JSON.parse(manual);
-  }catch{}
+  let raw = safeParse(localStorage.getItem('charts_manual'));
   if(!raw){
-    try{
-      const keys = ['wt_history','wt_lastWorkout','workouts'];
-      for(const k of keys){
-        const ls = localStorage.getItem(k);
-        if(!ls) continue;
-        const parsed = JSON.parse(ls);
-
-        if(k === 'wt_history'){
-          raw = parsed;          // {'YYYY-MM-DD': [ 'Bench: 185 lbs × 5 reps', ... ]}
-          break;
-        }
-        if(k === 'wt_lastWorkout'){
-          const day = toDayISO(new Date());
-          const lines = [];
-          (parsed||[]).forEach(ex => {
-            if(ex.isSuperset && Array.isArray(ex.sets)){
-              ex.sets.forEach(s=>{
-                (s.exercises||[]).forEach(sub=>{
-                  lines.push(`${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`);
-                });
-              });
-            } else if(!ex.isCardio) {
-              (ex.sets||[]).forEach(s=>{
-                lines.push(`${ex.name}: ${s.weight} lbs × ${s.reps} reps`);
-              });
-            }
-          });
-          raw = { [day]: lines };
-          break;
-        }
-        if(k === 'workouts'){
-          raw = parsed;          // already array-shaped
-          break;
-        }
+    const keys = ['wt_history','wt_lastWorkout','workouts'];
+    for(const k of keys){
+      const parsed = safeParse(localStorage.getItem(k));
+      if(!parsed) continue;
+      if(k === 'wt_history'){
+        raw = parsed;          // {'YYYY-MM-DD': [ 'Bench: 185 lbs × 5 reps', ... ]}
+        break;
       }
-    }catch{}
+      if(k === 'wt_lastWorkout'){
+        const day = toDayISO(new Date());
+        const lines = [];
+        (parsed||[]).forEach(ex => {
+          if(ex.isSuperset && Array.isArray(ex.sets)){
+            ex.sets.forEach(s=>{
+              (s.exercises||[]).forEach(sub=>{
+                lines.push(`${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`);
+              });
+            });
+          } else if(!ex.isCardio) {
+            (ex.sets||[]).forEach(s=>{
+              lines.push(`${ex.name}: ${s.weight} lbs × ${s.reps} reps`);
+            });
+          }
+        });
+        raw = { [day]: lines };
+        break;
+      }
+      if(k === 'workouts'){
+        raw = parsed;          // already array-shaped
+        break;
+      }
+    }
   }
 
   if(!raw){
     try{
       const res = await fetch('data/workouts.json', {cache:'no-store'});
       if(res.ok) raw = await res.json();
-    }catch{}
+    }catch(err){
+      console.warn('Failed to fetch workouts.json', err);
+    }
   }
 
   // Normalize whatever we found
   let workouts = normalizeWorkouts(raw);
 
-  try {
-    const manualEntries = JSON.parse(localStorage.getItem('manual_entries') || '[]');
-    workouts = workouts.concat(normalizeWorkouts(manualEntries));
-  } catch {}
+  const manualEntries = safeParse(localStorage.getItem('manual_entries'), []);
+  workouts = workouts.concat(normalizeWorkouts(manualEntries));
 
   // Final safety: if nothing parsed, show sample
   if(!workouts.length){
@@ -172,6 +169,11 @@ function makeLineChart(ctx, label, dataPoints){
 }
 
 async function init(){
+  if(typeof Chart === 'undefined'){
+    console.error('Chart.js failed to load');
+    return;
+  }
+
   let workouts = await loadWorkouts();
 
   const liftSelect   = document.getElementById('liftSelect');
@@ -248,7 +250,8 @@ async function init(){
 
   if(entryDate) entryDate.value = toDayISO(new Date());
   if(addEntryBtn){
-    addEntryBtn.addEventListener('click',()=>{
+    addEntryBtn.addEventListener('click', async (e)=>{
+      e.preventDefault();
       const date = entryDate?.value || toDayISO(new Date());
       const lift = entryLift?.value || '';
       const weight = Number(entryWeight?.value);
@@ -257,15 +260,14 @@ async function init(){
         alert('Please complete all fields');
         return;
       }
-      let entries = [];
-      try{ entries = JSON.parse(localStorage.getItem('manual_entries')) || []; }catch{}
-      entries.push({ date, lift, sets:[{weight, reps}] });
-      localStorage.setItem('manual_entries', JSON.stringify(entries));
-      if(entryWeight) entryWeight.value = '';
-      if(entryReps) entryReps.value = '';
-      refresh();
-    });
-  }
+        const entries = safeParse(localStorage.getItem('manual_entries'), []);
+        entries.push({ date, lift, sets:[{weight, reps}] });
+        localStorage.setItem('manual_entries', JSON.stringify(entries));
+        if(entryWeight) entryWeight.value = '';
+        if(entryReps) entryReps.value = '';
+        await refresh();
+      });
+    }
 
   // Make the Refresh button work everywhere (iOS Safari too)
   ['click','pointerup','touchend'].forEach(evt=>{
