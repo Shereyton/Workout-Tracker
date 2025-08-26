@@ -1,6 +1,6 @@
 // Jest configuration
 module.exports = {
   testEnvironment: 'jsdom',
-  roots: ['<rootDir>/tests'],
+  roots: ['<rootDir>'],
   testMatch: ['**/*.test.js'],
 };
