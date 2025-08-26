@@ -809,42 +809,29 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
 
   /* ------------------ CALENDAR SAVE ------------------ */
-  function saveSessionLinesToHistory() {
+  function saveSessionLinesToHistory(){
     const snapshot = getSessionSnapshot();
-    if (!snapshot.length) return;
+    if(!snapshot.length) return;
     const lines = [];
-    snapshot.forEach((ex) => {
-      if (ex.isSuperset) {
-        ex.sets.forEach((set) => {
-          set.exercises.forEach((sub) => {
+    snapshot.forEach(ex => {
+      if(ex.isSuperset){
+        ex.sets.forEach(set => {
+          set.exercises.forEach(sub => {
             lines.push(`${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`);
           });
         });
-      } else {
-        ex.sets.forEach((set) => {
+      } else if(!ex.isCardio){
+        ex.sets.forEach(set => {
           lines.push(`${ex.name}: ${set.weight} lbs × ${set.reps} reps`);
         });
       }
     });
     const d = new Date();
-    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    let history = JSON.parse(localStorage.getItem("wt_history")) || {};
-    if (!history[dateStr]) history[dateStr] = [];
-    lines.forEach((l) => {
-      if (!history[dateStr].includes(l)) history[dateStr].push(l);
-    });
-    localStorage.setItem("wt_history", JSON.stringify(history));
-    window.dispatchEvent(new Event("wt-history-updated"));
-  }
-
-  function maybeSaveSessionToCalendar() {
-    const hasData =
-      session.exercises.length ||
-      (currentExercise && currentExercise.sets.length);
-    if (hasData) {
-      // Automatically persist session summary so charts can use it
-      saveSessionLinesToHistory();
-    }
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const history = JSON.parse(localStorage.getItem('wt_history') || '{}');
+    history[dateStr] = Array.from(new Set([...(history[dateStr]||[]), ...lines]));
+    localStorage.setItem('wt_history', JSON.stringify(history));
+    window.dispatchEvent(new Event('wt-history-updated'));
   }
 
   // Build a deep copy of all exercises including the in-progress one
@@ -883,7 +870,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     } else {
       localStorage.removeItem("wt_lastWorkout");
     }
-    maybeSaveSessionToCalendar();
+    saveSessionLinesToHistory();
     stopRest();
     session = { exercises: [], startedAt: null };
     currentExercise = null;
@@ -964,7 +951,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     let exportExercises = buildExportExercises();
     if (exportExercises.length) {
       localStorage.setItem("wt_lastWorkout", JSON.stringify(exportExercises));
-      maybeSaveSessionToCalendar();
+      saveSessionLinesToHistory();
     } else {
       const last = JSON.parse(localStorage.getItem("wt_lastWorkout") || "null");
       if (last && last.length) {
