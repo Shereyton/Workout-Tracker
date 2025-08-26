@@ -67,6 +67,7 @@ function computeDaily(workouts, lift, metric){
   return Object.entries(daily)
     .filter(([,v])=>v.sets>0 && isFinite(v[key]))
     .map(([d,v])=>({ x: dateFromISODay(d), y: Number(v[key]) }))
+    .filter(p=>p.x instanceof Date && !isNaN(p.x) && isFinite(p.y))
     .sort((a,b)=>a.x-b.x);
 }
 
@@ -136,6 +137,7 @@ async function loadWorkouts(){
 function makeLineChart(ctx, label, dataPoints){
   if(typeof Chart === 'undefined' || !ctx) return null;
   const hasTime = !!(Chart?._adapters?._date);
+  console.log('makeLineChart', label, 'first 5', dataPoints.slice(0,5), 'scale', hasTime ? 'time' : 'category');
   let config;
   if(hasTime){
     config = {
@@ -200,9 +202,9 @@ async function init(){
     const data = computeDaily(workouts, lift, metric);
     const benchData = computeDaily(workouts, 'bench', metric);
     const squatData = computeDaily(workouts, 'squat', metric);
-    console.log('main data', data);
-    console.log('bench data', benchData);
-    console.log('squat data', squatData);
+    console.log('main first 5', data.slice(0,5));
+    console.log('bench first 5', benchData.slice(0,5));
+    console.log('squat first 5', squatData.slice(0,5));
     const metricLabel = (metricSelect?.selectedOptions?.[0]?.text) || metric;
 
     if(mainChart){ mainChart.destroy(); mainChart = null; }
