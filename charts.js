@@ -1,9 +1,13 @@
+// charts.js — resilient, conflict-free build
+console.log("✅ charts.js running");
+
 function toDayISO(d){
   const dt = (d instanceof Date) ? d : new Date(d);
   return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
 }
 function dateFromISODay(dayISO){
-  const [y,m,d] = dayISO.split('-').map(Number);
+  const [y,m,d] = String(dayISO).split('-').map(Number);
+  if (!y || !m || !d) return new Date(NaN);
   return new Date(y, m-1, d);
 }
 function canonicalLift(name){
@@ -19,6 +23,7 @@ function canonicalLift(name){
   return n;
 }
 function normalizeWorkouts(raw){
+  // Array form
   if(Array.isArray(raw)){
     return raw.map(r=>({
       date: r.date ? toDayISO(r.date) : toDayISO(new Date()),
@@ -26,6 +31,7 @@ function normalizeWorkouts(raw){
       sets: Array.isArray(r.sets) ? r.sets.map(s=>({weight:+s.weight,reps:+s.reps})) : []
     }));
   }
+  // Map form: {"YYYY-MM-DD":[ "Bench Press: 185 lbs × 5 reps", ... ]}
   const workouts = [];
   for(const [date, entries] of Object.entries(raw||{})){
     const day = toDayISO(date);
@@ -45,7 +51,7 @@ function normalizeWorkouts(raw){
   return workouts;
 }
 function e1rm(weight, reps){
-  if(!isFinite(weight) || !isFinite(reps) || weight<=0 || reps<=0) return 0;
+  if(!Number.isFinite(weight) || !Number.isFinite(reps) || weight<=0 || reps<=0) return 0;
   return Math.round(weight * (1 + reps/30));
 }
 function computeDaily(workouts, lift, metric){
@@ -54,20 +60,21 @@ function computeDaily(workouts, lift, metric){
     const day = toDayISO(w.date);
     (daily[day] ||= { topSet:0, volume:0, e1rmMax:0, sets:0 });
     w.sets.forEach(set=>{
-      const top = +set.weight;
-      const reps = +set.reps;
-      const e = e1rm(top, reps);
+      const wv = +set.weight, rv = +set.reps;
+      if(!Number.isFinite(wv) || !Number.isFinite(rv)) return;
+      const top = wv;
+      const e = e1rm(wv, rv);
       if(top > daily[day].topSet) daily[day].topSet = top;
       if(e   > daily[day].e1rmMax) daily[day].e1rmMax = e;
-      daily[day].volume += top * reps;
+      daily[day].volume += wv * rv;
       daily[day].sets++;
     });
   });
   const key = (metric==='e1rm' ? 'e1rmMax' : (metric==='top' ? 'topSet' : 'volume'));
   return Object.entries(daily)
-    .filter(([,v])=>v.sets>0 && isFinite(v[key]))
+    .filter(([,v])=>v.sets>0 && Number.isFinite(v[key]))
     .map(([d,v])=>({ x: dateFromISODay(d), y: Number(v[key]) }))
-    .filter(p=>p.x instanceof Date && !isNaN(p.x) && isFinite(p.y))
+    .filter(p => p.x instanceof Date && !isNaN(p.x) && Number.isFinite(p.y))
     .sort((a,b)=>a.x-b.x);
 }
 
@@ -126,7 +133,8 @@ async function loadWorkouts(){
     workouts = workouts.concat(normalizeWorkouts(manualEntries));
   }catch{}
   if(!workouts.length){
-    document.getElementById('sample-note')?.style && (document.getElementById('sample-note').style.display='block');
+    const note = document.getElementById('sample-note');
+    if(note) note.style.display='block';
     return normalizeWorkouts(SAMPLE_DATA);
   }
   const note = document.getElementById('sample-note');
@@ -134,13 +142,19 @@ async function loadWorkouts(){
   return workouts;
 }
 
+// -------- Chart helpers ----------
+function hasTimeScale(){
+  try { return !!(Chart && Chart.registry && Chart.registry.getScale && Chart.registry.getScale('time')); }
+  catch { return false; }
+}
+
 function makeLineChart(ctx, label, dataPoints){
   if(typeof Chart === 'undefined' || !ctx) return null;
-  const hasTime = !!(Chart?._adapters?._date);
-  console.log('makeLineChart', label, 'first 5', dataPoints.slice(0,5), 'scale', hasTime ? 'time' : 'category');
-  let config;
-  if(hasTime){
-    config = {
+  const timeOK = hasTimeScale();
+  console.log('[makeLineChart]', label, 'points:', dataPoints.slice(0,5), 'x-scale:', timeOK ? 'time' : 'category');
+
+  if (timeOK) {
+    return new Chart(ctx, {
       type:'line',
       data:{ datasets:[{ label, data:dataPoints, tension:0.25, pointRadius:3 }] },
       options:{
@@ -148,11 +162,11 @@ function makeLineChart(ctx, label, dataPoints){
         interaction:{mode:'index',intersect:false},
         scales:{ x:{ type:'time', time:{unit:'day'} } }
       }
-    };
+    });
   } else {
     const labels = dataPoints.map(p=>toDayISO(p.x));
     const nums   = dataPoints.map(p=>p.y);
-    config = {
+    return new Chart(ctx, {
       type:'line',
       data:{ labels, datasets:[{ label, data:nums, tension:0.25, pointRadius:3 }] },
       options:{
@@ -160,11 +174,11 @@ function makeLineChart(ctx, label, dataPoints){
         interaction:{mode:'index',intersect:false},
         scales:{ x:{ type:'category' } }
       }
-    };
+    });
   }
-  return new Chart(ctx, config);
 }
 
+// -------- App init ----------
 async function init(){
   const liftSelect    = document.getElementById('liftSelect');
   const metricSelect  = document.getElementById('metricSelect');
@@ -178,11 +192,12 @@ async function init(){
   const entryReps     = document.getElementById('entryReps');
   const addEntryBtn   = document.getElementById('addEntryBtn');
   const statusMsg     = document.getElementById('statusMsg');
+  const emptyMsg      = document.getElementById('empty-message');
+
   const mainCanvas    = document.getElementById('mainChart');
   const mainCtx       = mainCanvas?.getContext('2d');
   const benchCtx      = document.getElementById('benchChart')?.getContext('2d');
   const squatCtx      = document.getElementById('squatChart')?.getContext('2d');
-  const emptyMsg      = document.getElementById('empty-message');
 
   // Persist choices
   if(liftSelect)   liftSelect.value   = localStorage.getItem('charts_lift')   || (liftSelect.value || 'bench');
@@ -192,19 +207,21 @@ async function init(){
 
   // Load + render
   let workouts = await loadWorkouts();
-  let mainChart = null;
-  let benchChart = null;
-  let squatChart = null;
+  let mainChart = null, benchChart = null, squatChart = null;
 
   function render(){
     const lift   = liftSelect?.value || 'bench';
     const metric = metricSelect?.value || 'e1rm';
-    const data = computeDaily(workouts, lift, metric);
+
+    const data      = computeDaily(workouts, lift,   metric);
     const benchData = computeDaily(workouts, 'bench', metric);
     const squatData = computeDaily(workouts, 'squat', metric);
+
+    // Debug: verify datasets contain points
     console.log('main first 5', data.slice(0,5));
     console.log('bench first 5', benchData.slice(0,5));
     console.log('squat first 5', squatData.slice(0,5));
+
     const metricLabel = (metricSelect?.selectedOptions?.[0]?.text) || metric;
 
     if(mainChart){ mainChart.destroy(); mainChart = null; }
@@ -216,14 +233,15 @@ async function init(){
       if(mainCanvas) mainCanvas.style.display = 'block';
       if(emptyMsg) emptyMsg.style.display = 'none';
       if(statusMsg) statusMsg.textContent = '';
-      const liftLabel   = (liftSelect?.selectedOptions?.[0]?.text) || lift;
+      const liftLabel = (liftSelect?.selectedOptions?.[0]?.text) || lift;
       mainChart = makeLineChart(mainCtx, `${liftLabel} - ${metricLabel}`, data);
     }
 
     if(benchChart){ benchChart.destroy(); benchChart = null; }
     if(squatChart){ squatChart.destroy(); squatChart = null; }
-    benchChart = makeLineChart(benchCtx, `Bench - ${metricLabel}`, benchData);
-    squatChart = makeLineChart(squatCtx, `Squat - ${metricLabel}`, squatData);
+
+    if (benchCtx && benchData.length) benchChart = makeLineChart(benchCtx, `Bench - ${metricLabel}`, benchData);
+    if (squatCtx && squatData.length) squatChart = makeLineChart(squatCtx, `Squat - ${metricLabel}`, squatData);
   }
 
   // Manual JSON override
@@ -256,11 +274,15 @@ async function init(){
     await refresh();
   });
 
-  // Refresh button
+  // Refresh button (desktop + iOS-friendly)
   ['click','pointerup','touchend'].forEach(evt=>{
     refreshBtn?.addEventListener(evt, (e)=>{ e.preventDefault(); refresh(); }, {passive:false});
   });
-  async function refresh(){ workouts = await loadWorkouts(); render(); }
+
+  async function refresh(){
+    workouts = await loadWorkouts();
+    render();
+  }
 
   // Seed (merge, don’t wipe)
   seedBtn?.addEventListener('click', async ()=>{
@@ -289,6 +311,7 @@ if (typeof window !== 'undefined') {
   }
 }
 
+// For tests (safe in browser too)
 if (typeof module !== 'undefined') {
   module.exports = { e1rm, computeDaily, normalizeWorkouts, toDayISO };
 }
