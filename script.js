@@ -1,13 +1,100 @@
+// ---- storage guardrails (no HTML changes) ----
+const WT_KEYS = {
+  session: 'wt_session',
+  current: 'wt_currentExercise',
+  last: 'wt_lastWorkout',
+  history: 'wt_history',
+  custom: 'custom_exercises',
+  theme: 'wt_theme',
+  schema: 'wt_schema_version'
+};
+
+const WT_SCHEMA_VERSION = 1;
+
+function safeParse(json, fallback) {
+  try { return JSON.parse(json); } catch { return fallback; }
+}
+
+function hasLocalStorage() {
+  try { return typeof window !== 'undefined' && !!window.localStorage; } catch { return false; }
+}
+
+// in-memory fallback for tests / SSR
+const memStore = new Map();
+
+function lsGetRaw(k) {
+  if (!hasLocalStorage()) return memStore.get(k) ?? null;
+  return localStorage.getItem(k);
+}
+function lsSetRaw(k, v) {
+  if (!hasLocalStorage()) { memStore.set(k, v); return; }
+  localStorage.setItem(k, v);
+}
+
+function backupKey(k, n) { return `${k}.backup${n}`; } // .backup1..3
+
+function writeWithBackups(key, valueStr) {
+  // roll backups: 3 <- 2 <- 1 <- current
+  const cur = lsGetRaw(key);
+  if (cur !== null) {
+    lsSetRaw(backupKey(key,3), lsGetRaw(backupKey(key,2)));
+    lsSetRaw(backupKey(key,2), lsGetRaw(backupKey(key,1)));
+    lsSetRaw(backupKey(key,1), cur);
+  }
+  // atomic-ish: write new value last
+  lsSetRaw(key, valueStr);
+}
+
+const wtStorage = {
+  get(key, fallback) {
+    const raw = lsGetRaw(key);
+    if (raw === null) return fallback;
+    return safeParse(raw, fallback);
+  },
+  set(key, obj) {
+    const str = JSON.stringify(obj);
+    writeWithBackups(key, str);
+  },
+  getRaw(key) { return lsGetRaw(key); },
+  restoreBackup(key) {
+    // try newest → oldest
+    for (let i=1;i<=3;i++) {
+      const b = lsGetRaw(backupKey(key,i));
+      if (b !== null) { lsSetRaw(key, b); return true; }
+    }
+    return false;
+  },
+  clear(key) {
+    if (!hasLocalStorage()) { memStore.delete(key); return; }
+    localStorage.removeItem(key);
+    for (let i=1;i<=3;i++) localStorage.removeItem(backupKey(key,i));
+  }
+};
+
+// schema versioning (simple bootstrap)
+(function ensureSchema() {
+  const v = Number(lsGetRaw(WT_KEYS.schema)) || 0;
+  if (v < WT_SCHEMA_VERSION) {
+    // future migrations go here; for now, just set the version
+    lsSetRaw(WT_KEYS.schema, String(WT_SCHEMA_VERSION));
+  }
+})();
+
 /* ------------------ STATE ------------------ */
 let session = { exercises: [], startedAt: null };
 let currentExercise = null;
+let needsRecover = false;
 if (typeof localStorage !== "undefined") {
-  session = JSON.parse(localStorage.getItem("wt_session")) || {
-    exercises: [],
-    startedAt: null,
-  };
-  currentExercise =
-    JSON.parse(localStorage.getItem("wt_currentExercise")) || null;
+  const s = wtStorage.get(WT_KEYS.session, null);
+  const c = wtStorage.get(WT_KEYS.current, null);
+  if (!s || typeof s !== 'object' || !Array.isArray(s.exercises)) {
+    needsRecover = true;
+  }
+  session = s && typeof s === 'object' ? s : { exercises: [], startedAt: null };
+  currentExercise = c || null;
+
+  // sanity shape
+  if (!Array.isArray(session.exercises)) session.exercises = [];
 }
 
 let restTimer = null;
@@ -148,6 +235,20 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   let allExercises = [];
 
+  function tryRecoverState() {
+    const ok = wtStorage.restoreBackup(WT_KEYS.session);
+    const ok2 = wtStorage.restoreBackup(WT_KEYS.current);
+    if (ok || ok2) {
+      const s = wtStorage.get(WT_KEYS.session, {exercises:[], startedAt:null});
+      const c = wtStorage.get(WT_KEYS.current, null);
+      session = s; currentExercise = c;
+      rebuildSetsList?.(); updateSetCounter?.(); updateSummary?.();
+      // console.info('Recovered state from backup');
+    }
+  }
+
+  if (needsRecover) tryRecoverState();
+
   function updateLogButtonState() {
     if (!currentExercise) {
       logBtn.disabled = true;
@@ -220,7 +321,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
     }
     if (!Array.isArray(allExercises)) allExercises = [];
-    const custom = JSON.parse(localStorage.getItem("custom_exercises")) || [];
+    const custom = wtStorage.get(WT_KEYS.custom, []);
     custom.forEach((n) =>
       allExercises.push({
         name: n,
@@ -287,7 +388,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function saveCustomExercises() {
     const custom = allExercises.filter((e) => e.custom).map((e) => e.name);
-    localStorage.setItem("custom_exercises", JSON.stringify(custom));
+    wtStorage.set(WT_KEYS.custom, custom);
   }
 
   const renderExerciseOptionsDebounced = debounce(renderExerciseOptions, 150);
@@ -347,7 +448,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   updateLogButtonState();
 
   /* ------------------ THEME ------------------ */
-  if (localStorage.getItem("wt_theme") === "dark") {
+  if (wtStorage.getRaw(WT_KEYS.theme) === "dark") {
     document.body.classList.add("dark");
     themeIcon.textContent = "☀️";
     themeLabel.textContent = "Light";
@@ -357,7 +458,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const dark = document.body.classList.contains("dark");
     themeIcon.textContent = dark ? "☀️" : "🌙";
     themeLabel.textContent = dark ? "Light" : "Dark";
-    localStorage.setItem("wt_theme", dark ? "dark" : "light");
+    lsSetRaw(WT_KEYS.theme, dark ? "dark" : "light");
   });
 
   /* ------------------ CUSTOM EXERCISE ------------------ */
@@ -1019,9 +1120,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     });
     const d = new Date();
     const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    const history = JSON.parse(localStorage.getItem('wt_history') || '{}');
+    const history = wtStorage.get(WT_KEYS.history, {});
     history[dateStr] = Array.from(new Set([...(history[dateStr]||[]), ...lines]));
-    localStorage.setItem('wt_history', JSON.stringify(history));
+    wtStorage.set(WT_KEYS.history, history);
     window.dispatchEvent(new Event('wt-history-updated'));
   }
 
@@ -1057,9 +1158,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   function endWorkout() {
     const snapshot = buildExportExercises();
     if (snapshot.length) {
-      localStorage.setItem("wt_lastWorkout", JSON.stringify(snapshot));
+      wtStorage.set(WT_KEYS.last, snapshot);
     } else {
-      localStorage.removeItem("wt_lastWorkout");
+      wtStorage.clear(WT_KEYS.last);
     }
     saveSessionLinesToHistory();
     stopRest();
@@ -1149,10 +1250,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   exportBtn.addEventListener("click", () => {
     let exportExercises = buildExportExercises();
     if (exportExercises.length) {
-      localStorage.setItem("wt_lastWorkout", JSON.stringify(exportExercises));
+      wtStorage.set(WT_KEYS.last, exportExercises);
       saveSessionLinesToHistory();
     } else {
-      const last = JSON.parse(localStorage.getItem("wt_lastWorkout") || "null");
+      const last = wtStorage.get(WT_KEYS.last, null);
       if (last && last.length) {
         exportExercises = last;
       } else {
@@ -1281,8 +1382,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   /* ------------------ SAVE / LOAD ------------------ */
   function saveState() {
-    localStorage.setItem("wt_session", JSON.stringify(session));
-    localStorage.setItem("wt_currentExercise", JSON.stringify(currentExercise));
+    wtStorage.set(WT_KEYS.session, session);
+    wtStorage.set(WT_KEYS.current, currentExercise);
   }
 
   /* ------------------ UTILS ------------------ */
