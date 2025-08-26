@@ -41,7 +41,7 @@ function normalizeWorkouts(raw){
     const lifts = {};
     (entries||[]).forEach(line=>{
       // Example: "Bench Press: 185 lbs × 5 reps"
-      const m = String(line).match(/^(.*?):\s*(\d+)\s*lbs\s*[×x]\s*(\d+)\s*reps/i);
+      const m = String(line).match(/^(.*?):\s*(\d+(?:\.\d+)?)\s*lbs\s*[×x]\s*(\d+)\s*reps/i);
       if(!m) return;
       const name = canonicalLift(m[1].trim());
       const weight = +m[2];
@@ -81,6 +81,13 @@ function e1rm(weight, reps){
   if(!isFinite(weight) || !isFinite(reps) || weight<=0 || reps<=0) return 0;
   return Math.round(weight * (1 + reps/30));
 }
+
+// Sample fallback data if no storage
+const SAMPLE_DATA = {
+  "2024-01-10": [ "Bench Press: 135 lbs × 8 reps" ],
+  "2024-01-17": [ "Bench Press: 145 lbs × 6 reps" ],
+  "2024-02-05": [ "Squat: 185 lbs × 5 reps" ]
+};
 
 function makeLineChart(ctx, label, dataPoints){
   if(!ctx){
@@ -312,7 +319,7 @@ async function init(){
   await refresh();
 }
 
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && typeof module === 'undefined') {
   if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', init);
   } else {
@@ -324,10 +331,3 @@ if (typeof window !== 'undefined') {
 if(typeof module !== 'undefined'){
   module.exports = { e1rm, computeDaily, normalizeWorkouts, toDayISO };
 }
-
-// Sample fallback data if no storage
-const SAMPLE_DATA = {
-  "2024-01-10": [ "Bench Press: 135 lbs × 8 reps" ],
-  "2024-01-17": [ "Bench Press: 145 lbs × 6 reps" ],
-  "2024-02-05": [ "Squat: 185 lbs × 5 reps" ]
-};
