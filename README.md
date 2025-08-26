@@ -2,6 +2,8 @@
 
 This is a lightweight web-based workout tracker. Log sets with any weight (including zero for bodyweight exercises) and export data as JSON, CSV, or AI-ready text. Finished sessions are saved locally so you can export even after closing the workout.
 
+**Note:** Charts are temporarily removed. You can export JSON/CSV and view history via the calendar and session summary.
+
 ### History
 
 Workout history is saved to local storage under `wt_history`. You can export this history (which also copies the JSON to your clipboard) or import additional entries.
