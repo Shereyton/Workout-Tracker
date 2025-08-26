@@ -526,6 +526,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   searchBtn.textContent = "🔍";
   searchBtn.setAttribute("aria-label", "Open search");
   searchBtn.setAttribute("aria-expanded", "false");
+  searchBtn.style.display = "none"; // hide magnifying glass button on mobile
   const startBtn = document.createElement("button");
   startBtn.type = "button";
   startBtn.id = "wt-search-start";
@@ -542,8 +543,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     ffChips.appendChild(b);
   });
   ffRow.appendChild(exerciseSearch);
-  ffRow.appendChild(searchBtn);
-  ffRow.appendChild(startBtn);
+  // Search and start buttons removed for streamlined mobile UI
   ffRow.appendChild(ffChips);
   exerciseSelect.parentNode.insertBefore(ffRow, exerciseSelect);
 
@@ -709,18 +709,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     overlayEl.classList.remove("open");
     overlayOpen = false;
     searchBtn.setAttribute("aria-expanded", "false");
-    ffRow.insertBefore(exerciseSearch, searchBtn);
+    if (ffRow.contains(searchBtn)) {
+      ffRow.insertBefore(exerciseSearch, searchBtn);
+    } else {
+      ffRow.insertBefore(exerciseSearch, ffRow.firstChild);
+    }
   }
 
   function updateStartCTA() {
-    if (overlayOpen) {
-      startBtn.style.display = "none";
-      return;
-    }
-    const ex = findExerciseByName(exerciseSearch.value);
-    const exact =
-      ex && normalizeName(ex.name) === normalizeName(exerciseSearch.value);
-    startBtn.style.display = exact ? "inline-block" : "none";
+    // Start button not used in simplified search UI
+    startBtn.style.display = "none";
   }
 
   startBtn.addEventListener("click", () => {
@@ -735,17 +733,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     );
   }
 
-  searchBtn.addEventListener("click", () => {
-    if (isMobile()) {
-      openFindOverlay();
-    } else {
-      exerciseSearch.focus();
-    }
-  });
-
-  exerciseSearch.addEventListener("focus", () => {
-    if (isMobile()) openFindOverlay();
-  });
+  // Removed fast-find overlay toggle for simpler mobile search
 
   document.addEventListener('keydown', (e) => {
     if (overlayOpen && e.key === 'Escape') {
