@@ -61,13 +61,12 @@
       </div>
 
       <div id="statusMsg" style="margin:8px 0;color:var(--muted-fg);font-size:14px;"></div>
-
       <p id="empty-message" style="display:none;color:var(--muted-fg);">No data yet. Try <em>Seed sample</em> or use the <em>Export for Charts</em> button from the main page.</p>
 
       <canvas id="mainChart"></canvas>
 
       <label style="display:block;margin-top:16px;">Small charts use the same metric you choose above.</label>
-      <small class="sample-note">E1RM = estimated 1-rep max (Epley formula); Top Set = heaviest set; Volume = total lbs (weight × reps) per day.</small>
+      <small class="sample-note">E1RM = estimated 1-rep max (Epley); Top Set = heaviest set; Volume = total lbs (weight × reps) per day.</small>
 
       <div class="small-charts">
         <canvas id="benchChart"></canvas>
@@ -76,6 +75,7 @@
     </div>
   </div>
 
+  <!-- Chart.js + time adapter -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
   <script src="charts.js"></script>
