@@ -202,6 +202,7 @@ async function init(){
     const data = computeDaily(workouts, lift, metric);
     const benchData = computeDaily(workouts, 'bench', metric);
     const squatData = computeDaily(workouts, 'squat', metric);
+    // Debug: verify datasets contain points
     console.log('main first 5', data.slice(0,5));
     console.log('bench first 5', benchData.slice(0,5));
     console.log('squat first 5', squatData.slice(0,5));
