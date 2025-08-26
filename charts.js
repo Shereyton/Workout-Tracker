@@ -248,7 +248,8 @@ async function init(){
 
   if(entryDate) entryDate.value = toDayISO(new Date());
   if(addEntryBtn){
-    addEntryBtn.addEventListener('click',()=>{
+    addEntryBtn.addEventListener('click', async (e)=>{
+      e.preventDefault();
       const date = entryDate?.value || toDayISO(new Date());
       const lift = entryLift?.value || '';
       const weight = Number(entryWeight?.value);
@@ -263,7 +264,7 @@ async function init(){
       localStorage.setItem('manual_entries', JSON.stringify(entries));
       if(entryWeight) entryWeight.value = '';
       if(entryReps) entryReps.value = '';
-      refresh();
+      await refresh();
     });
   }
 
