@@ -6,24 +6,30 @@
 <title>Workout Tracker — Progress Charts</title>
 <link rel="stylesheet" href="style.css">
 <style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:16px;}
-header{display:flex;align-items:center;gap:8px;margin-bottom:16px;}
-header a{text-decoration:none;color:inherit;font-size:14px;}
-.controls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;align-items:flex-end;}
-.controls label{display:flex;flex-direction:column;font-size:14px;gap:4px;}
-#mainChart{max-width:100%;height:300px;}
-.small-charts{display:flex;flex-direction:column;gap:16px;margin-top:24px;}
-.small-charts canvas{flex:1;height:200px;}
-@media(min-width:700px){.small-charts{flex-direction:row;}}
-.sample-note{font-size:12px;opacity:0.7;margin-top:8px;}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:16px;background:linear-gradient(180deg,#6a77d7,#6b4fa0);}
+  header{display:flex;align-items:center;gap:8px;margin-bottom:16px;color:#fff;}
+  header a{text-decoration:none;color:#fff;font-size:14px;}
+  h1{margin:0;font-size:28px;}
+  .controls{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0 16px;align-items:flex-end}
+  .controls label{display:flex;flex-direction:column;font-size:14px;gap:4px;color:#fff}
+  select{height:32px;border-radius:6px;border:0;padding:0 8px}
+  #refreshBtn{height:36px;border-radius:10px;border:0;font-weight:700}
+  #mainChart{max-width:100%;height:320px;background:#ffffff0f;border-radius:12px;padding:8px}
+  .small-charts{display:flex;flex-direction:column;gap:16px;margin-top:24px}
+  .small-charts canvas{flex:1;height:220px;background:#ffffff0f;border-radius:12px;padding:8px}
+  @media(min-width:700px){.small-charts{flex-direction:row}}
+  .note{font-size:12px;opacity:.85;margin-top:8px;color:#fff}
+  .msg{font-size:14px;margin:12px 0;color:#fff;text-align:center}
 </style>
 </head>
 <body>
 <header>
-  <a href="index.html">&#8592; Back</a>
+  <a href="index.html">← Back</a>
   <h1>Progress Charts</h1>
 </header>
-<div id="sample-note" class="sample-note" style="display:none;">Showing sample data (no local data found).</div>
+
+<div id="sample-note" class="note" style="display:none;">Showing sample data (no local data found).</div>
+
 <div class="controls">
   <label>Lift
     <select id="liftSelect">
@@ -40,16 +46,217 @@ header a{text-decoration:none;color:inherit;font-size:14px;}
       <option value="volume">Daily Volume (lbs)</option>
     </select>
   </label>
-  <button id="refreshBtn" class="btn btn-secondary" style="height:32px;">Refresh</button>
+  <button id="refreshBtn" class="btn btn-secondary">Refresh</button>
 </div>
+
 <canvas id="mainChart"></canvas>
-<div id="empty-message" style="display:none;text-align:center;margin-top:16px;">No data for this lift.</div>
+<div id="empty-message" class="msg" style="display:none;">No data for this lift.</div>
+<div class="note">E1RM = estimated 1-rep max (Epley); Top Set = heaviest set; Volume = total lbs (weight × reps) per day.</div>
+
 <div class="small-charts">
   <canvas id="benchChart"></canvas>
   <canvas id="squatChart"></canvas>
 </div>
+
+<!-- Chart.js + date adapter -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
-<script src="charts.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+
+<script>
+/* ========= Data helpers ========= */
+const SAMPLE_DATA = [
+  { date: '2024-01-01', lift: 'bench',   sets: [ { weight: 185, reps: 5 } ] },
+  { date: '2024-01-08', lift: 'bench',   sets: [ { weight: 190, reps: 5 } ] },
+  { date: '2024-01-15', lift: 'bench',   sets: [ { weight: 200, reps: 3 } ] },
+  { date: '2024-01-02', lift: 'squat',   sets: [ { weight: 225, reps: 5 } ] },
+  { date: '2024-01-09', lift: 'squat',   sets: [ { weight: 235, reps: 5 } ] },
+  { date: '2024-01-12', lift: 'squat',   sets: [ { weight: 245, reps: 3 } ] }
+];
+
+function e1rm(weight, reps){
+  if(!isFinite(weight) || !isFinite(reps) || weight<=0 || reps<=0) return 0;
+  return Math.round(weight * (1 + reps/30));
+}
+
+function toDayISO(d){
+  const dt = (d instanceof Date) ? d : new Date(d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth()+1).padStart(2,'0');
+  const day = String(dt.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function fromISODay(dayISO){
+  const [y,m,d] = (dayISO||'').split('-').map(Number);
+  return new Date(y, m-1, d);
+}
+function canonicalLift(name=''){
+  const n = String(name).toLowerCase();
+  if(n.includes('flat bench')) return 'bench';
+  if(n.includes('back squat')) return 'squat';
+  if(n==='dl' || n==='dead')  return 'deadlift';
+  if(n.includes('bench'))     return 'bench';
+  if(n.includes('squat'))     return 'squat';
+  if(n.includes('incline'))   return 'incline';
+  if(n.includes('dead'))      return 'deadlift';
+  return n;
+}
+
+/* Normalize any of these shapes:
+   1) Array of { date, lift|name, sets:[{weight,reps}] }
+   2) Object { 'YYYY-MM-DD': ['Bench: 185 lbs × 5 reps', ...] }
+*/
+function normalizeWorkouts(raw){
+  if(Array.isArray(raw)){
+    return raw.map(r => ({
+      date: toDayISO(r.date || new Date()),
+      lift: canonicalLift(r.lift || r.name),
+      sets: Array.isArray(r.sets) ? r.sets.map(s=>({weight:+s.weight, reps:+s.reps})) : []
+    }));
+  }
+  const out = [];
+  for(const [date, lines] of Object.entries(raw || {})){
+    const day = toDayISO(date);
+    const lifts = {};
+    (lines||[]).forEach(line=>{
+      const m = line.match(/^(.*?):\s*(\d+)\s*lbs\s*[x×]\s*(\d+)\s*reps?/i);
+      if(!m) return;
+      const [, name, w, r] = m;
+      const key = canonicalLift(name);
+      if(!lifts[key]) lifts[key] = { date: day, lift: key, sets: [] };
+      lifts[key].sets.push({ weight: +w, reps: +r });
+    });
+    out.push(...Object.values(lifts));
+  }
+  return out;
+}
+
+/* Load: localStorage -> optional /data/workouts.json -> sample */
+async function loadWorkouts(){
+  let raw = null;
+  try{
+    const keys = ['workouts','wt_history','wt_lastWorkout'];
+    for(const k of keys){
+      const ls = localStorage.getItem(k);
+      if(!ls) continue;
+      const parsed = JSON.parse(ls);
+      if(k === 'wt_lastWorkout' && Array.isArray(parsed)){
+        // Turn last workout snapshot into history lines for today
+        const day = toDayISO(new Date());
+        const lines = [];
+        parsed.forEach(ex=>{
+          (ex.sets||[]).forEach(s=>{
+            if(ex.isCardio) return; // charts ignore cardio
+            lines.push(`${ex.name || ex.lift}: ${s.weight} lbs × ${s.reps} reps`);
+          });
+        });
+        raw = { [day]: lines };
+      } else {
+        raw = parsed;
+      }
+      break;
+    }
+  }catch(e){ /* ignore */ }
+
+  if(!raw){
+    try{
+      const res = await fetch('data/workouts.json', { cache: 'no-store' });
+      if(res.ok) raw = await res.json();
+    }catch(e){ /* ignore */ }
+  }
+
+  if(!raw){
+    raw = SAMPLE_DATA;
+    const note = document.getElementById('sample-note');
+    if(note) note.style.display = 'block';
+  }
+  return normalizeWorkouts(raw);
+}
+
+/* Aggregate per day for a given lift + metric */
+function computeDaily(workouts, lift, metric){
+  const daily = {};
+  const target = canonicalLift(lift);
+  workouts.forEach(w=>{
+    if(canonicalLift(w.lift) !== target) return;
+    const day = toDayISO(w.date);
+    if(!daily[day]) daily[day] = { e1rmMax:0, topSet:0, volume:0, sets:0 };
+    w.sets.forEach(s=>{
+      const e = e1rm(s.weight, s.reps);
+      daily[day].e1rmMax = Math.max(daily[day].e1rmMax, e);
+      daily[day].topSet  = Math.max(daily[day].topSet,  s.weight);
+      daily[day].volume += s.weight * s.reps;
+      daily[day].sets++;
+    });
+  });
+  const key = (metric==='e1rm') ? 'e1rmMax' : (metric==='top' ? 'topSet' : 'volume');
+  return Object.entries(daily)
+    .filter(([,v])=>v.sets>0)
+    .map(([d,v])=>({ x: fromISODay(d), y: v[key] }))
+    .sort((a,b)=>a.x-b.x);
+}
+
+/* Chart helpers */
+function makeLineChart(ctx, label, dataPoints){
+  return new Chart(ctx, {
+    type: 'line',
+    data: { datasets:[{ label, data:dataPoints, tension:0.25, pointRadius:3 }] },
+    options:{
+      parsing:false,
+      interaction:{mode:'index',intersect:false},
+      scales:{ x:{ type:'time', time:{ unit:'day' } } }
+    }
+  });
+}
+
+/* ========= Boot ========= */
+(async function init(){
+  const workouts = await loadWorkouts();
+
+  const liftSelect   = document.getElementById('liftSelect');
+  const metricSelect = document.getElementById('metricSelect');
+  const refreshBtn   = document.getElementById('refreshBtn');
+  const mainCanvas   = document.getElementById('mainChart');
+  const emptyMsg     = document.getElementById('empty-message');
+
+  const mainCtx  = mainCanvas.getContext('2d');
+  const benchCtx = document.getElementById('benchChart').getContext('2d');
+  const squatCtx = document.getElementById('squatChart').getContext('2d');
+
+  // restore UI prefs
+  liftSelect.value   = localStorage.getItem('charts_lift')   || liftSelect.value;
+  metricSelect.value = localStorage.getItem('charts_metric') || metricSelect.value;
+
+  function savePrefs(){
+    localStorage.setItem('charts_lift', liftSelect.value);
+    localStorage.setItem('charts_metric', metricSelect.value);
+  }
+  liftSelect.addEventListener('change', savePrefs);
+  metricSelect.addEventListener('change', savePrefs);
+
+  let mainChart = null;
+  function renderMain(){
+    const data = computeDaily(workouts, liftSelect.value, metricSelect.value);
+    if(mainChart) { mainChart.destroy(); mainChart = null; }
+    if(!data.length){
+      mainCanvas.style.display = 'none';
+      emptyMsg.style.display = 'block';
+      return;
+    }
+    mainCanvas.style.display = 'block';
+    emptyMsg.style.display = 'none';
+    const label = `${liftSelect.options[liftSelect.selectedIndex].text} - ${metricSelect.options[metricSelect.selectedIndex].text}`;
+    mainChart = makeLineChart(mainCtx, label, data);
+  }
+
+  refreshBtn.addEventListener('click', ()=>{ savePrefs(); renderMain(); });
+  window.addEventListener('resize', renderMain);
+  window.addEventListener('orientationchange', renderMain);
+
+  // initial render + small charts
+  renderMain();
+  makeLineChart(benchCtx, 'Bench - E1RM', computeDaily(workouts, 'bench', 'e1rm'));
+  makeLineChart(squatCtx, 'Squat - E1RM', computeDaily(workouts, 'squat', 'e1rm'));
+})();
+</script>
 </body>
 </html>
