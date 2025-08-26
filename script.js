@@ -158,15 +158,26 @@ function lsSetRaw(k, v) {
   localStorage.setItem(k, v);
 }
 
+function lsRemove(k) {
+  if (!hasLocalStorage()) { memStore.delete(k); return; }
+  localStorage.removeItem(k);
+}
+
 function backupKey(k, n) { return `${k}.backup${n}`; } // .backup1..3
 
 function writeWithBackups(key, valueStr) {
   // roll backups: 3 <- 2 <- 1 <- current
   const cur = lsGetRaw(key);
   if (cur !== null) {
-    lsSetRaw(backupKey(key,3), lsGetRaw(backupKey(key,2)));
-    lsSetRaw(backupKey(key,2), lsGetRaw(backupKey(key,1)));
+    const b2 = lsGetRaw(backupKey(key,2));
+    if (b2 !== null) lsSetRaw(backupKey(key,3), b2); else lsRemove(backupKey(key,3));
+    const b1 = lsGetRaw(backupKey(key,1));
+    if (b1 !== null) lsSetRaw(backupKey(key,2), b1); else lsRemove(backupKey(key,2));
     lsSetRaw(backupKey(key,1), cur);
+  } else {
+    lsRemove(backupKey(key,1));
+    lsRemove(backupKey(key,2));
+    lsRemove(backupKey(key,3));
   }
   // atomic-ish: write new value last
   lsSetRaw(key, valueStr);
@@ -249,11 +260,12 @@ function canLogSet(w, r) {
 
 function canLogCardio(distance, duration, name) {
   const durationOk = Number.isFinite(duration) && duration > 0;
-  const distanceMissing = distance === null || Number.isNaN(distance);
+  const distanceMissing = distance == null || Number.isNaN(distance);
   const allowsNoDistance = name === "Jump Rope" || name === "Plank";
+  const distanceValid = Number.isFinite(distance) && distance >= 0;
   const distanceOk = allowsNoDistance
-    ? distanceMissing || distance >= 0
-    : !distanceMissing && distance >= 0;
+    ? distanceMissing || distanceValid
+    : distanceValid;
   return distanceOk && durationOk;
 }
 
@@ -2643,5 +2655,5 @@ if (typeof window !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter, getLastSetForExercise, computeNextDefaults };
+module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter, getLastSetForExercise, computeNextDefaults, wtStorage };
 }

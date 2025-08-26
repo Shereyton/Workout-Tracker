@@ -28,6 +28,15 @@ describe('canLogCardio', () => {
   it('rejects negative distance', () => {
     expect(canLogCardio(-1, 60, 'Run')).toBe(false);
   });
+  it('rejects infinite distance', () => {
+    expect(canLogCardio(Infinity, 60, 'Run')).toBe(false);
+  });
+  it('treats undefined distance as missing for allowed exercises', () => {
+    expect(canLogCardio(undefined, 30, 'Jump Rope')).toBe(true);
+  });
+  it('rejects undefined distance for regular cardio', () => {
+    expect(canLogCardio(undefined, 60, 'Run')).toBe(false);
+  });
 });
 
 describe('data normalization', () => {

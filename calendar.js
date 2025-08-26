@@ -21,6 +21,7 @@ function parseAiText(text, selectedDate){
   let target = selectedDate;
   const header = lines[0] && lines[0].match(/WORKOUT DATA - (\d{4}-\d{2}-\d{2})/i);
   if(header) target = header[1];
+  if(!target) return null;
   const out = [];
   let currentExercise = null;
   lines.forEach(l => {
@@ -31,12 +32,12 @@ function parseAiText(text, selectedDate){
       currentExercise = exHeader[1].trim();
       return;
     }
-    const setMatch = trimmed.match(/^(?:Set\s+\d+\s*[-–:]?\s*)?(.*?):\s*(\d+(?:\.\d+)?)\s*(?:lbs|kg)\s*[×xX]\s*(\d+)\s*reps/i);
+    const setMatch = trimmed.match(/^(?:Set\s+\d+\s*[-–:]?\s*)?(.*?):\s*(\d+(?:\.\d+)?)\s*(lbs|kg)\s*[×xX]\s*(\d+)\s*reps/i);
     if(setMatch){
       let name = setMatch[1].trim();
       if(!name && currentExercise) name = currentExercise;
       if(name){
-        out.push(`${name}: ${setMatch[2]} lbs × ${setMatch[3]} reps`);
+        out.push(`${name}: ${setMatch[2]} ${setMatch[3]} × ${setMatch[4]} reps`);
       }
     }
   });
