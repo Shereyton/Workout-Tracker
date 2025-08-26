@@ -11,6 +11,7 @@
     <div class="header">
       <h1>Progress Charts</h1>
     </div>
+
     <div class="section charts-section">
       <a href="index.html" class="btn btn-secondary" style="margin-bottom:12px;">← Back</a>
 
@@ -23,48 +24,50 @@
 
       <div class="manual-entry">
         <h3 style="margin-bottom:6px;">Quick Add Entry</h3>
-        <div class="inline-row">
-          <input type="date" id="entryDate" class="field">
-          <select id="entryLift" class="field">
-            <option value="bench">Bench</option>
-            <option value="squat">Squat</option>
-            <option value="incline">Incline</option>
-            <option value="deadlift">Deadlift</option>
-          </select>
+        <div class="row">
+          <label>Date<input type="date" id="entryDate"></label>
+          <label>Lift
+            <select id="entryLift">
+              <option value="bench">Bench</option>
+              <option value="squat">Squat</option>
+              <option value="incline">Incline</option>
+              <option value="deadlift">Deadlift</option>
+            </select>
+          </label>
+          <label>Weight (lbs)<input type="number" id="entryWeight" min="0"></label>
+          <label>Reps<input type="number" id="entryReps" min="1"></label>
+          <button id="addEntryBtn" class="btn" type="button">Add</button>
         </div>
-        <div class="inline-row">
-          <input type="number" id="entryWeight" class="field" placeholder="Weight (lbs)" min="0" step="1">
-          <input type="number" id="entryReps" class="field" placeholder="Reps" min="1" step="1">
-        </div>
-        <button id="addEntryBtn" class="btn btn-primary" type="button" style="margin-top:4px;">Add Entry</button>
       </div>
 
       <div class="controls">
         <label>Lift
-          <select id="liftSelect" class="field">
-            <option value="bench">Bench Press</option>
+          <select id="liftSelect">
+            <option value="bench">Bench</option>
             <option value="squat">Squat</option>
             <option value="incline">Incline</option>
             <option value="deadlift">Deadlift</option>
           </select>
         </label>
         <label>Metric
-          <select id="metricSelect" class="field">
-            <option value="e1rm">Estimated 1RM</option>
-            <option value="top">Top Set Weight</option>
-            <option value="volume">Daily Volume (lbs)</option>
+          <select id="metricSelect">
+            <option value="e1rm">E1RM</option>
+            <option value="top">Top Set</option>
+            <option value="volume">Volume</option>
           </select>
         </label>
+        <button id="refreshBtn" class="btn" type="button">Refresh</button>
+        <button id="seedBtn" class="btn btn-secondary" type="button">Seed sample</button>
       </div>
 
-      <button id="refreshBtn" class="btn btn-secondary">Refresh</button>
-      <button id="seedBtn" class="btn btn-secondary">Seed Sample</button>
+      <div id="statusMsg" style="margin:8px 0;color:var(--muted-fg);font-size:14px;"></div>
 
-      <div id="empty-message" class="message" style="display:none;">No data for this lift.</div>
+      <p id="empty-message" style="display:none;color:var(--muted-fg);">No data yet. Try <em>Seed sample</em> or use the <em>Export for Charts</em> button from the main page.</p>
 
       <canvas id="mainChart"></canvas>
 
-      <small class="sample-note">E1RM = estimated 1-rep max (Epley); Top Set = heaviest set; Volume = total lbs (weight × reps) per day.</small>
+      <label style="display:block;margin-top:16px;">Small charts use the same metric you choose above.</label>
+      <small class="sample-note">E1RM = estimated 1-rep max (Epley formula); Top Set = heaviest set; Volume = total lbs (weight × reps) per day.</small>
 
       <div class="small-charts">
         <canvas id="benchChart"></canvas>
