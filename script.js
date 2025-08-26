@@ -67,6 +67,14 @@ const muscleFilter     = document.getElementById('muscleFilter');
 
 let allExercises = [];
 
+function debounce(fn, delay = 100){
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), delay);
+  };
+}
+
 async function loadExercises(){
   try {
     const res = await fetch('data/exercises.json');
@@ -137,7 +145,8 @@ function saveCustomExercises(){
   localStorage.setItem('custom_exercises', JSON.stringify(custom));
 }
 
-exerciseSearch.addEventListener('input', renderExerciseOptions);
+const renderExerciseOptionsDebounced = debounce(renderExerciseOptions, 150);
+exerciseSearch.addEventListener('input', renderExerciseOptionsDebounced);
 muscleFilter.addEventListener('change', renderExerciseOptions);
 exerciseSearch.addEventListener('change', () => {
   const val = exerciseSearch.value.trim();
