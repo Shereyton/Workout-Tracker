@@ -69,6 +69,59 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseList = document.getElementById("exerciseList");
   const muscleFilter = document.getElementById("muscleFilter");
 
+  const sessionTimerEl = document.createElement("span");
+  sessionTimerEl.style.fontSize = "0.9em";
+  sessionTimerEl.style.color = "#666";
+  sessionTimerEl.style.display = "none";
+  todayEl.after(sessionTimerEl);
+
+  const setsTodayEl = document.createElement("span");
+  setsTodayEl.style.fontSize = "0.9em";
+  setsTodayEl.style.color = "#666";
+  setsTodayEl.style.marginLeft = "8px";
+  sessionTimerEl.after(setsTodayEl);
+
+  let sessionTimerInterval = null;
+
+  function formatHMS(totalSeconds) {
+    const h = Math.min(99, Math.floor(totalSeconds / 3600));
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  function startSessionTimer() {
+    if (!session.startedAt) return;
+    const startMs = new Date(session.startedAt).getTime();
+    const tick = () => {
+      const secs = Math.floor((Date.now() - startMs) / 1000);
+      sessionTimerEl.textContent = `Session: ${formatHMS(secs)}`;
+    };
+    tick();
+    sessionTimerEl.style.display = "inline";
+    clearInterval(sessionTimerInterval);
+    sessionTimerInterval = setInterval(tick, 1000);
+  }
+
+  function stopSessionTimer() {
+    clearInterval(sessionTimerInterval);
+    sessionTimerInterval = null;
+    sessionTimerEl.style.display = "none";
+    sessionTimerEl.textContent = "";
+  }
+
+  function computeTotalSets() {
+    let total = session.exercises.reduce((sum, e) => sum + e.sets.length, 0);
+    if (currentExercise && currentExercise.sets) {
+      total += currentExercise.sets.length;
+    }
+    return total;
+  }
+
+  function updateSetsToday() {
+    setsTodayEl.textContent = `• Sets today: ${computeTotalSets()}`;
+  }
+
   let allExercises = [];
 
   function updateLogButtonState() {
@@ -265,6 +318,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateSetCounter();
   }
   updateSummary();
+  updateSetsToday();
+  if (session.startedAt) startSessionTimer();
   updateLogButtonState();
 
   /* ------------------ THEME ------------------ */
@@ -356,6 +411,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function startExercise(name) {
     if (!session.startedAt) session.startedAt = new Date().toISOString();
+    startSessionTimer();
     if (currentExercise && currentExercise.sets.length) {
       pushOrMergeExercise(currentExercise);
     }
@@ -391,6 +447,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function startSuperset(namesArr) {
     if (!session.startedAt) session.startedAt = new Date().toISOString();
+    startSessionTimer();
     if (currentExercise && currentExercise.sets.length) {
       pushOrMergeExercise(currentExercise);
     }
@@ -465,6 +522,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         startRest(planned, currentExercise.sets.length - 1);
       }
       updateSummary();
+      updateSetsToday();
       saveState();
       updateLogButtonState();
       return;
@@ -507,6 +565,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         startRest(planned, currentExercise.sets.length - 1);
       }
       updateSummary();
+      updateSetsToday();
       saveState();
       updateLogButtonState();
       return;
@@ -548,6 +607,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
 
     updateSummary();
+    updateSetsToday();
     saveState();
     updateLogButtonState();
   });
@@ -626,6 +686,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     rebuildSetsList();
     updateSetCounter();
     updateSummary();
+    updateSetsToday();
     saveState();
   }
 
@@ -760,13 +821,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           s.weight = newW;
           s.reps = newR;
           s.restPlanned = newPlanned;
-          s.restActual = newActual;
-        }
-
-        saveState();
-        rebuildSetsList();
-        updateSummary();
+        s.restActual = newActual;
       }
+
+      saveState();
+      rebuildSetsList();
+      updateSummary();
+      updateSetsToday();
+    }
       if (ev.target.hasAttribute("data-edit-cancel")) {
         form.remove();
         return;
@@ -810,6 +872,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
 
     updateSummary();
+    updateSetsToday();
     saveState();
     updateLogButtonState();
   });
@@ -947,6 +1010,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     saveSessionLinesToHistory();
     stopRest();
+    stopSessionTimer();
     session = { exercises: [], startedAt: null };
     currentExercise = null;
     exerciseSelect.value = "";
@@ -955,6 +1019,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     weightInput.value = "";
     repsInput.value = "";
     updateSummary();
+    updateSetsToday();
     saveState();
     updateLogButtonState();
   }
@@ -1022,6 +1087,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateSetCounter();
     updateLogButtonState();
     updateSummary();
+    updateSetsToday();
   });
 
   /* ------------------ EXPORT (JSON + AI + CSV) ------------------ */
