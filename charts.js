@@ -136,7 +136,7 @@ async function loadWorkouts(){
   return workouts;
 }
 
-// Chart helpers
+// -------- Chart helpers ----------
 function hasTimeScale(){
   try { return !!(Chart && Chart.registry && Chart.registry.getScale && Chart.registry.getScale('time')); }
   catch { return false; }
@@ -145,6 +145,7 @@ function makeLineChart(ctx, label, dataPoints){
   if(typeof Chart === 'undefined' || !ctx) return null;
   const timeOK = hasTimeScale();
   console.log('[makeLineChart]', label, 'points:', dataPoints.slice(0,5), 'x-scale:', timeOK ? 'time' : 'category');
+
   if (timeOK) {
     return new Chart(ctx, {
       type:'line',
@@ -170,7 +171,7 @@ function makeLineChart(ctx, label, dataPoints){
   }
 }
 
-// App init
+// -------- App init ----------
 async function init(){
   const liftSelect    = document.getElementById('liftSelect');
   const metricSelect  = document.getElementById('metricSelect');
@@ -262,9 +263,11 @@ async function init(){
     await refresh();
   });
 
+  // Refresh button (desktop + iOS-friendly)
   ['click','pointerup','touchend'].forEach(evt=>{
     refreshBtn?.addEventListener(evt, (e)=>{ e.preventDefault(); refresh(); }, {passive:false});
   });
+
   async function refresh(){
     workouts = await loadWorkouts();
     render();
@@ -294,6 +297,7 @@ if (typeof window !== 'undefined') {
   }
 }
 
+// For tests (safe in browser too)
 if (typeof module !== 'undefined') {
   module.exports = { e1rm, computeDaily, normalizeWorkouts, toDayISO };
 }
