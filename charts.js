@@ -27,6 +27,9 @@ function dateFromISODay(dayISO){
 }
 
 async function loadWorkouts(){
+  const note = document.getElementById('sample-note');
+  if(note) note.style.display = 'none';
+
   // 1) Try localStorage keys in this order
   let raw = null;
   try{
@@ -78,7 +81,6 @@ async function loadWorkouts(){
   // 3) Normalize and ensure not empty
   let workouts = normalizeWorkouts(raw);
   if(!workouts.length){
-    const note = document.getElementById('sample-note');
     if(note) note.style.display = 'block';
     workouts = normalizeWorkouts(SAMPLE_DATA);
   }

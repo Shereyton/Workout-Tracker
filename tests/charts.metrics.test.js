@@ -27,8 +27,8 @@ describe('computeDaily', () => {
 });
 
 describe('normalizeWorkouts', () => {
-  test('parses calendar object with decimal weights', () => {
-    const raw = { '2024-01-01': ['Bench Press: 135.5 lbs × 5 reps'] };
+  test('parses calendar object with decimal weights and set numbers', () => {
+    const raw = { '2024-01-01': ['Bench Press: Set 2 - 135.5 lbs × 5 reps'] };
     const res = normalizeWorkouts(raw);
     expect(res).toEqual([
       { date: '2024-01-01', lift: 'bench', sets: [{ weight: 135.5, reps: 5 }] }
