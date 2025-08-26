@@ -28,41 +28,47 @@ function dateFromISODay(dayISO){
 async function loadWorkouts(){
   let raw = null;
   try{
-    const keys = ['wt_history','wt_lastWorkout','workouts'];
-    for(const k of keys){
-      const ls = localStorage.getItem(k);
-      if(!ls) continue;
-      const parsed = JSON.parse(ls);
-
-      if(k === 'wt_history'){
-        raw = parsed;          // {'YYYY-MM-DD': [ 'Bench: 185 lbs × 5 reps', ... ]}
-        break;
-      }
-      if(k === 'wt_lastWorkout'){
-        const day = toDayISO(new Date());
-        const lines = [];
-        (parsed||[]).forEach(ex => {
-          if(ex.isSuperset && Array.isArray(ex.sets)){
-            ex.sets.forEach(s=>{
-              (s.exercises||[]).forEach(sub=>{
-                lines.push(`${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`);
-              });
-            });
-          } else if(!ex.isCardio) {
-            (ex.sets||[]).forEach(s=>{
-              lines.push(`${ex.name}: ${s.weight} lbs × ${s.reps} reps`);
-            });
-          }
-        });
-        raw = { [day]: lines };
-        break;
-      }
-      if(k === 'workouts'){
-        raw = parsed;          // already array-shaped
-        break;
-      }
-    }
+    const manual = localStorage.getItem('charts_manual');
+    if(manual) raw = JSON.parse(manual);
   }catch{}
+  if(!raw){
+    try{
+      const keys = ['wt_history','wt_lastWorkout','workouts'];
+      for(const k of keys){
+        const ls = localStorage.getItem(k);
+        if(!ls) continue;
+        const parsed = JSON.parse(ls);
+
+        if(k === 'wt_history'){
+          raw = parsed;          // {'YYYY-MM-DD': [ 'Bench: 185 lbs × 5 reps', ... ]}
+          break;
+        }
+        if(k === 'wt_lastWorkout'){
+          const day = toDayISO(new Date());
+          const lines = [];
+          (parsed||[]).forEach(ex => {
+            if(ex.isSuperset && Array.isArray(ex.sets)){
+              ex.sets.forEach(s=>{
+                (s.exercises||[]).forEach(sub=>{
+                  lines.push(`${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`);
+                });
+              });
+            } else if(!ex.isCardio) {
+              (ex.sets||[]).forEach(s=>{
+                lines.push(`${ex.name}: ${s.weight} lbs × ${s.reps} reps`);
+              });
+            }
+          });
+          raw = { [day]: lines };
+          break;
+        }
+        if(k === 'workouts'){
+          raw = parsed;          // already array-shaped
+          break;
+        }
+      }
+    }catch{}
+  }
 
   if(!raw){
     try{
@@ -170,6 +176,8 @@ async function init(){
   const mainCanvas   = document.getElementById('mainChart');
   const mainCtx      = mainCanvas.getContext('2d');
   const emptyMsg     = document.getElementById('empty-message');
+  const manualData   = document.getElementById('manualData');
+  const loadManualBtn= document.getElementById('loadManualBtn');
 
   // Small charts
   const benchCtx = document.getElementById('benchChart')?.getContext('2d');
@@ -209,6 +217,23 @@ async function init(){
     if(benchCtx) benchChart = makeLineChart(benchCtx, 'Bench - E1RM', computeDaily(workouts, 'bench', 'e1rm'));
     if(squatCtx) squatChart = makeLineChart(squatCtx, 'Squat - E1RM', computeDaily(workouts, 'squat', 'e1rm'));
     render();
+  }
+
+  if(manualData){
+    const stored = localStorage.getItem('charts_manual');
+    if(stored) manualData.value = stored;
+  }
+  if(loadManualBtn){
+    loadManualBtn.addEventListener('click',()=>{
+      if(!manualData) return;
+      try{
+        JSON.parse(manualData.value);
+        localStorage.setItem('charts_manual', manualData.value);
+        refresh();
+      }catch{
+        alert('Invalid JSON data');
+      }
+    });
   }
 
   // Make the Refresh button work everywhere (iOS Safari too)
