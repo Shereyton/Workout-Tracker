@@ -9,7 +9,131 @@ const WT_KEYS = {
   schema: 'wt_schema_version'
 };
 
-const WT_SCHEMA_VERSION = 1;
+const WT_SCHEMA_VERSION = 2;
+
+// ----- Data Health Utilities -----
+function coercePositiveNumber(n) {
+  const v = Number(n);
+  return Number.isFinite(v) && v >= 0 ? v : 0;
+}
+
+function normalizeSet(s) {
+  // supports strength set and cardio set
+  const out = { ...s };
+  if ('weight' in out) out.weight = coercePositiveNumber(out.weight);
+  if ('reps' in out)
+    out.reps = Math.max(1, Math.floor(coercePositiveNumber(out.reps)));
+  if ('distance' in out && out.distance !== null) {
+    const d = Number(out.distance);
+    out.distance = Number.isFinite(d) && d >= 0 ? d : null;
+  }
+  if ('duration' in out)
+    out.duration = Math.max(0, Math.floor(coercePositiveNumber(out.duration)));
+  if ('restPlanned' in out && out.restPlanned !== null) {
+    const rp = Number(out.restPlanned);
+    out.restPlanned = Number.isFinite(rp) && rp >= 0 ? rp : null;
+  }
+  if ('restActual' in out && out.restActual !== null) {
+    const ra = Number(out.restActual);
+    out.restActual = Number.isFinite(ra) && ra >= 0 ? ra : null;
+  }
+  return out;
+}
+
+function normalizeExercise(e) {
+  const isSuperset = !!e.isSuperset;
+  const isCardio = !!e.isCardio;
+  const base = {
+    name: String(e.name || 'Unknown'),
+    isSuperset,
+    isCardio,
+    exercises: isSuperset
+      ? Array.isArray(e.exercises)
+        ? e.exercises.slice(0, 10)
+        : []
+      : undefined,
+    sets: Array.isArray(e.sets) ? e.sets.map(normalizeSet) : [],
+  };
+  return base;
+}
+
+// input can be session-like arrays or exported payload
+function normalizePayload(payload) {
+  if (!payload)
+    return {
+      date: new Date().toISOString().split('T')[0],
+      timestamp: new Date().toISOString(),
+      totalExercises: 0,
+      totalSets: 0,
+      exercises: [],
+      schema: WT_SCHEMA_VERSION,
+    };
+  if (Array.isArray(payload)) {
+    const exs = payload.map(normalizeExercise);
+    const totalSets = exs.reduce((s, e) => s + e.sets.length, 0);
+    return {
+      date: new Date().toISOString().split('T')[0],
+      timestamp: new Date().toISOString(),
+      totalExercises: exs.length,
+      totalSets,
+      exercises: exs,
+      schema: WT_SCHEMA_VERSION,
+    };
+  }
+  // v1/v2 exported object
+  const exs = Array.isArray(payload.exercises)
+    ? payload.exercises.map(normalizeExercise)
+    : [];
+  const totalSets = exs.reduce((s, e) => s + e.sets.length, 0);
+  const date = String(payload.date || new Date().toISOString().split('T')[0]);
+  const ts = String(payload.timestamp || new Date().toISOString());
+  return {
+    date,
+    timestamp: ts,
+    totalExercises: exs.length,
+    totalSets,
+    exercises: exs,
+    schema: WT_SCHEMA_VERSION,
+  };
+}
+
+// Merge imported exercises into wt_history lines (for charts and history)
+function mergeIntoHistory(payload) {
+  const hist = wtStorage.get(WT_KEYS.history, {});
+  const day = String(payload.date);
+  const lines = [];
+
+  for (const ex of payload.exercises) {
+    if (ex.isSuperset) {
+      for (const s of ex.sets) {
+        for (const sub of s.exercises || []) {
+          lines.push(
+            `${sub.name}: ${coercePositiveNumber(sub.weight)} lbs × ${Math.max(
+              1,
+              Math.floor(coercePositiveNumber(sub.reps)),
+            )} reps`,
+          );
+        }
+      }
+    } else if (!ex.isCardio) {
+      for (const s of ex.sets) {
+        lines.push(
+          `${ex.name}: ${coercePositiveNumber(s.weight)} lbs × ${Math.max(
+            1,
+            Math.floor(coercePositiveNumber(s.reps)),
+          )} reps`,
+        );
+      }
+    }
+  }
+  const curr = Array.isArray(hist[day]) ? hist[day] : [];
+  const merged = Array.from(new Set([...curr, ...lines]));
+  hist[day] = merged;
+  wtStorage.set(WT_KEYS.history, hist);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('wt-history-updated'));
+  }
+}
 
 function safeParse(json, fallback) {
   try { return JSON.parse(json); } catch { return fallback; }
@@ -84,6 +208,7 @@ const wtStorage = {
 let session = { exercises: [], startedAt: null };
 let currentExercise = null;
 let needsRecover = false;
+let needsSaveAfterNormalize = false;
 if (typeof localStorage !== "undefined") {
   const s = wtStorage.get(WT_KEYS.session, null);
   const c = wtStorage.get(WT_KEYS.current, null);
@@ -95,6 +220,19 @@ if (typeof localStorage !== "undefined") {
 
   // sanity shape
   if (!Array.isArray(session.exercises)) session.exercises = [];
+
+  const normSession = session.exercises.map(normalizeExercise);
+  if (JSON.stringify(normSession) !== JSON.stringify(session.exercises)) {
+    session.exercises = normSession;
+    needsSaveAfterNormalize = true;
+  }
+  if (currentExercise) {
+    const normCurrent = normalizeExercise(currentExercise);
+    if (JSON.stringify(normCurrent) !== JSON.stringify(currentExercise)) {
+      currentExercise = normCurrent;
+      needsSaveAfterNormalize = true;
+    }
+  }
 }
 
 let restTimer = null;
@@ -155,6 +293,90 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseSearch = document.getElementById("exerciseSearch");
   const exerciseList = document.getElementById("exerciseList");
   const muscleFilter = document.getElementById("muscleFilter");
+
+  // --- Import UI ---
+  const importInput = document.createElement('input');
+  importInput.type = 'file';
+  importInput.accept = 'application/json';
+  importInput.style.display = 'none';
+  document.body.appendChild(importInput);
+
+  const importBtn = document.createElement('button');
+  importBtn.textContent = 'Import JSON';
+  importBtn.className = 'btn btn-secondary';
+  exportBtn.insertAdjacentElement('afterend', importBtn);
+
+  const pasteBtn = document.createElement('button');
+  pasteBtn.textContent = 'Paste JSON';
+  pasteBtn.className = 'btn btn-secondary';
+  importBtn.insertAdjacentElement('afterend', pasteBtn);
+
+  importBtn.addEventListener('click', () => importInput.click());
+
+  importInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      handleImportText(ev.target.result);
+    };
+    reader.onerror = () => showToast('Import failed: invalid file');
+    reader.readAsText(file);
+    importInput.value = '';
+  });
+
+  pasteBtn.addEventListener('click', openPasteImport);
+
+  // Paste dialog overlay
+  const pasteOverlay = document.createElement('div');
+  pasteOverlay.id = 'wt-paste-overlay';
+  pasteOverlay.innerHTML =
+    '<div class="wt-paste-box"><textarea id="wt-paste-area"></textarea><div class="wt-paste-actions"><button id="wt-paste-import" class="btn btn-secondary">Import</button><button id="wt-paste-cancel" class="btn btn-secondary">Cancel</button></div></div>';
+  document.body.appendChild(pasteOverlay);
+
+  if (!document.getElementById('wt-import-style')) {
+    const style = document.createElement('style');
+    style.id = 'wt-import-style';
+    style.textContent =
+      '#wt-paste-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:1000;}#wt-paste-overlay.show{display:flex;}#wt-paste-overlay .wt-paste-box{background:#fff;color:#222;padding:16px;border-radius:8px;width:90%;max-width:500px;box-shadow:0 2px 8px rgba(0,0,0,.3);}#wt-paste-overlay textarea{width:100%;height:150px;}#wt-paste-overlay .wt-paste-actions{margin-top:8px;display:flex;gap:8px;justify-content:flex-end;}body.dark #wt-paste-overlay .wt-paste-box{background:#333;color:#f5f6fa;}';
+    document.head.appendChild(style);
+  }
+
+  function openPasteImport() {
+    pasteOverlay.classList.add('show');
+    const ta = document.getElementById('wt-paste-area');
+    ta.value = '';
+    ta.focus();
+  }
+  if (typeof window !== 'undefined') window.openPasteImport = openPasteImport;
+
+  function closePasteImport() {
+    pasteOverlay.classList.remove('show');
+  }
+
+  pasteOverlay.addEventListener('click', (e) => {
+    if (e.target === pasteOverlay) closePasteImport();
+  });
+
+  pasteOverlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closePasteImport();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('wt-paste-import').click();
+    }
+  });
+
+  document
+    .getElementById('wt-paste-cancel')
+    .addEventListener('click', closePasteImport);
+
+  document.getElementById('wt-paste-import').addEventListener('click', () => {
+    const text = document.getElementById('wt-paste-area').value;
+    handleImportText(text);
+    closePasteImport();
+  });
 
   // Screen reader live region
   const srStatus = document.createElement("div");
@@ -294,7 +516,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         break;
       }
       case "finish":
-      case "reset": {
+      case "reset":
+      case "import": {
         session = payload.prevSession;
         currentExercise = payload.prevCurrent;
         if (session.startedAt) startSessionTimer(); else stopSessionTimer();
@@ -313,6 +536,38 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         break;
       }
     }
+  }
+
+  function handleImportText(text) {
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      showToast('Import failed: invalid JSON');
+      return;
+    }
+    const normalized = normalizePayload(parsed);
+    if (normalized.totalExercises === 0) {
+      showToast('Nothing to import');
+      return;
+    }
+    const prevSession = JSON.parse(JSON.stringify(session));
+    const prevCurrent = currentExercise
+      ? JSON.parse(JSON.stringify(currentExercise))
+      : null;
+    pushUndo({ type: 'import', payload: { prevSession, prevCurrent } });
+    session = { exercises: normalized.exercises, startedAt: null };
+    currentExercise = null;
+    wtStorage.set(WT_KEYS.last, normalized.exercises);
+    mergeIntoHistory(normalized);
+    interfaceBox.classList.add('hidden');
+    setsList.innerHTML = '';
+    updateSummary();
+    updateSetsToday();
+    updateLogButtonState();
+    saveState();
+    showToast('Imported workout', { actionLabel: 'Undo', onAction: performUndo });
+    announce('Imported workout');
   }
 
   // Button aria-labels
@@ -1436,6 +1691,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       totalExercises: exportExercises.length,
       totalSets,
       exercises: exportExercises,
+      schema: WT_SCHEMA_VERSION,
     };
 
     // JSON
@@ -1551,6 +1807,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     wtStorage.set(WT_KEYS.current, currentExercise);
   }
 
+  if (needsSaveAfterNormalize) {
+    saveState();
+    needsSaveAfterNormalize = false;
+  }
+
   /* ------------------ UTILS ------------------ */
   function formatSec(sec) {
     const m = Math.floor(sec / 60),
@@ -1640,5 +1901,5 @@ if (typeof window !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { canLogSet, canLogCardio };
+module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload };
 }
