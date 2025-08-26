@@ -1,43 +1,12 @@
-// charts.js — copy all of this
-console.log("✅ charts.js is running v10");
-
-// --- SIMPLE ALWAYS-VISIBLE TEST LINE --------------------
-// This draws a basic line (135→185→225) so you can SEE a chart immediately.
-// If real data exists, the real chart below will overwrite this test.
-window.addEventListener("DOMContentLoaded", () => {
-  try {
-    if (typeof Chart === "undefined") return;
-    const ctx = document.getElementById("mainChart")?.getContext("2d");
-    if (!ctx) return;
-    window.__testChart = new Chart(ctx, {
-      type: "line",
-      data: {
-        datasets: [{
-          label: "Bench (test)",
-          data: [
-            { x: new Date(2024, 0, 10), y: 135 },
-            { x: new Date(2024, 0, 17), y: 185 },
-            { x: new Date(2024, 1,  5), y: 225 }
-          ],
-          tension: 0.25,
-          pointRadius: 4
-        }]
-      },
-      options: { parsing: false, scales: { x: { type: "time", time: { unit: "day" } } } }
-    });
-  } catch (e) {
-    console.warn("Test chart failed:", e);
-  }
-});
-
-// --- REAL APP LOGIC (data → charts) --------------------
+console.log("✅ charts.js running");
 
 function toDayISO(d){
   const dt = (d instanceof Date) ? d : new Date(d);
   return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
 }
 function dateFromISODay(dayISO){
-  const [y,m,d] = dayISO.split('-').map(Number);
+  const [y,m,d] = String(dayISO).split('-').map(Number);
+  if (!y || !m || !d) return new Date(NaN);
   return new Date(y, m-1, d);
 }
 function canonicalLift(name){
@@ -79,7 +48,7 @@ function normalizeWorkouts(raw){
   return workouts;
 }
 function e1rm(weight, reps){
-  if(!isFinite(weight) || !isFinite(reps) || weight<=0 || reps<=0) return 0;
+  if(!Number.isFinite(weight) || !Number.isFinite(reps) || weight<=0 || reps<=0) return 0;
   return Math.round(weight * (1 + reps/30));
 }
 function computeDaily(workouts, lift, metric){
@@ -88,22 +57,24 @@ function computeDaily(workouts, lift, metric){
     const day = toDayISO(w.date);
     (daily[day] ||= { topSet:0, volume:0, e1rmMax:0, sets:0 });
     w.sets.forEach(set=>{
-      const top = set.weight;
-      const e = e1rm(set.weight, set.reps);
+      const wv = +set.weight, rv = +set.reps;
+      if(!Number.isFinite(wv) || !Number.isFinite(rv)) return;
+      const top = wv;
+      const e = e1rm(wv, rv);
       if(top > daily[day].topSet) daily[day].topSet = top;
       if(e   > daily[day].e1rmMax) daily[day].e1rmMax = e;
-      daily[day].volume += set.weight * set.reps;
+      daily[day].volume += wv * rv;
       daily[day].sets++;
     });
   });
   const key = (metric==='e1rm' ? 'e1rmMax' : (metric==='top' ? 'topSet' : 'volume'));
   return Object.entries(daily)
-    .filter(([,v])=>v.sets>0)
-    .map(([d,v])=>({ x: dateFromISODay(d), y: v[key] }))
+    .filter(([,v])=>v.sets>0 && Number.isFinite(v[key]))
+    .map(([d,v])=>({ x: dateFromISODay(d), y: Number(v[key]) }))
+    .filter(p => p.x instanceof Date && !isNaN(p.x) && Number.isFinite(p.y))
     .sort((a,b)=>a.x-b.x);
 }
 
-// Fallback sample if nothing is found
 const SAMPLE_DATA = {
   "2024-08-25": [
     "Bench Press: 185 lbs × 5 reps",
@@ -118,12 +89,10 @@ const SAMPLE_DATA = {
 };
 
 async function loadWorkouts(){
-  // Highest priority: manual override
   try{
     const manual = localStorage.getItem('charts_manual');
     if(manual) return normalizeWorkouts(JSON.parse(manual));
   }catch{}
-  // From history / last workout / ad-hoc entries
   let raw = null;
   try{
     const hist = localStorage.getItem('wt_history');
@@ -158,7 +127,8 @@ async function loadWorkouts(){
     workouts = workouts.concat(normalizeWorkouts(manualEntries));
   }catch{}
   if(!workouts.length){
-    document.getElementById('sample-note')?.style && (document.getElementById('sample-note').style.display='block');
+    const note = document.getElementById('sample-note');
+    if(note) note.style.display='block';
     return normalizeWorkouts(SAMPLE_DATA);
   }
   const note = document.getElementById('sample-note');
@@ -166,19 +136,41 @@ async function loadWorkouts(){
   return workouts;
 }
 
+// Chart helpers
+function hasTimeScale(){
+  try { return !!(Chart && Chart.registry && Chart.registry.getScale && Chart.registry.getScale('time')); }
+  catch { return false; }
+}
 function makeLineChart(ctx, label, dataPoints){
   if(typeof Chart === 'undefined' || !ctx) return null;
-  return new Chart(ctx, {
-    type: 'line',
-    data: { datasets:[{ label, data:dataPoints, tension:0.25, pointRadius:3 }] },
-    options:{
-      parsing:false,
-      interaction:{mode:'index',intersect:false},
-      scales:{x:{type:'time',time:{unit:'day'}}}
-    }
-  });
+  const timeOK = hasTimeScale();
+  console.log('[makeLineChart]', label, 'points:', dataPoints.slice(0,5), 'x-scale:', timeOK ? 'time' : 'category');
+  if (timeOK) {
+    return new Chart(ctx, {
+      type:'line',
+      data:{ datasets:[{ label, data:dataPoints, tension:0.25, pointRadius:3 }] },
+      options:{
+        parsing:false,
+        interaction:{mode:'index',intersect:false},
+        scales:{ x:{ type:'time', time:{unit:'day'} } }
+      }
+    });
+  } else {
+    const labels = dataPoints.map(p=>toDayISO(p.x));
+    const nums   = dataPoints.map(p=>p.y);
+    return new Chart(ctx, {
+      type:'line',
+      data:{ labels, datasets:[{ label, data:nums, tension:0.25, pointRadius:3 }] },
+      options:{
+        parsing:false,
+        interaction:{mode:'index',intersect:false},
+        scales:{ x:{ type:'category' } }
+      }
+    });
+  }
 }
 
+// App init
 async function init(){
   const liftSelect    = document.getElementById('liftSelect');
   const metricSelect  = document.getElementById('metricSelect');
@@ -192,30 +184,35 @@ async function init(){
   const entryReps     = document.getElementById('entryReps');
   const addEntryBtn   = document.getElementById('addEntryBtn');
   const statusMsg     = document.getElementById('statusMsg');
-  const mainCanvas    = document.getElementById('mainChart');
-  const mainCtx       = mainCanvas?.getContext('2d');
   const emptyMsg      = document.getElementById('empty-message');
 
-  // Persist choices
+  const mainCanvas    = document.getElementById('mainChart');
+  const mainCtx       = mainCanvas?.getContext('2d');
+  const benchCtx      = document.getElementById('benchChart')?.getContext('2d');
+  const squatCtx      = document.getElementById('squatChart')?.getContext('2d');
+
   if(liftSelect)   liftSelect.value   = localStorage.getItem('charts_lift')   || (liftSelect.value || 'bench');
   if(metricSelect) metricSelect.value = localStorage.getItem('charts_metric') || (metricSelect.value || 'e1rm');
   liftSelect?.addEventListener('change', ()=>{ localStorage.setItem('charts_lift', liftSelect.value); render(); });
   metricSelect?.addEventListener('change', ()=>{ localStorage.setItem('charts_metric', metricSelect.value); render(); });
 
-  // Load + render
   let workouts = await loadWorkouts();
-  let mainChart = null;
+  let mainChart = null, benchChart = null, squatChart = null;
 
   function render(){
     const lift   = liftSelect?.value || 'bench';
     const metric = metricSelect?.value || 'e1rm';
-    const data = computeDaily(workouts, lift, metric);
 
-    // Remove the temporary test chart if it's there
-    if (window.__testChart) {
-      try { window.__testChart.destroy(); } catch(_) {}
-      window.__testChart = null;
-    }
+    const data      = computeDaily(workouts, lift,   metric);
+    const benchData = computeDaily(workouts, 'bench', metric);
+    const squatData = computeDaily(workouts, 'squat', metric);
+
+    // Debug: verify datasets contain points
+    console.log('main first 5', data.slice(0,5));
+    console.log('bench first 5', benchData.slice(0,5));
+    console.log('squat first 5', squatData.slice(0,5));
+
+    const metricLabel = (metricSelect?.selectedOptions?.[0]?.text) || metric;
 
     if(mainChart){ mainChart.destroy(); mainChart = null; }
     if(!data.length){
@@ -226,13 +223,17 @@ async function init(){
       if(mainCanvas) mainCanvas.style.display = 'block';
       if(emptyMsg) emptyMsg.style.display = 'none';
       if(statusMsg) statusMsg.textContent = '';
-      const liftLabel   = (liftSelect?.selectedOptions?.[0]?.text) || lift;
-      const metricLabel = (metricSelect?.selectedOptions?.[0]?.text) || metric;
+      const liftLabel = (liftSelect?.selectedOptions?.[0]?.text) || lift;
       mainChart = makeLineChart(mainCtx, `${liftLabel} - ${metricLabel}`, data);
     }
+
+    if(benchChart){ benchChart.destroy(); benchChart = null; }
+    if(squatChart){ squatChart.destroy(); squatChart = null; }
+
+    if (benchCtx && benchData.length) benchChart = makeLineChart(benchCtx, `Bench - ${metricLabel}`, benchData);
+    if (squatCtx && squatData.length) squatChart = makeLineChart(squatCtx, `Squat - ${metricLabel}`, squatData);
   }
 
-  // Manual JSON override
   loadManualBtn?.addEventListener('click', async ()=>{
     if(!manualData?.value){ alert('Paste JSON first'); return; }
     try{
@@ -244,7 +245,6 @@ async function init(){
     }catch{ alert('Invalid JSON'); }
   });
 
-  // Quick Add entry
   if(entryDate) entryDate.value = toDayISO(new Date());
   addEntryBtn?.addEventListener('click', async (e)=>{
     e.preventDefault();
@@ -262,13 +262,14 @@ async function init(){
     await refresh();
   });
 
-  // Refresh button
   ['click','pointerup','touchend'].forEach(evt=>{
     refreshBtn?.addEventListener(evt, (e)=>{ e.preventDefault(); refresh(); }, {passive:false});
   });
-  async function refresh(){ workouts = await loadWorkouts(); render(); }
+  async function refresh(){
+    workouts = await loadWorkouts();
+    render();
+  }
 
-  // Seed (merge, don’t wipe)
   seedBtn?.addEventListener('click', async ()=>{
     let existing = {};
     try{ existing = JSON.parse(localStorage.getItem('wt_history')||'{}'); }catch{}
@@ -282,15 +283,17 @@ async function init(){
     alert('Seeded sample data (merged). Charts updated.');
   });
 
-  // First render
   await refresh();
 }
 
-// Ensure init runs even if DOMContentLoaded already fired
 if (typeof window !== 'undefined') {
   if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', init);
   } else {
     init();
   }
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { e1rm, computeDaily, normalizeWorkouts, toDayISO };
 }

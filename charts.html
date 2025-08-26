@@ -6,9 +6,17 @@
   <title>Workout Tracker — Progress Charts</title>
   <link rel="stylesheet" href="style.css">
   <style>
-    /* Optional: gives the canvas some height if your CSS is minimal */
-    #mainChart { max-width: 100%; height: 420px; }
-    .small-charts canvas { max-width: 100%; height: 220px; }
+    .container { max-width: 960px; margin: 0 auto; padding: 16px; }
+    .header h1 { margin: 0 0 12px; }
+    .section { background: var(--panel, #1111); padding: 16px; border-radius: 12px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .row > label { display: flex; flex-direction: column; font-size: 14px; }
+    .field, textarea, input, select { padding: 6px 8px; border-radius: 8px; border: 1px solid #ccc; }
+    .btn { padding: 8px 12px; border-radius: 10px; border: none; cursor: pointer; }
+    .btn-secondary { background: #eee; }
+    canvas { width: 100%; max-width: 100%; height: 320px; }
+    .small-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .sample-note { color: #777; font-size: 13px; margin: 6px 0; }
   </style>
 </head>
 <body>
@@ -22,15 +30,19 @@
 
       <div id="sample-note" class="sample-note" style="display:none;">Showing sample data (no local data found).</div>
 
-      <div class="manual-import">
-        <textarea id="manualData" class="field" placeholder="Paste exported workout JSON here"></textarea>
-        <button id="loadManualBtn" class="btn btn-secondary" type="button">Load Data</button>
+      <div class="manual-import" style="margin-bottom:12px;">
+        <textarea id="manualData" class="field" rows="6" placeholder="Paste exported workout JSON here"></textarea>
+        <div style="margin-top:8px;">
+          <button id="loadManualBtn" class="btn btn-secondary" type="button">Load Data</button>
+        </div>
       </div>
 
-      <div class="manual-entry">
+      <div class="manual-entry" style="margin-bottom:12px;">
         <h3 style="margin-bottom:6px;">Quick Add Entry</h3>
         <div class="row">
-          <label>Date<input type="date" id="entryDate"></label>
+          <label>Date
+            <input type="date" id="entryDate">
+          </label>
           <label>Lift
             <select id="entryLift">
               <option value="bench">Bench</option>
@@ -39,13 +51,17 @@
               <option value="deadlift">Deadlift</option>
             </select>
           </label>
-          <label>Weight (lbs)<input type="number" id="entryWeight" min="0"></label>
-          <label>Reps<input type="number" id="entryReps" min="1"></label>
+          <label>Weight (lbs)
+            <input type="number" id="entryWeight" min="0" step="1">
+          </label>
+          <label>Reps
+            <input type="number" id="entryReps" min="1" step="1">
+          </label>
           <button id="addEntryBtn" class="btn" type="button">Add</button>
         </div>
       </div>
 
-      <div class="controls">
+      <div class="controls" style="margin-bottom:8px;">
         <label>Lift
           <select id="liftSelect">
             <option value="bench">Bench</option>
@@ -65,14 +81,13 @@
         <button id="seedBtn" class="btn btn-secondary" type="button">Seed sample</button>
       </div>
 
-      <div id="statusMsg" style="margin:8px 0;color:var(--muted-fg);font-size:14px;"></div>
-
-      <p id="empty-message" style="display:none;color:var(--muted-fg);">No data yet. Try <em>Seed sample</em> or use the <em>Export for Charts</em> button from the main page.</p>
+      <div id="statusMsg" style="margin:8px 0;color:#777;font-size:14px;"></div>
+      <p id="empty-message" style="display:none;color:#777;">No data yet. Try <em>Seed sample</em> or use the <em>Export for Charts</em> button from the main page.</p>
 
       <canvas id="mainChart"></canvas>
 
       <label style="display:block;margin-top:16px;">Small charts use the same metric you choose above.</label>
-      <small class="sample-note">E1RM = estimated 1-rep max (Epley formula); Top Set = heaviest set; Volume = total lbs (weight× reps) per day.</small>
+      <small class="sample-note">E1RM = estimated 1-rep max (Epley formula); Top Set = heaviest set; Volume = total lbs (weight × reps) per day.</small>
 
       <div class="small-charts">
         <canvas id="benchChart"></canvas>
@@ -81,11 +96,9 @@
     </div>
   </div>
 
-  <!-- Chart.js + time adapter (keep both) -->
+  <!-- Chart libraries then app (order matters) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-
-  <!-- Your app logic -->
-  <script src="charts.js?v=10"></script>
+  <script src="charts.js"></script>
 </body>
 </html>
