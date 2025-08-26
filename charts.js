@@ -1,3 +1,11 @@
+// charts.js — final drop-in
+// Notes:
+// - Guarantees init() runs even if the script loads after DOMContentLoaded.
+// - Robustly loads data from localStorage (wt_history, wt_lastWorkout, manual_entries, charts_manual).
+// - Seed merges instead of overwriting.
+// - Draws main chart and two mini charts (bench, squat).
+// - Shows a friendly alert if Chart.js fails to load.
+
 function toDayISO(d){
   const dt = (d instanceof Date) ? d : new Date(d);
   const y = dt.getFullYear();
@@ -11,7 +19,7 @@ function dateFromISODay(dayISO){
 }
 
 function canonicalLift(name){
-  const n = (name||'').toLowerCase();
+  const n = (name||'').toLowerCase().trim();
   if(n.includes('flat bench')) return 'bench';
   if(n.includes('back squat')) return 'squat';
   if(n.includes('incline') && n.includes('bench')) return 'incline';
@@ -24,6 +32,7 @@ function canonicalLift(name){
 }
 
 function normalizeWorkouts(raw){
+  // Accept array shape
   if(Array.isArray(raw)){
     return raw.map(r=>{
       const date = r.date ? toDayISO(r.date) : toDayISO(new Date());
@@ -35,12 +44,13 @@ function normalizeWorkouts(raw){
       };
     });
   }
+  // Accept map shape: { "YYYY-MM-DD": ["Bench Press: 185 lbs × 5 reps", ...] }
   const workouts = [];
   for(const [date, entries] of Object.entries(raw||{})){
     const day = toDayISO(date);
     const lifts = {};
     (entries||[]).forEach(line=>{
-      // Example: "Bench Press: 185 lbs × 5 reps"
+      // "Bench Press: 185 lbs × 5 reps"
       const m = String(line).match(/^(.*?):\s*(\d+(?:\.\d+)?)\s*lbs\s*[×x]\s*(\d+)\s*reps/i);
       if(!m) return;
       const name = canonicalLift(m[1].trim());
@@ -54,6 +64,11 @@ function normalizeWorkouts(raw){
     }
   }
   return workouts;
+}
+
+function e1rm(weight, reps){
+  if(!isFinite(weight) || !isFinite(reps) || weight<=0 || reps<=0) return 0;
+  return Math.round(weight * (1 + reps/30));
 }
 
 function computeDaily(workouts, lift, metric){
@@ -70,19 +85,14 @@ function computeDaily(workouts, lift, metric){
       daily[day].sets++;
     });
   });
-  const key = metric==='e1rm'? 'e1rmMax' : metric==='top'? 'topSet' : 'volume';
+  const key = metric==='e1rm'? 'e1rmMax' : (metric==='top'? 'topSet' : 'volume');
   return Object.entries(daily)
     .filter(([,v])=>v.sets>0)
     .map(([d,v])=>({ x: dateFromISODay(d), y: v[key] }))
     .sort((a,b)=>a.x-b.x);
 }
 
-function e1rm(weight, reps){
-  if(!isFinite(weight) || !isFinite(reps) || weight<=0 || reps<=0) return 0;
-  return Math.round(weight * (1 + reps/30));
-}
-
-// Sample fallback data if no storage
+// Fallback demo data if nothing is in storage
 const SAMPLE_DATA = {
   "2024-01-10": [ "Bench Press: 135 lbs × 8 reps" ],
   "2024-01-17": [ "Bench Press: 145 lbs × 6 reps" ],
@@ -92,7 +102,6 @@ const SAMPLE_DATA = {
 function makeLineChart(ctx, label, dataPoints){
   if(!ctx){
     console.warn('No canvas context for chart');
-    return null;
   }
   if(typeof Chart === 'undefined'){
     alert('Chart library failed to load. Check your internet connection.');
@@ -111,10 +120,14 @@ function makeLineChart(ctx, label, dataPoints){
 
 async function loadWorkouts(){
   let raw = null;
+
+  // Highest priority: manual override
   try{
     const manual = localStorage.getItem('charts_manual');
     if(manual) raw = JSON.parse(manual);
   }catch{}
+
+  // Else try known sources
   if(!raw){
     try{
       const keys = ['wt_history','wt_lastWorkout','workouts'];
@@ -124,10 +137,11 @@ async function loadWorkouts(){
         const parsed = JSON.parse(ls);
 
         if(k === 'wt_history'){
-          raw = parsed;          // {'YYYY-MM-DD': [ 'Bench: 185 lbs × 5 reps', ... ]}
+          raw = parsed; // map shape
           break;
         }
         if(k === 'wt_lastWorkout'){
+          // Convert lastWorkout array -> map for normalizeWorkouts
           const day = toDayISO(new Date());
           const lines = [];
           (parsed||[]).forEach(ex => {
@@ -147,21 +161,15 @@ async function loadWorkouts(){
           break;
         }
         if(k === 'workouts'){
-          raw = parsed;          // already array-shaped
+          raw = parsed; // already array-shaped
           break;
         }
       }
     }catch{}
   }
 
-  if(!raw){
-    const note = document.getElementById('sample-note');
-    if(note) note.style.display = 'block';
-    return normalizeWorkouts(SAMPLE_DATA);
-  }
-
-  let workouts = normalizeWorkouts(raw);
-
+  // Normalize + also merge manual quick-add entries
+  let workouts = raw ? normalizeWorkouts(raw) : [];
   try {
     const manualEntries = JSON.parse(localStorage.getItem('manual_entries') || '[]');
     workouts = workouts.concat(normalizeWorkouts(manualEntries));
@@ -170,29 +178,31 @@ async function loadWorkouts(){
   if(!workouts.length){
     const note = document.getElementById('sample-note');
     if(note) note.style.display = 'block';
-    workouts = normalizeWorkouts(SAMPLE_DATA);
+    return normalizeWorkouts(SAMPLE_DATA);
   }
+  const note = document.getElementById('sample-note');
+  if(note) note.style.display = 'none';
   return workouts;
 }
 
 async function init(){
   let workouts = await loadWorkouts();
 
-  const liftSelect   = document.getElementById('liftSelect');
-  const metricSelect = document.getElementById('metricSelect');
-  const refreshBtn   = document.getElementById('refreshBtn');
-  const seedBtn      = document.getElementById('seedBtn');
-  const mainCanvas   = document.getElementById('mainChart');
-  const mainCtx      = mainCanvas.getContext('2d');
-  const emptyMsg     = document.getElementById('empty-message');
-  const manualData   = document.getElementById('manualData');
-  const loadManualBtn= document.getElementById('loadManualBtn');
-  const entryDate    = document.getElementById('entryDate');
-  const entryLift    = document.getElementById('entryLift');
-  const entryWeight  = document.getElementById('entryWeight');
-  const entryReps    = document.getElementById('entryReps');
-  const addEntryBtn  = document.getElementById('addEntryBtn');
-  const statusMsg   = document.getElementById('statusMsg');
+  const liftSelect    = document.getElementById('liftSelect');
+  const metricSelect  = document.getElementById('metricSelect');
+  const refreshBtn    = document.getElementById('refreshBtn');
+  const seedBtn       = document.getElementById('seedBtn');
+  const mainCanvas    = document.getElementById('mainChart');
+  const mainCtx       = mainCanvas?.getContext('2d');
+  const emptyMsg      = document.getElementById('empty-message');
+  const manualData    = document.getElementById('manualData');
+  const loadManualBtn = document.getElementById('loadManualBtn');
+  const entryDate     = document.getElementById('entryDate');
+  const entryLift     = document.getElementById('entryLift');
+  const entryWeight   = document.getElementById('entryWeight');
+  const entryReps     = document.getElementById('entryReps');
+  const addEntryBtn   = document.getElementById('addEntryBtn');
+  const statusMsg     = document.getElementById('statusMsg');
 
   // Small charts
   const benchCtx = document.getElementById('benchChart')?.getContext('2d');
@@ -200,86 +210,85 @@ async function init(){
   let benchChart = null, squatChart = null;
 
   // Persist user choice
-  liftSelect.value   = localStorage.getItem('charts_lift')   || liftSelect.value;
-  metricSelect.value = localStorage.getItem('charts_metric') || metricSelect.value;
+  if(liftSelect)   liftSelect.value   = localStorage.getItem('charts_lift')   || (liftSelect.value || 'bench');
+  if(metricSelect) metricSelect.value = localStorage.getItem('charts_metric') || (metricSelect.value || 'e1rm');
   function savePrefs(){
-    localStorage.setItem('charts_lift', liftSelect.value);
-    localStorage.setItem('charts_metric', metricSelect.value);
+    if(liftSelect)   localStorage.setItem('charts_lift', liftSelect.value);
+    if(metricSelect) localStorage.setItem('charts_metric', metricSelect.value);
   }
-  liftSelect.addEventListener('change', ()=>{ savePrefs(); render(); });
-  metricSelect.addEventListener('change', ()=>{ savePrefs(); render(); });
+  liftSelect?.addEventListener('change', ()=>{ savePrefs(); render(); });
+  metricSelect?.addEventListener('change', ()=>{ savePrefs(); render(); });
 
   let mainChart = null;
   function render(){
-    const data = computeDaily(workouts, liftSelect.value, metricSelect.value);
+    const currLift   = liftSelect?.value || 'bench';
+    const currMetric = metricSelect?.value || 'e1rm';
+    const data = computeDaily(workouts, currLift, currMetric);
+
     if(mainChart){ mainChart.destroy(); mainChart = null; }
     if(!data.length){
       if(statusMsg) statusMsg.textContent = 'No data for the current lift/metric. Try Refresh or Seed sample.';
-      mainCanvas.style.display = 'none';
+      if(mainCanvas) mainCanvas.style.display = 'none';
       if(emptyMsg) emptyMsg.style.display = 'block';
     }else{
-      mainCanvas.style.display = 'block';
-      if(emptyMsg) emptyMsg.style.display = 'none'; if(statusMsg) statusMsg.textContent = '';
-      const liftLabel = liftSelect.options[liftSelect.selectedIndex].text;
-      const metricLabel = metricSelect.options[metricSelect.selectedIndex].text;
-      mainChart = makeLineChart(mainCtx, `${liftLabel} - ${metricLabel}`, data);
+      if(mainCanvas) mainCanvas.style.display = 'block';
+      if(emptyMsg) emptyMsg.style.display = 'none';
+      if(statusMsg) statusMsg.textContent = '';
+      const liftLabel   = (liftSelect?.selectedOptions?.[0]?.text) || currLift;
+      const metricLabel = (metricSelect?.selectedOptions?.[0]?.text) || currMetric;
+      if(mainCtx) mainChart = makeLineChart(mainCtx, `${liftLabel} - ${metricLabel}`, data);
     }
 
-    // small charts auto: bench, squat
+    // Mini charts
     if(benchChart){ benchChart.destroy(); benchChart=null; }
     if(squatChart){ squatChart.destroy(); squatChart=null; }
-    const benchData = computeDaily(workouts,'bench', metricSelect.value);
-    const squatData = computeDaily(workouts,'squat', metricSelect.value);
+    const benchData = computeDaily(workouts,'bench', currMetric);
+    const squatData = computeDaily(workouts,'squat', currMetric);
     if(benchCtx && benchData.length) benchChart = makeLineChart(benchCtx,'Bench', benchData);
     if(squatCtx && squatData.length) squatChart = makeLineChart(squatCtx,'Squat', squatData);
   }
 
-  // Manual JSON load
-  if(loadManualBtn){
-    loadManualBtn.addEventListener('click', async ()=>{
-      if(!manualData?.value){
-        alert('Paste JSON first');
-        return;
-      }
-      try{
-        const parsed = JSON.parse(manualData.value);
-        localStorage.setItem('charts_manual', JSON.stringify(parsed));
-        workouts = await loadWorkouts();
-        render();
-        alert('Manual data loaded into charts.');
-      }catch{
-        alert('Invalid JSON data');
-      }
-    });
-  }
-
-  if(entryDate) entryDate.value = toDayISO(new Date());
-  if(addEntryBtn){
-    addEntryBtn.addEventListener('click', async (e)=>{
-      e.preventDefault();
-      const date = entryDate?.value || toDayISO(new Date());
-      const lift = entryLift?.value || '';
-      const weight = Number(entryWeight?.value);
-      const reps = Number(entryReps?.value);
-      if(!lift || !weight || !reps){
-        alert('Please complete all fields');
-        return;
-      }
-      let entries = [];
-      try{ entries = JSON.parse(localStorage.getItem('manual_entries')) || []; }catch{}
-      entries.push({ date, lift, sets:[{weight, reps}] });
-      localStorage.setItem('manual_entries', JSON.stringify(entries));
-      if(entryWeight) entryWeight.value = '';
-      if(entryReps) entryReps.value = '';
-      await refresh();
-    });
-  }
-
-  // Make the Refresh button work everywhere (iOS Safari too)
-  ['click','pointerup','touchend'].forEach(evt=>{
-    if(refreshBtn){
-      refreshBtn.addEventListener(evt, (e)=>{ e.preventDefault(); refresh(); }, {passive:false});
+  // Manual JSON load (overrides)
+  loadManualBtn?.addEventListener('click', async ()=>{
+    if(!manualData?.value){
+      alert('Paste JSON first');
+      return;
     }
+    try{
+      const parsed = JSON.parse(manualData.value);
+      localStorage.setItem('charts_manual', JSON.stringify(parsed));
+      workouts = await loadWorkouts();
+      render();
+      alert('Manual data loaded into charts.');
+    }catch{
+      alert('Invalid JSON data');
+    }
+  });
+
+  // Quick add
+  if(entryDate) entryDate.value = toDayISO(new Date());
+  addEntryBtn?.addEventListener('click', async (e)=>{
+    e.preventDefault();
+    const date   = entryDate?.value || toDayISO(new Date());
+    const lift   = entryLift?.value || '';
+    const weight = Number(entryWeight?.value);
+    const reps   = Number(entryReps?.value);
+    if(!lift || !weight || !reps){
+      alert('Please complete all fields');
+      return;
+    }
+    let entries = [];
+    try{ entries = JSON.parse(localStorage.getItem('manual_entries')) || []; }catch{}
+    entries.push({ date, lift, sets:[{weight, reps}] });
+    localStorage.setItem('manual_entries', JSON.stringify(entries));
+    if(entryWeight) entryWeight.value = '';
+    if(entryReps) entryReps.value = '';
+    await refresh();
+  });
+
+  // Refresh
+  ['click','pointerup','touchend'].forEach(evt=>{
+    refreshBtn?.addEventListener(evt, (e)=>{ e.preventDefault(); refresh(); }, {passive:false});
   });
 
   async function refresh(){
@@ -287,47 +296,46 @@ async function init(){
     render();
   }
 
-  // Seed sample → MERGE (don’t wipe)
-  if(seedBtn){
-    seedBtn.addEventListener('click', async ()=>{
-      const sample = {
-        "2024-08-25": [
-          "Bench Press: 185 lbs × 5 reps",
-          "Squat: 225 lbs × 5 reps",
-          "Incline Bench Press: 155 lbs × 8 reps"
-        ],
-        "2024-08-26": [
-          "Bench Press: 190 lbs × 5 reps",
-          "Squat: 235 lbs × 5 reps",
-          "Incline Bench Press: 160 lbs × 8 reps"
-        ]
-      };
-      let existing = {}
-      try{ existing = JSON.parse(localStorage.getItem('wt_history')||'{}'); }catch{}
-      const merged = {...existing};
-      for(const [day, lines] of Object.entries(sample)){
-        const curr = Array.isArray(merged[day]) ? merged[day] : [];
-        merged[day] = Array.from(new Set([...curr, ...lines]));
-      }
-      localStorage.setItem('wt_history', JSON.stringify(merged));
-      await refresh();
-      alert('Seeded sample data (merged with existing). Charts updated.');
-    });
-  }
+  // Seed (MERGE, do not wipe)
+  seedBtn?.addEventListener('click', async ()=>{
+    const sample = {
+      "2024-08-25": [
+        "Bench Press: 185 lbs × 5 reps",
+        "Squat: 225 lbs × 5 reps",
+        "Incline Bench Press: 155 lbs × 8 reps"
+      ],
+      "2024-08-26": [
+        "Bench Press: 190 lbs × 5 reps",
+        "Squat: 235 lbs × 5 reps",
+        "Incline Bench Press: 160 lbs × 8 reps"
+      ]
+    };
+    let existing = {};
+    try{ existing = JSON.parse(localStorage.getItem('wt_history')||'{}'); }catch{}
+    const merged = {...existing};
+    for(const [day, lines] of Object.entries(sample)){
+      const curr = Array.isArray(merged[day]) ? merged[day] : [];
+      merged[day] = Array.from(new Set([...curr, ...lines]));
+    }
+    localStorage.setItem('wt_history', JSON.stringify(merged));
+    await refresh();
+    alert('Seeded sample data (merged). Charts updated.');
+  });
 
   // First render
   await refresh();
 }
 
+// Ensure init runs whether or not DOMContentLoaded already fired
 if (typeof window !== 'undefined' && typeof module === 'undefined') {
   if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', init);
   } else {
-    // If the script loads after DOMContentLoaded, run now.
     init();
   }
 }
 
+// For tests (optional)
 if(typeof module !== 'undefined'){
   module.exports = { e1rm, computeDaily, normalizeWorkouts, toDayISO };
 }
