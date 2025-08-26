@@ -280,6 +280,55 @@ function ffMatchesFilter(ex, filter) {
   }
 }
 
+function roundTo5(n) {
+  return Math.round((n + 1e-8) / 5) * 5;
+}
+
+function getLastSetForExercise(name, cur = currentExercise, sess = session) {
+  if (
+    cur &&
+    !cur.isCardio &&
+    !cur.isSuperset &&
+    cur.name === name &&
+    Array.isArray(cur.sets)
+  ) {
+    for (let i = cur.sets.length - 1; i >= 0; i--) {
+      const s = cur.sets[i];
+      if (s && "weight" in s && "reps" in s) {
+        return { weight: coercePositiveNumber(s.weight), reps: coercePositiveNumber(s.reps) };
+      }
+    }
+  }
+  if (sess && Array.isArray(sess.exercises)) {
+    for (let i = sess.exercises.length - 1; i >= 0; i--) {
+      const ex = sess.exercises[i];
+      if (ex && ex.name === name && !ex.isCardio && !ex.isSuperset) {
+        const sets = Array.isArray(ex.sets) ? ex.sets : [];
+        for (let j = sets.length - 1; j >= 0; j--) {
+          const s = sets[j];
+          if (s && "weight" in s && "reps" in s) {
+            return { weight: coercePositiveNumber(s.weight), reps: coercePositiveNumber(s.reps) };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function computeNextDefaults(last) {
+  if (!last || !Number.isFinite(last.weight) || !Number.isFinite(last.reps)) {
+    return { weight: "", reps: "" };
+  }
+  const w = coercePositiveNumber(last.weight);
+  const r = coercePositiveNumber(last.reps);
+  if (r >= 8) {
+    return { weight: w, reps: 8 };
+  }
+  const nextW = roundTo5(w * 1.025);
+  return { weight: nextW, reps: r };
+}
+
 /* ------------------ ELEMENTS ------------------ */
 if (typeof document !== "undefined" && document.getElementById("today")) {
   const todayEl = document.getElementById("today");
@@ -320,6 +369,142 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseList = document.getElementById("exerciseList");
   const muscleFilter = document.getElementById("muscleFilter");
   if (muscleFilter) muscleFilter.remove();
+
+  let adjustHandlersAttached = false;
+
+  function injectAdjustControls() {
+    if (!weightInput || !repsInput) return;
+    if (!document.getElementById("wt-weight-adjust")) {
+      const row = document.createElement("div");
+      row.className = "wt-adjust";
+      row.id = "wt-weight-adjust";
+      row.setAttribute("role", "group");
+      row.setAttribute("aria-label", "Adjust weight");
+      [-5, -1, 1, 5].forEach((n) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn-mini";
+        b.textContent = n > 0 ? `+${n}` : `${n}`;
+        b.dataset.wtAdjust = `weight:${n}`;
+        b.setAttribute(
+          "aria-label",
+          `${n > 0 ? "Increase" : "Decrease"} weight by ${Math.abs(n)} pounds`,
+        );
+        row.appendChild(b);
+      });
+      weightInput.insertAdjacentElement("afterend", row);
+    }
+    if (!document.getElementById("wt-reps-adjust")) {
+      const row = document.createElement("div");
+      row.className = "wt-adjust";
+      row.id = "wt-reps-adjust";
+      row.setAttribute("role", "group");
+      row.setAttribute("aria-label", "Adjust reps");
+      [-1, 1].forEach((n) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn-mini";
+        b.textContent = n > 0 ? `+${n}` : `${n}`;
+        b.dataset.wtAdjust = `reps:${n}`;
+        b.setAttribute(
+          "aria-label",
+          `${n > 0 ? "Increase" : "Decrease"} reps by ${Math.abs(n)}`,
+        );
+        row.appendChild(b);
+      });
+      repsInput.insertAdjacentElement("afterend", row);
+    }
+    if (!adjustHandlersAttached) {
+      let holdTimeout = null;
+      let holdInterval = null;
+      let didHold = false;
+      function handleAdjust(btn) {
+        const [field, amtStr] = btn.dataset.wtAdjust.split(":");
+        const amt = Number(amtStr);
+        const input = field === "weight" ? weightInput : repsInput;
+        const cur = parseInt(input.value, 10);
+        let v = Number.isNaN(cur) ? (field === "weight" ? 0 : 1) : cur;
+        v += amt;
+        v = field === "weight" ? Math.max(0, v) : Math.max(1, v);
+        input.value = v.toString();
+        if (navigator.vibrate) navigator.vibrate(12);
+        updateLogButtonState();
+        if (field === "weight") {
+          repsInput.focus();
+        } else {
+          logBtn.focus();
+        }
+      }
+      function clearHold() {
+        clearTimeout(holdTimeout);
+        clearInterval(holdInterval);
+      }
+      standardInputs.addEventListener("pointerdown", (e) => {
+        const btn = e.target.closest("[data-wt-adjust]");
+        if (!btn) return;
+        didHold = false;
+        holdTimeout = setTimeout(() => {
+          didHold = true;
+          handleAdjust(btn);
+          holdInterval = setInterval(() => handleAdjust(btn), 120);
+        }, 300);
+      });
+      window.addEventListener("pointerup", () => {
+        clearHold();
+      });
+      standardInputs.addEventListener("pointerleave", clearHold);
+      standardInputs.addEventListener("pointercancel", clearHold);
+      standardInputs.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-wt-adjust]");
+        if (!btn) return;
+        if (didHold) {
+          didHold = false;
+          return;
+        }
+        handleAdjust(btn);
+      });
+      adjustHandlersAttached = true;
+    }
+  }
+
+  function updateRepeatLastBtn() {
+    const last = getLastSetForExercise(currentExercise?.name);
+    let btn = document.getElementById("repeatLastBtn");
+    const shouldShow =
+      !!last && currentExercise && !currentExercise.isCardio && !currentExercise.isSuperset;
+    if (shouldShow) {
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.id = "repeatLastBtn";
+        btn.textContent = "Repeat Last";
+        logBtn.parentNode.insertBefore(btn, logBtn.nextSibling);
+        btn.addEventListener("click", () => {
+          const ls = getLastSetForExercise(currentExercise.name);
+          if (!ls) return;
+          weightInput.value = ls.weight;
+          repsInput.value = ls.reps;
+          updateLogButtonState();
+          logBtn.focus();
+          announce(`Repeated ${ls.weight} × ${ls.reps}`);
+        });
+      }
+      btn.style.display = "";
+    } else if (btn) {
+      btn.remove();
+    }
+  }
+
+  function applyDefaultsFor(name) {
+    if (!name) return;
+    const last = getLastSetForExercise(name);
+    const defs = computeNextDefaults(last);
+    weightInput.value = defs.weight !== "" ? defs.weight : "";
+    repsInput.value = defs.reps !== "" ? defs.reps : "";
+    updateLogButtonState();
+    if (last) announce(`Suggested ${defs.weight} × ${defs.reps}`);
+    updateRepeatLastBtn();
+  }
 
   // ---- Fast Find UI ----
   let ffQuery = wtStorage.get(WT_KEYS.ffQuery, "");
@@ -1269,14 +1454,18 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       standardInputs.classList.add("hidden");
       cardioInputs.classList.add("hidden");
       supersetInputs.classList.remove("hidden");
+      updateRepeatLastBtn();
     } else if (currentExercise.isCardio) {
       supersetInputs.classList.add("hidden");
       standardInputs.classList.add("hidden");
       cardioInputs.classList.remove("hidden");
+      updateRepeatLastBtn();
     } else {
       supersetInputs.classList.add("hidden");
       cardioInputs.classList.add("hidden");
       standardInputs.classList.remove("hidden");
+      injectAdjustControls();
+      applyDefaultsFor(currentExercise.name);
     }
     rebuildSetsList();
     updateSetCounter();
@@ -1414,6 +1603,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     } else {
       cardioInputs.classList.add("hidden");
       standardInputs.classList.remove("hidden");
+      injectAdjustControls();
     }
     supersetBuilder.classList.add("hidden");
     saveState();
@@ -1421,7 +1611,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     rebuildSetsList();
     updateSetCounter();
     if (!currentExercise.isCardio) {
+      applyDefaultsFor(name);
       weightInput.focus();
+      if (weightInput.value) weightInput.select();
+    } else {
+      updateRepeatLastBtn();
     }
     updateLogButtonState();
     saveRecentExercise(name);
@@ -1432,6 +1626,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateStartCTA();
     renderExerciseOptions();
     if (overlayOpen) closeFindOverlay();
+    updateRepeatLastBtn();
   }
 
   function startSuperset(namesArr) {
@@ -1468,6 +1663,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateStartCTA();
     renderExerciseOptions();
     if (overlayOpen) closeFindOverlay();
+    updateRepeatLastBtn();
   }
 
   function setupSupersetInputs(arr) {
@@ -1603,10 +1799,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     );
     currentExercise.nextSet++;
     updateSetCounter();
-
+    applyDefaultsFor(currentExercise.name);
     weightInput.focus();
-    weightInput.select();
-    repsInput.value = "";
+    if (weightInput.value) weightInput.select();
 
     if (useTimer && planned != null) {
       startRest(planned, currentExercise.sets.length - 1);
@@ -1618,6 +1813,45 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateLogButtonState();
     announce(`Logged set ${currentExercise.nextSet - 1} for ${currentExercise.name}`);
   });
+
+  let logHoldTimeout = null;
+  logBtn.addEventListener('pointerdown', () => {
+    if (
+      !currentExercise ||
+      currentExercise.isCardio ||
+      currentExercise.isSuperset ||
+      !getLastSetForExercise(currentExercise.name)
+    )
+      return;
+    logHoldTimeout = setTimeout(() => {
+      const last = getLastSetForExercise(currentExercise.name);
+      if (!last) return;
+      weightInput.value = last.weight;
+      repsInput.value = last.reps;
+      updateLogButtonState();
+      announce(`Repeated ${last.weight} × ${last.reps}`);
+      showToast('Repeated last set');
+      logBtn.dataset.skipNextClick = '1';
+      logBtn.dispatchEvent(new Event('click', { bubbles: true }));
+    }, 500);
+  });
+  function clearLogHold() {
+    clearTimeout(logHoldTimeout);
+  }
+  logBtn.addEventListener('pointerup', clearLogHold);
+  logBtn.addEventListener('pointerleave', clearLogHold);
+  logBtn.addEventListener('pointercancel', clearLogHold);
+  logBtn.addEventListener(
+    'click',
+    (e) => {
+      if (logBtn.dataset.skipNextClick) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        delete logBtn.dataset.skipNextClick;
+      }
+    },
+    true,
+  );
 
   function addSetElement(setObj, index) {
     const hint = setsList.querySelector(".empty-hint");
@@ -2295,10 +2529,47 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   /* ------------------ SHORTCUTS ------------------ */
   repsInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") logBtn.click();
+    if (e.key === "Enter") {
+      logBtn.click();
+    } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      const cur = parseInt(repsInput.value, 10);
+      let v = Number.isNaN(cur) ? 1 : cur;
+      v += e.key === "ArrowUp" ? 1 : -1;
+      v = Math.max(1, v);
+      repsInput.value = v.toString();
+      updateLogButtonState();
+    } else if (e.key === "Escape") {
+      if (repsInput.value !== "") {
+        e.preventDefault();
+        repsInput.value = "";
+        updateLogButtonState();
+      } else {
+        repsInput.blur();
+      }
+    }
   });
   weightInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") repsInput.focus();
+    if (e.key === "Enter") {
+      repsInput.focus();
+    } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      const step = e.shiftKey ? 5 : 1;
+      const cur = parseInt(weightInput.value, 10);
+      let v = Number.isNaN(cur) ? 0 : cur;
+      v += e.key === "ArrowUp" ? step : -step;
+      v = Math.max(0, v);
+      weightInput.value = v.toString();
+      updateLogButtonState();
+    } else if (e.key === "Escape") {
+      if (weightInput.value !== "") {
+        e.preventDefault();
+        weightInput.value = "";
+        updateLogButtonState();
+      } else {
+        weightInput.blur();
+      }
+    }
   });
   durationMinInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") durationSecInput.focus();
@@ -2311,7 +2582,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
 
   document.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key === "Enter") {
       if (
         !logBtn.disabled &&
         document.activeElement &&
@@ -2319,6 +2591,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       ) {
         logBtn.click();
       }
+    } else if (mod && e.key.toLowerCase() === "l") {
+      e.preventDefault();
+      weightInput.focus();
+      weightInput.select();
+    } else if (mod && e.key.toLowerCase() === "r") {
+      e.preventDefault();
+      repsInput.focus();
+      repsInput.select();
     } else if (e.key === "Escape") {
       const openForm = document.querySelector(".edit-form");
       if (openForm) {
@@ -2375,5 +2655,5 @@ if (typeof window !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter };
+module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter, getLastSetForExercise, computeNextDefaults };
 }
