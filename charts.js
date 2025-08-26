@@ -63,14 +63,17 @@ async function loadWorkouts(){
     }catch{/* ignore */}
   }
 
-  // 3) Final safety: sample data so the page is never blank
-  if(!raw){
-    raw = SAMPLE_DATA;
+  // Normalize whatever we found
+  let workouts = normalizeWorkouts(raw);
+
+  // 3) Final safety: if no workouts parsed, show sample data so the page is never blank
+  if(!workouts.length){
     const note = document.getElementById('sample-note');
     if(note) note.style.display = 'block';
+    workouts = normalizeWorkouts(SAMPLE_DATA);
   }
 
-  return normalizeWorkouts(raw);
+  return workouts;
 }
 
 /* ---- Parse either array-of-objects or the calendar’s date->lines object ---- */
@@ -93,7 +96,7 @@ function normalizeWorkouts(raw){
     (entries||[]).forEach(line=>{
       // Support both "Bench Press: 185 lbs × 5 reps"
       // and     "Bench Press: Set 2 - 185 lbs × 5 reps"
-      const m = line.match(/^(.*?):\s*(?:Set\s*\d+\s*-\s*)?(\d+)\s*lbs\s*[x×]\s*(\d+)\s*reps?/i);
+      const m = line.match(/^(.*?):\s*(?:Set\s*\d+\s*-\s*)?(\d+(?:\.\d+)?)\s*lbs\s*[x×]\s*(\d+)\s*reps?/i);
       if(!m) return;
       const [, name, w, r] = m;
       const lift = canonicalLift(name);
@@ -158,7 +161,7 @@ function makeLineChart(ctx, label, dataPoints){
 
 /* ---- Boot ---- */
 async function init(){
-  const workouts = await loadWorkouts();
+  let workouts = await loadWorkouts();
 
   const liftSelect   = document.getElementById('liftSelect');
   const metricSelect = document.getElementById('metricSelect');
@@ -170,8 +173,8 @@ async function init(){
   // Small charts (optional mini E1RM for Bench/Squat)
   const benchCtx = document.getElementById('benchChart')?.getContext('2d');
   const squatCtx = document.getElementById('squatChart')?.getContext('2d');
-  if(benchCtx) makeLineChart(benchCtx, 'Bench - E1RM', computeDaily(workouts, 'bench', 'e1rm'));
-  if(squatCtx) makeLineChart(squatCtx, 'Squat - E1RM', computeDaily(workouts, 'squat', 'e1rm'));
+  let benchChart = benchCtx ? makeLineChart(benchCtx, 'Bench - E1RM', computeDaily(workouts, 'bench', 'e1rm')) : null;
+  let squatChart = squatCtx ? makeLineChart(squatCtx, 'Squat - E1RM', computeDaily(workouts, 'squat', 'e1rm')) : null;
 
   // Persist selection
   liftSelect.value   = localStorage.getItem('charts_lift')   || liftSelect.value;
@@ -199,7 +202,15 @@ async function init(){
     mainChart = makeLineChart(mainCtx, `${liftLabel} - ${metricLabel}`, data);
   }
 
-  refreshBtn.addEventListener('click', render);
+  async function refresh(){
+    workouts = await loadWorkouts();
+    if(benchChart){ benchChart.destroy(); benchChart = null; }
+    if(squatChart){ squatChart.destroy(); squatChart = null; }
+    if(benchCtx) benchChart = makeLineChart(benchCtx, 'Bench - E1RM', computeDaily(workouts, 'bench', 'e1rm'));
+    if(squatCtx) squatChart = makeLineChart(squatCtx, 'Squat - E1RM', computeDaily(workouts, 'squat', 'e1rm'));
+    render();
+  }
+  refreshBtn.addEventListener('click', refresh);
   window.addEventListener('resize', render);
   window.addEventListener('orientationchange', render);
 
