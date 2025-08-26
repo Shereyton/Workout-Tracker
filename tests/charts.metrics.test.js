@@ -20,7 +20,7 @@ describe('computeDaily', () => {
   test('aggregates volume by day', () => {
     const res = computeDaily(mock, 'bench', 'volume');
     expect(res.length).toBe(2);
-    const day1 = res.find(r => r.x.getTime() === new Date('2024-01-01').getTime());
+    const day1 = res.find(r => r.x.getTime() === new Date(2024, 0, 1).getTime());
     expect(day1.y).toBe(100*5 + 110*3);
   });
 });
