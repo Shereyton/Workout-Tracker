@@ -48,7 +48,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const finishBtn = document.getElementById("finishBtn");
   const resetBtn = document.getElementById("resetBtn");
   const exportBtn = document.getElementById("exportBtn");
-  const exportChartBtn = document.getElementById("exportChartData");
   const restBox = document.getElementById("restBox");
   const restDisplay = document.getElementById("restDisplay");
   const useTimerEl = document.getElementById("useTimer");
@@ -81,20 +80,36 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   async function loadExercises() {
-    try {
-      const res = await fetch("data/exercises.json");
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      allExercises = await res.json();
-    } catch (err) {
-      console.error("Failed to load exercises via fetch", err);
+    allExercises = [];
+    const jsonPaths = [
+      "data/exercises.json",
+      "./data/exercises.json",
+      "./exercises.json",
+    ];
+    for (const p of jsonPaths) {
       try {
-        const mod = await import("./data/exercises.js");
-        allExercises = mod.default;
-      } catch (err2) {
-        console.error("Fallback import failed", err2);
-        allExercises = [];
+        const res = await fetch(p);
+        if (res.ok) {
+          allExercises = await res.json();
+          break;
+        }
+      } catch (e) {
+        // try next
       }
     }
+    if (!allExercises.length) {
+      const jsPaths = ["./data/exercises.js", "./exercises.js"];
+      for (const p of jsPaths) {
+        try {
+          const mod = await import(p);
+          allExercises = mod.default;
+          break;
+        } catch (e) {
+          // try next
+        }
+      }
+    }
+    if (!Array.isArray(allExercises)) allExercises = [];
     const custom = JSON.parse(localStorage.getItem("custom_exercises")) || [];
     custom.forEach((n) =>
       allExercises.push({
@@ -1073,32 +1088,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
   });
 
-  /* ------------------ EXPORT FOR CHARTS ------------------ */
-  if (exportChartBtn) {
-    exportChartBtn.addEventListener("click", () => {
-      saveSessionLinesToHistory();
-      const history = JSON.parse(localStorage.getItem("wt_history") || "{}");
-      if (!Object.keys(history).length) {
-        alert("No data to export.");
-        return;
-      }
-      const data = JSON.stringify(history, null, 2);
-      triggerDownload(
-        new Blob([data], { type: "application/json" }),
-        "chart_data.json",
-      );
-      if (navigator.clipboard) {
-        navigator.clipboard
-          .writeText(data)
-          .then(() => {
-            alert("Chart data exported and copied to clipboard ✅");
-          })
-          .catch(() => alert("Chart data exported (clipboard copy failed)"));
-      } else {
-        alert("Chart data exported. Copy manually:\n\n" + data);
-      }
-    });
-  }
   function triggerDownload(blob, filename) {
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);

@@ -211,15 +211,3 @@ body.dark #calendarSection{
 #pasteImport{margin-top:8px;}
 #pasteImport textarea{width:100%;min-height:80px;}
 
-/* charts page */
-.charts-section .controls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:flex-end;}
-.charts-section .controls label{display:flex;flex-direction:column;font-size:14px;gap:4px;flex:1;}
-.charts-section #mainChart{max-width:100%;height:300px;}
-.charts-section .small-charts{display:flex;flex-direction:column;gap:16px;margin-top:16px;}
-@media(min-width:700px){.charts-section .small-charts{flex-direction:row;}}
-.charts-section .small-charts canvas{flex:1;height:200px;}
-.charts-section .manual-import textarea{height:80px;}
-.charts-section .manual-import{margin-bottom:12px;}
-.charts-section #refreshBtn,.charts-section #seedBtn{position:relative;z-index:10;}
-.charts-section .message{font-size:14px;opacity:.8;text-align:center;margin:10px 0;}
-.charts-section .sample-note{font-size:12px;opacity:.7;margin-top:8px;}
