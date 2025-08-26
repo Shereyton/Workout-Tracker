@@ -171,6 +171,150 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     srStatus.textContent = msg;
   }
 
+  // --- Toast / Snackbar Utility ---
+  let toastRoot = null;
+  let toastTimer = null;
+  let toastRestoreFocus = null;
+  let toastLiveRegion = null;
+
+  function ensureToastElements() {
+    if (!toastRoot) {
+      toastRoot = document.getElementById("wt-toast-root");
+      if (!toastRoot) {
+        toastRoot = document.createElement("div");
+        toastRoot.id = "wt-toast-root";
+        toastRoot.setAttribute("role", "status");
+        document.body.appendChild(toastRoot);
+      }
+    }
+    if (!document.getElementById("wt-toast-style")) {
+      const style = document.createElement("style");
+      style.id = "wt-toast-style";
+      style.textContent = `#wt-toast-root{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#fff;color:#222;padding:10px 16px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.2);display:none;align-items:center;gap:12px;z-index:1000;font-size:15px;}#wt-toast-root.show{display:flex;}#wt-toast-root button{background:none;border:none;color:#007bff;font-weight:600;cursor:pointer;}body.dark #wt-toast-root{background:#333;color:#f5f6fa;}body.dark #wt-toast-root button{color:#8ab4ff;}`;
+      document.head.appendChild(style);
+    }
+  }
+
+  function showToast(message, { actionLabel, onAction, duration = 10000 } = {}) {
+    ensureToastElements();
+    toastRoot.innerHTML = "";
+    const msgSpan = document.createElement("span");
+    msgSpan.textContent = message;
+    toastRoot.appendChild(msgSpan);
+    if (actionLabel) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = actionLabel;
+      btn.addEventListener("click", () => {
+        if (onAction) onAction();
+        hideToast();
+      });
+      toastRoot.appendChild(btn);
+    }
+    toastRoot.classList.add("show");
+    toastRestoreFocus = document.activeElement;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(hideToast, duration);
+
+    if (typeof announce === "function") {
+      announce(message);
+    } else {
+      if (!toastLiveRegion) {
+        toastLiveRegion = document.createElement("div");
+        toastLiveRegion.setAttribute("aria-live", "polite");
+        toastLiveRegion.setAttribute("aria-atomic", "true");
+        toastLiveRegion.style.position = "absolute";
+        toastLiveRegion.style.width = "1px";
+        toastLiveRegion.style.height = "1px";
+        toastLiveRegion.style.overflow = "hidden";
+        toastLiveRegion.style.clip = "rect(1px,1px,1px,1px)";
+        document.body.appendChild(toastLiveRegion);
+      }
+      toastLiveRegion.textContent = message;
+    }
+  }
+
+  function hideToast() {
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    if (toastRoot) {
+      toastRoot.classList.remove("show");
+      toastRoot.innerHTML = "";
+    }
+    const refocus = toastRestoreFocus || (logBtn && !logBtn.disabled ? logBtn : null);
+    toastRestoreFocus = null;
+    if (refocus && typeof refocus.focus === "function") {
+      try { refocus.focus(); } catch {}
+    }
+  }
+
+  // --- Undo Stack ---
+  let lastAction = null; // {type,payload,timestamp}
+
+  function pushUndo(action) {
+    lastAction = { ...action, timestamp: Date.now() };
+  }
+
+  async function performUndo() {
+    if (!lastAction) return;
+    if (Date.now() - lastAction.timestamp > 12000) {
+      lastAction = null;
+      showToast("Undo expired");
+      return;
+    }
+    const { type, payload } = lastAction;
+    lastAction = null;
+    hideToast();
+    switch (type) {
+      case "deleteSet": {
+        const { exerciseName, exerciseIndex, removedSet, removedIndex } = payload;
+        let target = null;
+        if (exerciseIndex !== null && exerciseIndex !== undefined) {
+          target = session.exercises[exerciseIndex];
+        } else if (currentExercise && currentExercise.name === exerciseName) {
+          target = currentExercise;
+        } else {
+          target = session.exercises.find((e) => e.name === exerciseName) || null;
+        }
+        if (target) {
+          target.sets.splice(removedIndex, 0, removedSet);
+          if (target === currentExercise) {
+            renumberSets();
+            rebuildSetsList();
+            updateSetCounter();
+          } else {
+            target.sets.forEach((s, i) => (s.set = i + 1));
+          }
+          updateSummary();
+          updateSetsToday();
+          saveState();
+        }
+        break;
+      }
+      case "finish":
+      case "reset": {
+        session = payload.prevSession;
+        currentExercise = payload.prevCurrent;
+        if (session.startedAt) startSessionTimer(); else stopSessionTimer();
+        if (currentExercise) {
+          showInterface();
+          rebuildSetsList();
+          updateSetCounter();
+        } else {
+          interfaceBox.classList.add("hidden");
+          setsList.innerHTML = "";
+        }
+        updateSummary();
+        updateSetsToday();
+        updateLogButtonState();
+        saveState();
+        break;
+      }
+    }
+  }
+
   // Button aria-labels
   logBtn.setAttribute("aria-label", "Log set");
   nextExerciseBtn.setAttribute(
@@ -825,6 +969,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function deleteSet(idx) {
     if (!confirm("Delete this set?")) return;
+    pushUndo({
+      type: "deleteSet",
+      payload: {
+        exerciseName: currentExercise?.name,
+        exerciseIndex: null,
+        removedSet: { ...currentExercise.sets[idx] },
+        removedIndex: idx,
+      },
+    });
     announce(`Deleted set ${idx + 1} for ${currentExercise.name}`);
     currentExercise.sets.splice(idx, 1);
     renumberSets();
@@ -833,6 +986,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateSummary();
     updateSetsToday();
     saveState();
+    showToast("Set deleted", {
+      actionLabel: "Undo",
+      onAction: performUndo,
+    });
   }
 
   /* === FIXED EDIT FORM === */
@@ -1181,15 +1338,23 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   /* ------------------ RESET WORKOUT ------------------ */
   resetBtn.addEventListener("click", () => {
     if (!confirm("Reset entire workout?")) return;
+    const prevSession = JSON.parse(JSON.stringify(session));
+    const prevCurrent = JSON.parse(JSON.stringify(currentExercise));
+    pushUndo({ type: "reset", payload: { prevSession, prevCurrent } });
     endWorkout();
     announce("Workout reset");
+    showToast("Workout reset", { actionLabel: "Undo", onAction: performUndo });
   });
 
   /* ------------------ FINISH WORKOUT ------------------ */
   finishBtn.addEventListener("click", () => {
     if (!confirm("Finish workout?")) return;
+    const prevSession = JSON.parse(JSON.stringify(session));
+    const prevCurrent = JSON.parse(JSON.stringify(currentExercise));
+    pushUndo({ type: "finish", payload: { prevSession, prevCurrent } });
     endWorkout();
     announce("Workout finished");
+    showToast("Workout finished", { actionLabel: "Undo", onAction: performUndo });
   });
 
   /* ------------------ SUMMARY ------------------ */
@@ -1430,6 +1595,20 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         finishRest();
         restBox.classList.add("hidden");
       }
+    }
+  });
+
+  window.addEventListener("keydown", (e) => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      performUndo();
+    }
+    if (!mod && e.key.toLowerCase() === "u") {
+      performUndo();
+    }
+    if (e.key === "Escape") {
+      hideToast();
     }
   });
 }
