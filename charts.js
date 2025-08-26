@@ -1,37 +1,3 @@
-// charts.js — copy all of this
-console.log("✅ charts.js is running v10");
-
-// --- SIMPLE ALWAYS-VISIBLE TEST LINE --------------------
-// This draws a basic line (135→185→225) so you can SEE a chart immediately.
-// If real data exists, the real chart below will overwrite this test.
-window.addEventListener("DOMContentLoaded", () => {
-  try {
-    if (typeof Chart === "undefined") return;
-    const ctx = document.getElementById("mainChart")?.getContext("2d");
-    if (!ctx) return;
-    window.__testChart = new Chart(ctx, {
-      type: "line",
-      data: {
-        datasets: [{
-          label: "Bench (test)",
-          data: [
-            { x: new Date(2024, 0, 10), y: 135 },
-            { x: new Date(2024, 0, 17), y: 185 },
-            { x: new Date(2024, 1,  5), y: 225 }
-          ],
-          tension: 0.25,
-          pointRadius: 4
-        }]
-      },
-      options: { parsing: false, scales: { x: { type: "time", time: { unit: "day" } } } }
-    });
-  } catch (e) {
-    console.warn("Test chart failed:", e);
-  }
-});
-
-// --- REAL APP LOGIC (data → charts) --------------------
-
 function toDayISO(d){
   const dt = (d instanceof Date) ? d : new Date(d);
   return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
@@ -194,6 +160,8 @@ async function init(){
   const statusMsg     = document.getElementById('statusMsg');
   const mainCanvas    = document.getElementById('mainChart');
   const mainCtx       = mainCanvas?.getContext('2d');
+  const benchCtx      = document.getElementById('benchChart')?.getContext('2d');
+  const squatCtx      = document.getElementById('squatChart')?.getContext('2d');
   const emptyMsg      = document.getElementById('empty-message');
 
   // Persist choices
@@ -205,17 +173,16 @@ async function init(){
   // Load + render
   let workouts = await loadWorkouts();
   let mainChart = null;
+  let benchChart = null;
+  let squatChart = null;
 
   function render(){
     const lift   = liftSelect?.value || 'bench';
     const metric = metricSelect?.value || 'e1rm';
     const data = computeDaily(workouts, lift, metric);
-
-    // Remove the temporary test chart if it's there
-    if (window.__testChart) {
-      try { window.__testChart.destroy(); } catch(_) {}
-      window.__testChart = null;
-    }
+    const benchData = computeDaily(workouts, 'bench', metric);
+    const squatData = computeDaily(workouts, 'squat', metric);
+    const metricLabel = (metricSelect?.selectedOptions?.[0]?.text) || metric;
 
     if(mainChart){ mainChart.destroy(); mainChart = null; }
     if(!data.length){
@@ -227,9 +194,13 @@ async function init(){
       if(emptyMsg) emptyMsg.style.display = 'none';
       if(statusMsg) statusMsg.textContent = '';
       const liftLabel   = (liftSelect?.selectedOptions?.[0]?.text) || lift;
-      const metricLabel = (metricSelect?.selectedOptions?.[0]?.text) || metric;
       mainChart = makeLineChart(mainCtx, `${liftLabel} - ${metricLabel}`, data);
     }
+
+    if(benchChart){ benchChart.destroy(); benchChart = null; }
+    if(squatChart){ squatChart.destroy(); squatChart = null; }
+    benchChart = makeLineChart(benchCtx, `Bench - ${metricLabel}`, benchData);
+    squatChart = makeLineChart(squatCtx, `Squat - ${metricLabel}`, squatData);
   }
 
   // Manual JSON override
@@ -293,4 +264,8 @@ if (typeof window !== 'undefined') {
   } else {
     init();
   }
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { e1rm, computeDaily, normalizeWorkouts, toDayISO };
 }
