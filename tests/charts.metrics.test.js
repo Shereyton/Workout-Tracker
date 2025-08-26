@@ -1,4 +1,4 @@
-/* keep this import line; include toDayISO only if referenced by tests */
+/* tests/charts.metrics.test.js */
 const { e1rm, computeDaily, normalizeWorkouts, toDayISO } = require('../charts.js');
 
 describe('e1rm', () => {
@@ -23,5 +23,15 @@ describe('computeDaily', () => {
     expect(res.length).toBe(2);
     const day1 = res.find(r => r.x.getTime() === new Date(2024,0,1).getTime());
     expect(day1.y).toBe(100*5 + 110*3);
+  });
+});
+
+describe('normalizeWorkouts', () => {
+  test('parses calendar object with decimal weights', () => {
+    const raw = { '2024-01-01': ['Bench Press: 135.5 lbs × 5 reps'] };
+    const res = normalizeWorkouts(raw);
+    expect(res).toEqual([
+      { date: '2024-01-01', lift: 'bench', sets: [{ weight: 135.5, reps: 5 }] }
+    ]);
   });
 });

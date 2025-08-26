@@ -36,11 +36,10 @@ async function loadWorkouts(){
       if(!ls) continue;
       const parsed = JSON.parse(ls);
       if(k === 'wt_history'){
-        raw = parsed; // object map -> will be normalized below
+        raw = parsed;
         break;
       }
       if(k === 'wt_lastWorkout'){
-        // turn array of exercises with sets into one-day lines
         const day = toDayISO(new Date());
         const lines = [];
         (parsed||[]).forEach(ex => {
@@ -51,7 +50,7 @@ async function loadWorkouts(){
               });
             });
           } else if(ex.isCardio){
-            // ignore for strength charts
+            // skip cardio
           } else {
             (ex.sets||[]).forEach(s=>{
               lines.push(`${ex.name}: ${s.weight} lbs × ${s.reps} reps`);
@@ -62,7 +61,7 @@ async function loadWorkouts(){
         break;
       }
       if(k === 'workouts'){
-        raw = parsed; // already array-shaped in some versions
+        raw = parsed;
         break;
       }
     }
@@ -76,17 +75,18 @@ async function loadWorkouts(){
     }catch{}
   }
 
-  // 3) Final fallback to sample data
-  if(!raw){
-    raw = SAMPLE_DATA;
+  // 3) Normalize and ensure not empty
+  let workouts = normalizeWorkouts(raw);
+  if(!workouts.length){
     const note = document.getElementById('sample-note');
-    if(note) note.style.display='block';
+    if(note) note.style.display = 'block';
+    workouts = normalizeWorkouts(SAMPLE_DATA);
   }
-  return normalizeWorkouts(raw);
+
+  return workouts;
 }
 
 function normalizeWorkouts(raw){
-  // If already array of {date, lift, sets}
   if(Array.isArray(raw)){
     return raw.map(r=>{
       const date = r.date ? toDayISO(r.date) : toDayISO(new Date());
@@ -98,13 +98,14 @@ function normalizeWorkouts(raw){
       };
     });
   }
-  // Else assume object map: { 'YYYY-MM-DD': ['Bench: 200 lbs × 5 reps', ...] }
   const workouts = [];
   for(const [date, entries] of Object.entries(raw||{})){
     const day = toDayISO(date);
     const lifts = {};
     (entries||[]).forEach(line=>{
-      const m = line.match(/^(.*?):\s*(\d+)\s*lbs\s*[x×]\s*(\d+)\s*reps?/i);
+      // Support both "Bench Press: 185 lbs × 5 reps"
+      // and "Bench Press: Set 2 - 185 lbs × 5 reps"
+      const m = line.match(/^(.*?):\s*(?:Set\s*\d+\s*-\s*)?(\d+(?:\.\d+)?)\s*lbs\s*[x×]\s*(\d+)\s*reps?/i);
       if(!m) return;
       let [, name, w, r] = m;
       const lift = canonicalLift(name);
@@ -164,13 +165,20 @@ function makeLineChart(ctx, label, dataPoints){
 }
 
 async function init(){
-  const workouts = await loadWorkouts();
-  const liftSelect = document.getElementById('liftSelect');
+  let workouts = await loadWorkouts();
+
+  const liftSelect   = document.getElementById('liftSelect');
   const metricSelect = document.getElementById('metricSelect');
-  const refreshBtn = document.getElementById('refreshBtn');
-  const mainCanvas = document.getElementById('mainChart');
-  const mainCtx = mainCanvas.getContext('2d');
-  const emptyMsg = document.getElementById('empty-message');
+  const refreshBtn   = document.getElementById('refreshBtn');
+  const mainCanvas   = document.getElementById('mainChart');
+  const mainCtx      = mainCanvas.getContext('2d');
+  const emptyMsg     = document.getElementById('empty-message');
+
+  // Small charts
+  const benchCtx = document.getElementById('benchChart')?.getContext('2d');
+  const squatCtx = document.getElementById('squatChart')?.getContext('2d');
+  let benchChart = benchCtx ? makeLineChart(benchCtx, 'Bench - E1RM', computeDaily(workouts, 'bench', 'e1rm')) : null;
+  let squatChart = squatCtx ? makeLineChart(squatCtx, 'Squat - E1RM', computeDaily(workouts, 'squat', 'e1rm')) : null;
 
   // persist user choice
   liftSelect.value = localStorage.getItem('charts_lift') || liftSelect.value;
@@ -200,19 +208,17 @@ async function init(){
     );
   }
 
-  refreshBtn.addEventListener('click', () => { savePrefs(); renderMain(); });
+  async function refresh(){
+    workouts = await loadWorkouts();
+    if(benchChart){ benchChart.destroy(); benchChart = null; }
+    if(squatChart){ squatChart.destroy(); squatChart = null; }
+    if(benchCtx) benchChart = makeLineChart(benchCtx, 'Bench - E1RM', computeDaily(workouts, 'bench', 'e1rm'));
+    if(squatCtx) squatChart = makeLineChart(squatCtx, 'Squat - E1RM', computeDaily(workouts, 'squat', 'e1rm'));
+    renderMain();
+  }
+  refreshBtn.addEventListener('click', refresh);
   window.addEventListener('resize', renderMain);
   window.addEventListener('orientationchange', renderMain);
-
-  // side mini charts
-  const benchCtx = document.getElementById('benchChart')?.getContext('2d');
-  const squatCtx = document.getElementById('squatChart')?.getContext('2d');
-  let benchChart = benchCtx
-    ? makeLineChart(benchCtx, 'Bench - E1RM', computeDaily(workouts, 'bench', 'e1rm'))
-    : null;
-  let squatChart = squatCtx
-    ? makeLineChart(squatCtx, 'Squat - E1RM', computeDaily(workouts, 'squat', 'e1rm'))
-    : null;
 
   renderMain();
 }
@@ -224,4 +230,3 @@ if(typeof window !== 'undefined'){
 if(typeof module !== 'undefined'){
   module.exports = { e1rm, computeDaily, normalizeWorkouts, toDayISO };
 }
-
