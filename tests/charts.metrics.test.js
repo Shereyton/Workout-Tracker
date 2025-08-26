@@ -1,4 +1,5 @@
-const { e1rm, computeDaily, normalizeWorkouts } = require('../charts.js');
+/* tests/charts.metrics.test.js */
+const { e1rm, computeDaily, normalizeWorkouts, toDayISO } = require('../charts.js');
 
 describe('e1rm', () => {
   test('calculates Estimated 1RM', () => {
@@ -20,7 +21,7 @@ describe('computeDaily', () => {
   test('aggregates volume by day', () => {
     const res = computeDaily(mock, 'bench', 'volume');
     expect(res.length).toBe(2);
-    const day1 = res.find(r => r.x.getTime() === new Date(2024, 0, 1).getTime());
+    const day1 = res.find(r => r.x.getTime() === new Date(2024,0,1).getTime());
     expect(day1.y).toBe(100*5 + 110*3);
   });
 });
