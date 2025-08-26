@@ -71,6 +71,39 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   let allExercises = [];
 
+  function updateLogButtonState() {
+    if (!currentExercise) {
+      logBtn.disabled = true;
+      return;
+    }
+
+    if (currentExercise.isSuperset) {
+      const ok = currentExercise.exercises.every((_, i) => {
+        const w = parseInt(document.getElementById(`weight${i}`).value, 10);
+        const r = parseInt(document.getElementById(`reps${i}`).value, 10);
+        return canLogSet(w, r);
+      });
+      logBtn.disabled = !ok;
+      return;
+    }
+
+    if (currentExercise.isCardio) {
+      const d =
+        distanceInput.classList.contains("hidden") || distanceInput.value === ""
+          ? null
+          : parseFloat(distanceInput.value);
+      const m = parseInt(durationMinInput.value, 10) || 0;
+      const s = parseInt(durationSecInput.value, 10) || 0;
+      const t = m * 60 + s;
+      logBtn.disabled = !canLogCardio(d, t, currentExercise.name);
+      return;
+    }
+
+    const w = parseInt(weightInput.value, 10);
+    const r = parseInt(repsInput.value, 10);
+    logBtn.disabled = !canLogSet(w, r);
+  }
+
   function debounce(fn, delay = 100) {
     let t;
     return (...args) => {
@@ -197,6 +230,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   loadExercises();
 
+  weightInput.addEventListener("input", updateLogButtonState);
+  repsInput.addEventListener("input", updateLogButtonState);
+  distanceInput.addEventListener("input", updateLogButtonState);
+  durationMinInput.addEventListener("input", updateLogButtonState);
+  durationSecInput.addEventListener("input", updateLogButtonState);
+  supersetInputs.addEventListener("input", updateLogButtonState);
+
   /* ------------------ INIT ------------------ */
   todayEl.textContent = new Date().toLocaleDateString("en-US", {
     weekday: "long",
@@ -225,6 +265,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateSetCounter();
   }
   updateSummary();
+  updateLogButtonState();
 
   /* ------------------ THEME ------------------ */
   if (localStorage.getItem("wt_theme") === "dark") {
@@ -345,6 +386,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (!currentExercise.isCardio) {
       weightInput.focus();
     }
+    updateLogButtonState();
   }
 
   function startSuperset(namesArr) {
@@ -370,6 +412,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     rebuildSetsList();
     updateSetCounter();
     document.querySelector("#weight0").focus();
+    updateLogButtonState();
   }
 
   function setupSupersetInputs(arr) {
@@ -423,6 +466,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
       updateSummary();
       saveState();
+      updateLogButtonState();
       return;
     }
 
@@ -464,6 +508,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
       updateSummary();
       saveState();
+      updateLogButtonState();
       return;
     }
 
@@ -504,9 +549,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     updateSummary();
     saveState();
+    updateLogButtonState();
   });
 
   function addSetElement(setObj, index) {
+    const hint = setsList.querySelector(".empty-hint");
+    if (hint) hint.remove();
     const item = document.createElement("div");
     item.className = "set-item";
     item.dataset.index = index;
@@ -547,6 +595,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   function rebuildSetsList() {
     setsList.innerHTML = "";
     if (!currentExercise) return;
+    if (!currentExercise.sets.length) {
+      const hint = document.createElement("div");
+      hint.className = "empty-hint";
+      hint.textContent =
+        "No sets yet. Enter weight & reps, then press Log Set.";
+      hint.style.color = "#888";
+      hint.style.fontSize = "0.9em";
+      setsList.appendChild(hint);
+      return;
+    }
     currentExercise.sets.forEach((s, i) => addSetElement(s, i));
   }
 
@@ -753,6 +811,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     updateSummary();
     saveState();
+    updateLogButtonState();
   });
 
   function pushOrMergeExercise(ex) {
@@ -897,6 +956,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     repsInput.value = "";
     updateSummary();
     saveState();
+    updateLogButtonState();
   }
 
   /* ------------------ RESET WORKOUT ------------------ */
@@ -960,6 +1020,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     rebuildSetsList();
     updateSetCounter();
+    updateLogButtonState();
     updateSummary();
   });
 
