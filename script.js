@@ -335,7 +335,19 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   ffRow.id = "wt-fast-find";
   const ffChips = document.createElement("div");
   ffChips.className = "wt-ff-chips";
-  const filters = ["all", "strength", "cardio", "custom", "superset"];
+  const searchBtn = document.createElement("button");
+  searchBtn.type = "button";
+  searchBtn.id = "wt-search-btn";
+  searchBtn.textContent = "🔍";
+  searchBtn.setAttribute("aria-label", "Open search");
+  searchBtn.setAttribute("aria-expanded", "false");
+  const startBtn = document.createElement("button");
+  startBtn.type = "button";
+  startBtn.id = "wt-search-start";
+  startBtn.textContent = "Start";
+  startBtn.className = "btn btn-secondary";
+  startBtn.style.display = "none";
+  const filters = ["all", "strength", "cardio", "custom"];
   filters.forEach((f) => {
     const b = document.createElement("button");
     b.type = "button";
@@ -345,6 +357,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     ffChips.appendChild(b);
   });
   ffRow.appendChild(exerciseSearch);
+  ffRow.appendChild(searchBtn);
+  ffRow.appendChild(startBtn);
   ffRow.appendChild(ffChips);
   exerciseSelect.parentNode.insertBefore(ffRow, exerciseSelect);
 
@@ -368,6 +382,194 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     });
   }
   updateFilterChips();
+
+  // ----- Fast Find Overlay -----
+  let overlayOpen = false;
+  let overlayHighlight = -1;
+  let overlayEl = null;
+  let overlayResults = null;
+  let overlayChipBox = null;
+
+  function ensureOverlay() {
+    if (overlayEl) return;
+    overlayEl = document.createElement("div");
+    overlayEl.id = "wt-find-overlay";
+    overlayEl.innerHTML = '<div id="wt-find"><div class="input-row"></div><div class="chips"></div><div class="results"></div></div>';
+    document.body.appendChild(overlayEl);
+    const wrap = overlayEl.querySelector("#wt-find");
+    const inputRow = wrap.querySelector(".input-row");
+    inputRow.appendChild(exerciseSearch);
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.textContent = "×";
+    clearBtn.addEventListener("click", () => {
+      exerciseSearch.value = "";
+      ffQuery = "";
+      wtStorage.set(WT_KEYS.ffQuery, ffQuery);
+      renderFindResults();
+      updateStartCTA();
+      exerciseSearch.focus();
+    });
+    inputRow.appendChild(clearBtn);
+    overlayChipBox = wrap.querySelector(".chips");
+    ["all", "strength", "cardio", "custom"].forEach((f) => {
+      const c = document.createElement("button");
+      c.type = "button";
+      c.className = "chip";
+      c.dataset.filter = f;
+      c.textContent = f.charAt(0).toUpperCase() + f.slice(1);
+      overlayChipBox.appendChild(c);
+    });
+    overlayChipBox.addEventListener("click", (e) => {
+      const btn = e.target.closest(".chip");
+      if (!btn) return;
+      ffFilter = btn.dataset.filter;
+      wtStorage.set(WT_KEYS.ffFilter, ffFilter);
+      updateOverlayChips();
+      renderFindResults();
+    });
+    overlayResults = wrap.querySelector(".results");
+    overlayEl.addEventListener("click", (e) => {
+      if (e.target === overlayEl) closeFindOverlay();
+    });
+  }
+
+  function updateOverlayChips() {
+    if (!overlayChipBox) return;
+    overlayChipBox.querySelectorAll(".chip").forEach((c) => {
+      c.classList.toggle("active", c.dataset.filter === ffFilter);
+    });
+  }
+
+  function renderFindResults() {
+    if (!overlayResults) return;
+    const q = exerciseSearch.value.trim();
+    ffQuery = q;
+    wtStorage.set(WT_KEYS.ffQuery, ffQuery);
+    overlayResults.innerHTML = "";
+    const recents = loadRecents();
+    const filtered = filterAndSort(q, ffFilter);
+    const seen = new Set();
+    recents.forEach((n) => {
+      const ex = findExerciseByName(n);
+      if (!ex) return;
+      if (q && !normalizeName(ex.name).includes(normalizeName(q))) return;
+      if (!ffMatchesFilter(ex, ffFilter)) return;
+      overlayResults.appendChild(renderRow(ex, true));
+      seen.add(ex.name);
+    });
+    filtered.forEach((ex) => {
+      if (seen.has(ex.name)) return;
+      overlayResults.appendChild(renderRow(ex));
+    });
+    overlayHighlight = -1;
+    updateOverlayHighlight();
+    announce(`${overlayResults.children.length} results`);
+  }
+
+  function renderRow(ex, recent = false) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.dataset.name = ex.name;
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = ex.name;
+    row.appendChild(name);
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = recent ? "Recent" : ex.category || "";
+    row.appendChild(meta);
+    row.addEventListener("click", () => startExercise(ex.name));
+    return row;
+  }
+
+  function updateOverlayHighlight() {
+    if (!overlayResults) return;
+    const rows = overlayResults.querySelectorAll(".row");
+    rows.forEach((r, i) => {
+      r.classList.toggle("active", i === overlayHighlight);
+    });
+  }
+
+  function filterAndSort(query, filter) {
+    const q = query.trim().toLowerCase();
+    let base = allExercises.filter((e) => ffMatchesFilter(e, filter));
+    if (!q) return base.sort((a, b) => a.name.localeCompare(b.name));
+    const starts = [];
+    const subs = [];
+    base.forEach((e) => {
+      const n = e.name.toLowerCase();
+      if (n.startsWith(q)) starts.push(e);
+      else if (n.includes(q)) subs.push(e);
+    });
+    starts.sort((a, b) => a.name.localeCompare(b.name));
+    subs.sort((a, b) => a.name.localeCompare(b.name));
+    return [...starts, ...subs];
+  }
+
+  function openFindOverlay() {
+    ensureOverlay();
+    overlayEl.classList.add("open");
+    overlayOpen = true;
+    overlayHighlight = -1;
+    updateOverlayChips();
+    renderFindResults();
+    searchBtn.setAttribute("aria-expanded", "true");
+    announce("Search opened");
+    exerciseSearch.focus();
+  }
+
+  function closeFindOverlay() {
+    if (!overlayEl) return;
+    overlayEl.classList.remove("open");
+    overlayOpen = false;
+    searchBtn.setAttribute("aria-expanded", "false");
+    ffRow.insertBefore(exerciseSearch, searchBtn);
+  }
+
+  function updateStartCTA() {
+    if (overlayOpen) {
+      startBtn.style.display = "none";
+      return;
+    }
+    const ex = findExerciseByName(exerciseSearch.value);
+    const exact =
+      ex && normalizeName(ex.name) === normalizeName(exerciseSearch.value);
+    startBtn.style.display = exact ? "inline-block" : "none";
+  }
+
+  startBtn.addEventListener("click", () => {
+    const m = findExerciseByName(exerciseSearch.value);
+    if (m) startExercise(m.name);
+  });
+
+  function isMobile() {
+    return (
+      typeof window !== "undefined" &&
+      ("ontouchstart" in window || window.innerWidth <= 600)
+    );
+  }
+
+  searchBtn.addEventListener("click", () => {
+    if (isMobile()) {
+      openFindOverlay();
+    } else {
+      exerciseSearch.focus();
+    }
+  });
+
+  exerciseSearch.addEventListener("focus", () => {
+    if (isMobile()) openFindOverlay();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (overlayOpen && e.key === 'Escape') {
+      e.preventDefault();
+      closeFindOverlay();
+    }
+  });
+
+  updateStartCTA();
 
   // --- Import UI ---
   const importInput = document.createElement('input');
@@ -709,6 +911,37 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   let allExercises = [];
 
+  function normalizeName(str) {
+    return String(str || "").toLowerCase().replace(/\s+/g, "");
+  }
+
+  function findExerciseByName(name) {
+    const norm = normalizeName(name);
+    if (!norm) return null;
+    const exact = allExercises.find((e) => normalizeName(e.name) === norm);
+    if (exact) return exact;
+    return allExercises.find((e) => normalizeName(e.name).includes(norm)) || null;
+  }
+
+  function getCardioFlag(name) {
+    const ex = allExercises.find((e) => e.name === name);
+    return (
+      (ex && ex.category === "Cardio") ||
+      name === "Plank" ||
+      name === "Jump Rope"
+    );
+  }
+
+  function loadRecents() {
+    return wtStorage.get(WT_KEYS.recent, []);
+  }
+
+  function saveRecentExercise(name) {
+    const arr = loadRecents();
+    const updated = [name, ...arr.filter((n) => n !== name)].slice(0, 5);
+    wtStorage.set(WT_KEYS.recent, updated);
+  }
+
   function tryRecoverState() {
     const ok = wtStorage.restoreBackup(WT_KEYS.session);
     const ok2 = wtStorage.restoreBackup(WT_KEYS.current);
@@ -867,7 +1100,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     );
 
     if (!q) {
-      const recNames = wtStorage.get(WT_KEYS.recent, []);
+      const recNames = loadRecents();
       const recItems = recNames
         .map((n) => {
           let ex =
@@ -947,30 +1180,60 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     renderExerciseOptions();
   }, 150);
 
-  exerciseSearch.addEventListener('input', renderExerciseOptionsDebounced);
+  exerciseSearch.addEventListener('input', () => {
+    renderExerciseOptionsDebounced();
+    updateStartCTA();
+    if (overlayOpen) renderFindResults();
+  });
   exerciseSearch.addEventListener('search', () => {
     ffQuery = '';
     wtStorage.set(WT_KEYS.ffQuery, ffQuery);
     renderExerciseOptions();
+    updateStartCTA();
+    if (overlayOpen) renderFindResults();
+  });
+  exerciseSearch.addEventListener('change', () => {
+    const match = findExerciseByName(exerciseSearch.value);
+    if (
+      match &&
+      normalizeName(match.name) === normalizeName(exerciseSearch.value)
+    ) {
+      startExercise(match.name);
+    }
   });
   exerciseSearch.addEventListener('keydown', (e) => {
+    if (overlayOpen) {
+      const rows = overlayResults ? overlayResults.querySelectorAll('.row') : [];
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (rows.length) {
+          overlayHighlight = Math.min(rows.length - 1, overlayHighlight + 1);
+          updateOverlayHighlight();
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (rows.length) {
+          overlayHighlight = Math.max(0, overlayHighlight - 1);
+          updateOverlayHighlight();
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const row = rows[overlayHighlight] || rows[0];
+        if (row) startExercise(row.dataset.name);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeFindOverlay();
+      }
+      return;
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (exerciseSelect.options.length > 1) exerciseSelect.selectedIndex = 1;
       exerciseSelect.focus();
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      const opt = exerciseSelect.options[1];
-      if (opt) {
-        if (opt.dataset.superset === '1') {
-          const arr = JSON.parse(opt.dataset.exercises || '[]');
-          startSuperset(arr);
-        } else {
-          startExercise(opt.value);
-        }
-        renderExerciseOptions();
-        exerciseSelect.value = '';
-      }
+      const match = findExerciseByName(exerciseSearch.value);
+      if (match) startExercise(match.name);
     }
   });
 
@@ -982,13 +1245,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateFilterChips();
     renderExerciseOptions();
   });
-
-  function pushRecent(name) {
-    const arr = wtStorage.get(WT_KEYS.recent, []);
-    const updated = [name, ...arr.filter((n) => n !== name)].slice(0, 5);
-    wtStorage.set(WT_KEYS.recent, updated);
-  }
-
   loadExercises();
 
   weightInput.addEventListener("input", updateLogButtonState);
@@ -1136,14 +1392,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
 
   function startExercise(name) {
-    pushRecent(name);
     if (!session.startedAt) session.startedAt = new Date().toISOString();
     startSessionTimer();
     if (currentExercise && currentExercise.sets.length) {
       pushOrMergeExercise(currentExercise);
     }
-    const meta = allExercises.find((e) => e.name === name);
-    const isCardio = (meta && meta.category === "Cardio") || name === "Plank";
+    const isCardio = getCardioFlag(name);
     currentExercise = { name, sets: [], nextSet: 1, isCardio };
     supersetInputs.classList.add("hidden");
     if (currentExercise.isCardio) {
@@ -1170,11 +1424,18 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       weightInput.focus();
     }
     updateLogButtonState();
+    saveRecentExercise(name);
+    announce(`${name} started`);
+    exerciseSearch.value = "";
+    ffQuery = "";
+    wtStorage.set(WT_KEYS.ffQuery, ffQuery);
+    updateStartCTA();
+    renderExerciseOptions();
+    if (overlayOpen) closeFindOverlay();
   }
 
   function startSuperset(namesArr) {
     const clean = namesArr.filter(Boolean);
-    pushRecent(clean.join(" + "));
     if (!session.startedAt) session.startedAt = new Date().toISOString();
     startSessionTimer();
     if (currentExercise && currentExercise.sets.length) {
@@ -1198,6 +1459,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateSetCounter();
     document.querySelector("#weight0").focus();
     updateLogButtonState();
+    const supName = clean.join(" + ");
+    saveRecentExercise(supName);
+    announce(`${supName} started`);
+    exerciseSearch.value = "";
+    ffQuery = "";
+    wtStorage.set(WT_KEYS.ffQuery, ffQuery);
+    updateStartCTA();
+    renderExerciseOptions();
+    if (overlayOpen) closeFindOverlay();
   }
 
   function setupSupersetInputs(arr) {
