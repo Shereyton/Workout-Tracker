@@ -52,6 +52,25 @@ function parseCsv(text, selectedDate){
   return null;
 }
 
+// Convert a session snapshot into history lines with set numbers
+function snapshotToLines(snapshot){
+  const lines = [];
+  snapshot.forEach(ex => {
+    if(ex.isSuperset){
+      ex.sets.forEach((set, setIdx) => {
+        set.exercises.forEach(sub => {
+          lines.push(`${sub.name}: Set ${setIdx+1} - ${sub.weight} lbs × ${sub.reps} reps`);
+        });
+      });
+    } else {
+      ex.sets.forEach((set, setIdx) => {
+        lines.push(`${ex.name}: Set ${setIdx+1} - ${set.weight} lbs × ${set.reps} reps`);
+      });
+    }
+  });
+  return lines;
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
     if(!document.getElementById('calendar')) return;
@@ -381,20 +400,7 @@ if (typeof document !== 'undefined') {
         alert('No session data to save');
         return;
       }
-      const lines = [];
-      snapshot.forEach(ex => {
-        if (ex.isSuperset) {
-          ex.sets.forEach(set => {
-            set.exercises.forEach(sub => {
-              lines.push(`${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`);
-            });
-          });
-        } else {
-          ex.sets.forEach(set => {
-            lines.push(`${ex.name}: ${set.weight} lbs × ${set.reps} reps`);
-          });
-        }
-      });
+      const lines = snapshotToLines(snapshot);
       const res = mergeHistory({[selectedDate]: lines});
       save();
       renderDay();
@@ -412,5 +418,5 @@ if (typeof document !== 'undefined') {
   });
 }
 if (typeof module !== 'undefined') {
-  module.exports = { parseDateLocal, parseAiText, parseCsv };
+  module.exports = { parseDateLocal, parseAiText, parseCsv, snapshotToLines };
 }

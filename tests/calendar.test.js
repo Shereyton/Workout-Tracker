@@ -1,4 +1,4 @@
-const { parseDateLocal, parseAiText } = require('../calendar');
+const { parseDateLocal, parseAiText, snapshotToLines } = require('../calendar');
 
 test('parseDateLocal returns exact date', () => {
   const d = parseDateLocal('2025-08-01');
@@ -17,4 +17,23 @@ test('parseAiText parses exported AI text format', () => {
       'Squat: 225 lbs × 5 reps'
     ]
   });
+});
+
+test('snapshotToLines retains duplicate sets with numbering', () => {
+  const snapshot = [
+    {
+      name: 'Bench Press',
+      isSuperset: false,
+      isCardio: false,
+      sets: [
+        { weight: 185, reps: 5 },
+        { weight: 185, reps: 5 }
+      ]
+    }
+  ];
+  const lines = snapshotToLines(snapshot);
+  expect(lines).toEqual([
+    'Bench Press: Set 1 - 185 lbs × 5 reps',
+    'Bench Press: Set 2 - 185 lbs × 5 reps'
+  ]);
 });
