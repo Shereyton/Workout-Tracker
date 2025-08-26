@@ -9,6 +9,19 @@ const SAMPLE_DATA = [
   { date: '2024-01-12', lift: 'squat', sets: [ { weight: 245, reps: 3 } ] },
 ];
 
+function toDayISO(d){
+  const dt = (d instanceof Date) ? d : new Date(d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2,'0');
+  const day = String(dt.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+
+function dateFromISODay(dayISO){
+  const [y,m,d] = dayISO.split('-').map(Number);
+  return new Date(y, m-1, d);
+}
+
 function e1rm(weight, reps){
   if(!isFinite(weight) || !isFinite(reps) || weight<=0 || reps<=0) return 0;
   return Math.round(weight * (1 + reps/30));
@@ -48,7 +61,7 @@ function normalizeWorkouts(raw){
   for(const [date, entries] of Object.entries(raw||{})){
     const lifts = {};
     entries.forEach(line=>{
-      const m = line.match(/^(.*?):\s*(\d+)\s*lbs\s*×\s*(\d+)\s*reps?/i);
+      const m = line.match(/^(.*?):\s*(\d+)\s*lbs\s*[x×]\s*(\d+)\s*reps?/i);
       if(!m) return;
       let [, name, w, r] = m;
       const lift = canonicalLift(name);
@@ -73,7 +86,7 @@ function computeDaily(workouts, lift, metric){
   const daily = {};
   const target = lift.toLowerCase();
   workouts.filter(w => canonicalLift(w.lift) === target).forEach(w=>{
-    const day = w.date;
+    const day = toDayISO(w.date);
     if(!daily[day]) daily[day] = { e1rmMax:0, topSet:0, volume:0 };
     w.sets.forEach(set=>{
       const e = e1rm(set.weight, set.reps);
@@ -83,7 +96,7 @@ function computeDaily(workouts, lift, metric){
     });
   });
   const key = metric==='e1rm'? 'e1rmMax' : metric==='top'? 'topSet' : 'volume';
-  return Object.entries(daily).map(([d,v])=>({ x: new Date(d), y: v[key] })).sort((a,b)=>a.x-b.x);
+  return Object.entries(daily).map(([d,v])=>({ x: dateFromISODay(d), y: v[key] })).sort((a,b)=>a.x-b.x);
 }
 
 function makeLineChart(ctx, label, dataPoints){
@@ -113,6 +126,8 @@ async function init(){
     mainChart = makeLineChart(mainCtx, `${liftSelect.value} - ${metricSelect.options[metricSelect.selectedIndex].text}`, data);
   }
   refreshBtn.addEventListener('click', renderMain);
+  window.addEventListener('resize', renderMain);
+  window.addEventListener('orientationchange', renderMain);
   renderMain();
   makeLineChart(benchCtx, 'Bench - E1RM', computeDaily(workouts, 'bench', 'e1rm'));
   makeLineChart(squatCtx, 'Squat - E1RM', computeDaily(workouts, 'squat', 'e1rm'));
@@ -123,5 +138,5 @@ if(typeof window !== 'undefined'){
 }
 
 if(typeof module !== 'undefined'){
-  module.exports = { e1rm, computeDaily, normalizeWorkouts };
+  module.exports = { e1rm, computeDaily, normalizeWorkouts, toDayISO, dateFromISODay };
 }
