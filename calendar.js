@@ -97,7 +97,7 @@ if (typeof document !== 'undefined') {
     const calGo = document.getElementById('calGo');
     const pasteJson = document.getElementById('pasteJson');
     const importFromPaste = document.getElementById('importFromPaste');
-    const clearDayBtn = document.getElementById('clearDay');
+      const resetDayBtn = document.getElementById('resetDay');
 
     function updateDateInput(){
       calGoto.value = selectedDate;
@@ -233,8 +233,8 @@ if (typeof document !== 'undefined') {
         li.appendChild(actions);
         entriesEl.appendChild(li);
       });
-      if(clearDayBtn){
-        clearDayBtn.disabled = list.length === 0;
+      if(resetDayBtn){
+        resetDayBtn.disabled = list.length === 0;
       }
       updateDateInput();
     }
@@ -249,9 +249,8 @@ if (typeof document !== 'undefined') {
       renderCalendar();
     });
 
-    if(clearDayBtn){
-      clearDayBtn.addEventListener('click', () => {
-        if(!history[selectedDate] || !history[selectedDate].length) return;
+    if(resetDayBtn){
+      resetDayBtn.addEventListener('click', () => {
         if(confirm('Clear all entries for this day?')){
           delete history[selectedDate];
           save();

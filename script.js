@@ -48,6 +48,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const finishBtn = document.getElementById("finishBtn");
   const resetBtn = document.getElementById("resetBtn");
   const exportBtn = document.getElementById("exportBtn");
+  const exportChartBtn = document.getElementById("exportChartData");
   const restBox = document.getElementById("restBox");
   const restDisplay = document.getElementById("restDisplay");
   const useTimerEl = document.getElementById("useTimer");
@@ -1070,6 +1071,33 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       alert("Exported JSON + CSV. Copy this manually:\n\n" + aiText);
     }
   });
+
+  /* ------------------ EXPORT FOR CHARTS ------------------ */
+  if (exportChartBtn) {
+    exportChartBtn.addEventListener("click", () => {
+      saveSessionLinesToHistory();
+      const history = JSON.parse(localStorage.getItem("wt_history") || "{}");
+      if (!Object.keys(history).length) {
+        alert("No data to export.");
+        return;
+      }
+      const data = JSON.stringify(history, null, 2);
+      triggerDownload(
+        new Blob([data], { type: "application/json" }),
+        "chart_data.json",
+      );
+      if (navigator.clipboard) {
+        navigator.clipboard
+          .writeText(data)
+          .then(() => {
+            alert("Chart data exported and copied to clipboard ✅");
+          })
+          .catch(() => alert("Chart data exported (clipboard copy failed)"));
+      } else {
+        alert("Chart data exported. Copy manually:\n\n" + data);
+      }
+    });
+  }
   function triggerDownload(blob, filename) {
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);

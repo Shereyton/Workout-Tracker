@@ -1,6 +1,65 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+ codex/create-interactive-chart-for-workout-data-b7y0r3
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Workout Tracker — Progress Charts</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Progress Charts</h1>
+    </div>
+    <div class="section charts-section">
+      <a href="index.html" class="btn btn-secondary" style="margin-bottom:12px;">← Back</a>
+
+      <div id="sample-note" class="sample-note" style="display:none;">Showing sample data (no local data found).</div>
+
+      <div class="manual-import">
+        <textarea id="manualData" class="field" placeholder="Paste exported workout JSON here"></textarea>
+        <button id="loadManualBtn" class="btn btn-secondary">Load Data</button>
+      </div>
+
+      <div class="controls">
+        <label>Lift
+          <select id="liftSelect" class="field">
+            <option value="bench">Bench Press</option>
+            <option value="squat">Squat</option>
+            <option value="incline">Incline</option>
+            <option value="deadlift">Deadlift</option>
+          </select>
+        </label>
+        <label>Metric
+          <select id="metricSelect" class="field">
+            <option value="e1rm">Estimated 1RM</option>
+            <option value="top">Top Set Weight</option>
+            <option value="volume">Daily Volume (lbs)</option>
+          </select>
+        </label>
+      </div>
+
+      <button id="refreshBtn" class="btn btn-secondary">Refresh</button>
+      <button id="seedBtn" class="btn btn-secondary">Seed Sample</button>
+
+      <div id="empty-message" class="message" style="display:none;">No data for this lift.</div>
+
+      <canvas id="mainChart"></canvas>
+
+      <small class="sample-note">E1RM = estimated 1-rep max (Epley); Top Set = heaviest set; Volume = total lbs (weight × reps) per day.</small>
+
+      <div class="small-charts">
+        <canvas id="benchChart"></canvas>
+        <canvas id="squatChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <script src="charts.js"></script>
+=======
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1.0" />
 <title>Workout Tracker — Progress Charts</title>
@@ -73,6 +132,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-<script src="charts.js"></script>
+<script src="charts.js"></scrimain
 </body>
 </html>
