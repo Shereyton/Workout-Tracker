@@ -80,6 +80,11 @@ async function loadWorkouts(){
   // Normalize whatever we found
   let workouts = normalizeWorkouts(raw);
 
+  try {
+    const manualEntries = JSON.parse(localStorage.getItem('manual_entries') || '[]');
+    workouts = workouts.concat(normalizeWorkouts(manualEntries));
+  } catch {}
+
   // Final safety: if nothing parsed, show sample
   if(!workouts.length){
     const note = document.getElementById('sample-note');
@@ -178,6 +183,11 @@ async function init(){
   const emptyMsg     = document.getElementById('empty-message');
   const manualData   = document.getElementById('manualData');
   const loadManualBtn= document.getElementById('loadManualBtn');
+  const entryDate    = document.getElementById('entryDate');
+  const entryLift    = document.getElementById('entryLift');
+  const entryWeight  = document.getElementById('entryWeight');
+  const entryReps    = document.getElementById('entryReps');
+  const addEntryBtn  = document.getElementById('addEntryBtn');
 
   // Small charts
   const benchCtx = document.getElementById('benchChart')?.getContext('2d');
@@ -233,6 +243,40 @@ async function init(){
       }catch{
         alert('Invalid JSON data');
       }
+    });
+  }
+
+  if(entryDate) entryDate.value = toDayISO(new Date());
+  if(addEntryBtn){
+    addEntryBtn.addEventListener('click', async ()=>{
+      const date = entryDate?.value || toDayISO(new Date());
+      const lift = entryLift?.value || '';
+      const weight = Number(entryWeight?.value);
+      const reps = Number(entryReps?.value);
+      if(!lift || !weight || !reps){
+        alert('Please complete all fields');
+        return;
+      }
+      let entries = [];
+      try{ entries = JSON.parse(localStorage.getItem('manual_entries')) || []; }catch{}
+      entries.push({ date, lift, sets:[{weight, reps}] });
+      localStorage.setItem('manual_entries', JSON.stringify(entries));
+
+      // update in-memory dataset and charts immediately
+      workouts.push({ date, lift, sets:[{weight, reps}] });
+      render();
+      if(lift==='bench' && benchCtx){
+        if(benchChart) benchChart.destroy();
+        benchChart = makeLineChart(benchCtx, 'Bench - E1RM', computeDaily(workouts, 'bench', 'e1rm'));
+      }
+      if(lift==='squat' && squatCtx){
+        if(squatChart) squatChart.destroy();
+        squatChart = makeLineChart(squatCtx, 'Squat - E1RM', computeDaily(workouts, 'squat', 'e1rm'));
+      }
+
+      if(entryWeight) entryWeight.value = '';
+      if(entryReps) entryReps.value = '';
+      await refresh();
     });
   }
 
