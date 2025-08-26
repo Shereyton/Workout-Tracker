@@ -2,82 +2,59 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
-  <title>Workout Tracker — Progress Charts</title>
-  <link rel="stylesheet" href="style.css">
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Charts Smoke Test</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; }
+    #ok, #fail { display:none; padding:8px 12px; border-radius:8px; margin:8px 0; }
+    #ok { background:#e8f5e9; color:#1b5e20; }
+    #fail { background:#ffebee; color:#b71c1c; }
+    canvas { max-width: 900px; width: 100%; height: 420px; }
+  </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>Progress Charts</h1>
-    </div>
+  <h1>Charts Smoke Test</h1>
+  <p>This page draws a simple line with 3 points (no localStorage, no app code).</p>
+  <div id="ok">Chart.js loaded ✅</div>
+  <div id="fail">Chart.js failed to load ❌ (check internet / CDN)</div>
+  <canvas id="c"></canvas>
 
-    <div class="section charts-section">
-      <a href="index.html" class="btn btn-secondary" style="margin-bottom:12px;">← Back</a>
+  <!-- Load Chart.js and the time adapter -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js?v=4.4.1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns?v=3"></script>
 
-      <div id="sample-note" class="sample-note" style="display:none;">Showing sample data (no local data found).</div>
+  <script>
+  (function () {
+    if (typeof Chart === 'undefined') {
+      document.getElementById('fail').style.display = 'inline-block';
+      return;
+    }
+    document.getElementById('ok').style.display = 'inline-block';
 
-      <div class="manual-import">
-        <textarea id="manualData" class="field" placeholder="Paste exported workout JSON here"></textarea>
-        <button id="loadManualBtn" class="btn btn-secondary" type="button">Load Data</button>
-      </div>
-
-      <div class="manual-entry">
-        <h3 style="margin-bottom:6px;">Quick Add Entry</h3>
-        <div class="row">
-          <label>Date<input type="date" id="entryDate"></label>
-          <label>Lift
-            <select id="entryLift">
-              <option value="bench">Bench</option>
-              <option value="squat">Squat</option>
-              <option value="incline">Incline</option>
-              <option value="deadlift">Deadlift</option>
-            </select>
-          </label>
-          <label>Weight (lbs)<input type="number" id="entryWeight" min="0"></label>
-          <label>Reps<input type="number" id="entryReps" min="1"></label>
-          <button id="addEntryBtn" class="btn" type="button">Add</button>
-        </div>
-      </div>
-
-      <div class="controls">
-        <label>Lift
-          <select id="liftSelect">
-            <option value="bench">Bench</option>
-            <option value="squat">Squat</option>
-            <option value="incline">Incline</option>
-            <option value="deadlift">Deadlift</option>
-          </select>
-        </label>
-        <label>Metric
-          <select id="metricSelect">
-            <option value="e1rm">E1RM</option>
-            <option value="top">Top Set</option>
-            <option value="volume">Volume</option>
-          </select>
-        </label>
-        <button id="refreshBtn" class="btn" type="button">Refresh</button>
-        <button id="seedBtn" class="btn btn-secondary" type="button">Seed sample</button>
-      </div>
-
-      <div id="statusMsg" style="margin:8px 0;color:var(--muted-fg);font-size:14px;"></div>
-      <p id="empty-message" style="display:none;color:var(--muted-fg);">No data yet. Try <em>Seed sample</em> or use the <em>Export for Charts</em> button from the main page.</p>
-
-      <canvas id="mainChart"></canvas>
-
-      <label style="display:block;margin-top:16px;">Small charts use the same metric you choose above.</label>
-      <small class="sample-note">E1RM = estimated 1-rep max (Epley); Top Set = heaviest set; Volume = total lbs (weight × reps) per day.</small>
-
-      <div class="small-charts">
-        <canvas id="benchChart"></canvas>
-        <canvas id="squatChart"></canvas>
-      </div>
-    </div>
-  </div>
-
-  <!-- Chart.js + time adapter -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-  <script src="charts.js"></script>
+    const ctx = document.getElementById('c').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        datasets: [{
+          label: 'Squat (test data)',
+          data: [
+            { x: new Date(2024, 0, 10), y: 135 },
+            { x: new Date(2024, 0, 17), y: 185 },
+            { x: new Date(2024, 1,  5), y: 225 }
+          ],
+          tension: 0.25,
+          pointRadius: 4
+        }]
+      },
+      options: {
+        parsing: false,
+        scales: {
+          x: { type: 'time', time: { unit: 'day' } },
+          y: { beginAtZero: true }
+        }
+      }
+    });
+  })();
+  </script>
 </body>
 </html>
