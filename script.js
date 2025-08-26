@@ -80,15 +80,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     };
   }
 
+  // FIXED: paths -> "./exercises.json" and "./exercises.js"
   async function loadExercises() {
     try {
-      const res = await fetch("data/exercises.json");
+      const res = await fetch("./exercises.json");
       if (!res.ok) throw new Error("HTTP " + res.status);
       allExercises = await res.json();
     } catch (err) {
       console.error("Failed to load exercises via fetch", err);
       try {
-        const mod = await import("./data/exercises.js");
+        const mod = await import("./exercises.js");
         allExercises = mod.default;
       } catch (err2) {
         console.error("Fallback import failed", err2);
@@ -895,6 +896,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (!confirm("Finish workout?")) return;
     endWorkout();
   });
+
   /* ------------------ SUMMARY ------------------ */
   function updateSummary() {
     let totalSets = 0;
