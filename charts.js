@@ -1,4 +1,3 @@
-// charts.js — resilient, conflict-free build
 console.log("✅ charts.js running");
 
 function toDayISO(d){
@@ -23,7 +22,6 @@ function canonicalLift(name){
   return n;
 }
 function normalizeWorkouts(raw){
-  // Array form
   if(Array.isArray(raw)){
     return raw.map(r=>({
       date: r.date ? toDayISO(r.date) : toDayISO(new Date()),
@@ -31,7 +29,6 @@ function normalizeWorkouts(raw){
       sets: Array.isArray(r.sets) ? r.sets.map(s=>({weight:+s.weight,reps:+s.reps})) : []
     }));
   }
-  // Map form: {"YYYY-MM-DD":[ "Bench Press: 185 lbs × 5 reps", ... ]}
   const workouts = [];
   for(const [date, entries] of Object.entries(raw||{})){
     const day = toDayISO(date);
@@ -78,7 +75,6 @@ function computeDaily(workouts, lift, metric){
     .sort((a,b)=>a.x-b.x);
 }
 
-// Fallback sample if nothing is found
 const SAMPLE_DATA = {
   "2024-08-25": [
     "Bench Press: 185 lbs × 5 reps",
@@ -93,12 +89,10 @@ const SAMPLE_DATA = {
 };
 
 async function loadWorkouts(){
-  // Highest priority: manual override
   try{
     const manual = localStorage.getItem('charts_manual');
     if(manual) return normalizeWorkouts(JSON.parse(manual));
   }catch{}
-  // From history / last workout / ad-hoc entries
   let raw = null;
   try{
     const hist = localStorage.getItem('wt_history');
@@ -147,7 +141,6 @@ function hasTimeScale(){
   try { return !!(Chart && Chart.registry && Chart.registry.getScale && Chart.registry.getScale('time')); }
   catch { return false; }
 }
-
 function makeLineChart(ctx, label, dataPoints){
   if(typeof Chart === 'undefined' || !ctx) return null;
   const timeOK = hasTimeScale();
@@ -199,13 +192,11 @@ async function init(){
   const benchCtx      = document.getElementById('benchChart')?.getContext('2d');
   const squatCtx      = document.getElementById('squatChart')?.getContext('2d');
 
-  // Persist choices
   if(liftSelect)   liftSelect.value   = localStorage.getItem('charts_lift')   || (liftSelect.value || 'bench');
   if(metricSelect) metricSelect.value = localStorage.getItem('charts_metric') || (metricSelect.value || 'e1rm');
   liftSelect?.addEventListener('change', ()=>{ localStorage.setItem('charts_lift', liftSelect.value); render(); });
   metricSelect?.addEventListener('change', ()=>{ localStorage.setItem('charts_metric', metricSelect.value); render(); });
 
-  // Load + render
   let workouts = await loadWorkouts();
   let mainChart = null, benchChart = null, squatChart = null;
 
@@ -244,7 +235,6 @@ async function init(){
     if (squatCtx && squatData.length) squatChart = makeLineChart(squatCtx, `Squat - ${metricLabel}`, squatData);
   }
 
-  // Manual JSON override
   loadManualBtn?.addEventListener('click', async ()=>{
     if(!manualData?.value){ alert('Paste JSON first'); return; }
     try{
@@ -256,7 +246,6 @@ async function init(){
     }catch{ alert('Invalid JSON'); }
   });
 
-  // Quick Add entry
   if(entryDate) entryDate.value = toDayISO(new Date());
   addEntryBtn?.addEventListener('click', async (e)=>{
     e.preventDefault();
@@ -284,7 +273,6 @@ async function init(){
     render();
   }
 
-  // Seed (merge, don’t wipe)
   seedBtn?.addEventListener('click', async ()=>{
     let existing = {};
     try{ existing = JSON.parse(localStorage.getItem('wt_history')||'{}'); }catch{}
@@ -298,11 +286,9 @@ async function init(){
     alert('Seeded sample data (merged). Charts updated.');
   });
 
-  // First render
   await refresh();
 }
 
-// Ensure init runs even if DOMContentLoaded already fired
 if (typeof window !== 'undefined') {
   if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', init);
