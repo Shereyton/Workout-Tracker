@@ -29,10 +29,156 @@ function hasLocalStorage() {
   try { return typeof window !== 'undefined' && !!window.localStorage; } catch { return false; }
 }
 
+// ---- Core helpers used by tests ----
+
+function canLogSet(weight, reps) {
+  const w = Number(weight);
+  const r = Number(reps);
+  return Number.isFinite(w) && w >= 0 && Number.isFinite(r) && r > 0;
+}
+
+function canLogCardio(distance, duration, name) {
+  const d = distance == null ? null : Number(distance);
+  const dur = Number(duration);
+  const special = name && /jump rope|plank/i.test(name);
+  const hasDist = d != null && Number.isFinite(d) && d >= 0;
+  if (!Number.isFinite(dur) || dur <= 0) return false;
+  if (special) return true;
+  return hasDist;
+}
+
+function normalizeSet(set = {}) {
+  return {
+    weight: coercePositiveNumber(set.weight),
+    reps: Math.max(1, Math.floor(coercePositiveNumber(set.reps) || 1)),
+    duration: coercePositiveNumber(set.duration),
+    restActual: Number.isFinite(+set.restActual) ? +set.restActual : null,
+    time: set.time || null,
+    notes: set.notes || undefined,
+    set: set.set || set.set === 0 ? set.set : undefined,
+  };
+}
+
+function normalizePayload(exercises = []) {
+  const norm = exercises.map(ex => ({
+    name: ex.name,
+    isCardio: !!ex.isCardio,
+    isSuperset: !!ex.isSuperset,
+    custom: !!ex.custom,
+    category: ex.category,
+    sets: (ex.sets || []).map(normalizeSet)
+  }));
+  let totalSets = 0;
+  norm.forEach(ex => { totalSets += ex.sets.length; });
+  return { exercises: norm, totalExercises: norm.length, totalSets, schema: WT_SCHEMA_VERSION };
+}
+
+function ffMatchesFilter(ex, filter) {
+  switch ((filter || '').toLowerCase()) {
+    case 'strength':
+      return !ex.isCardio && !ex.isSuperset && !ex.custom;
+    case 'cardio':
+      return ex.isCardio || /plank|jump rope/i.test(ex.name || '');
+    case 'custom':
+      return !!ex.custom;
+    default:
+      return true;
+  }
+}
+
+function getLastSetForExercise(name, currentExercise, session) {
+  if (currentExercise && currentExercise.name === name && currentExercise.sets && currentExercise.sets.length) {
+    return currentExercise.sets[currentExercise.sets.length - 1];
+  }
+  const exs = (session && session.exercises) || [];
+  for (let i = exs.length - 1; i >= 0; i--) {
+    const ex = exs[i];
+    if (ex.name === name && ex.sets && ex.sets.length) {
+      return ex.sets[ex.sets.length - 1];
+    }
+  }
+  return null;
+}
+
+function computeNextDefaults(last) {
+  if (!last) return { weight: '', reps: '' };
+  if (last.reps >= 8) {
+    return { weight: last.weight, reps: 8 };
+  }
+  const increased = Math.round((last.weight * 1.025 + 1e-8) / 5) * 5;
+  return { weight: increased, reps: last.reps };
+}
+
+// simple localStorage wrapper with backup slots
+const wtStorage = {
+  getRaw(key) {
+    if (!hasLocalStorage()) return null;
+    return localStorage.getItem(key);
+  },
+  get(key, def) {
+    const raw = this.getRaw(key);
+    return raw ? safeParse(raw, def) : def;
+  },
+  set(key, val) {
+    if (!hasLocalStorage()) return;
+    const prev = localStorage.getItem(key);
+    if (prev !== null) localStorage.setItem(`${key}.backup1`, prev);
+    else localStorage.removeItem(`${key}.backup1`);
+    localStorage.removeItem(`${key}.backup2`);
+    localStorage.setItem(key, JSON.stringify(val));
+  },
+  clear(key) {
+    if (!hasLocalStorage()) return;
+    localStorage.removeItem(key);
+    localStorage.removeItem(`${key}.backup1`);
+    localStorage.removeItem(`${key}.backup2`);
+  }
+};
+
+function safeParse(str, def) {
+  try { return JSON.parse(str); } catch { return def; }
+}
+
+function saveTemplate(name, exercises) {
+  const all = wtStorage.get(WT_KEYS.templates, {});
+  all[name] = JSON.parse(JSON.stringify(exercises || []));
+  wtStorage.set(WT_KEYS.templates, all);
+}
+
+function loadTemplate(name) {
+  const all = wtStorage.get(WT_KEYS.templates, {});
+  return JSON.parse(JSON.stringify(all[name] || []));
+}
+
+function deleteTemplate(name) {
+  const all = wtStorage.get(WT_KEYS.templates, {});
+  delete all[name];
+  wtStorage.set(WT_KEYS.templates, all);
+}
+
+function checkPrAndGoal(exName, weight) {
+  const prs = wtStorage.get(WT_KEYS.prs, {});
+  const goals = wtStorage.get(WT_KEYS.goals, {});
+  let prUpdated = false;
+  let goalMet = false;
+  if (weight > (prs[exName] || 0)) {
+    prs[exName] = weight;
+    wtStorage.set(WT_KEYS.prs, prs);
+    prUpdated = true;
+    if (typeof showToast === 'function') showToast(`PR achieved for ${exName}!`);
+  }
+  if (goals[exName] && weight >= goals[exName]) {
+    goalMet = true;
+    if (typeof showToast === 'function') showToast(`Goal met for ${exName}!`);
+  }
+  return { prUpdated, goalMet };
+}
+
 // ... rest of your unchanged code ...
 
 /* ------------------ ELEMENTS ------------------ */
 if (typeof document !== "undefined" && document.getElementById("today")) {
+  (function(){
   // Guard all essential DOM elements before proceeding
   const requiredIds = [
     "interface", "weight", "reps", "logBtn", "exerciseSelect", "today",
@@ -107,6 +253,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   // csv += `${csvEscape(sub.name)},${s.set},${sub.weight},${sub.reps},,,${s.time},${s.restPlanned ?? ""},${s.restActual ?? ""}\n`;
 
   // ...rest of your script.js code...
+  })();
 }
 
 // PATCH: Always use hasLocalStorage() for storage checks
@@ -126,6 +273,7 @@ if (typeof module !== "undefined") {
     saveTemplate,
     loadTemplate,
     deleteTemplate,
+    checkPrAndGoal,
     WT_KEYS,
     hasLocalStorage
   };
