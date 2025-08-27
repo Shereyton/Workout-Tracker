@@ -30,6 +30,22 @@
         <button id="beginSuperset" class="btn btn-primary">Begin Superset</button>
       </div>
 
+      <!-- Templates -->
+      <div id="templateManager" style="margin-bottom:12px;">
+        <div class="inline-row" style="margin-bottom:6px;">
+          <select id="templateSelect" class="field">
+            <option value="">Select Template</option>
+          </select>
+          <button id="loadTemplateBtn" class="btn btn-secondary" style="flex:0 0 80px;">Load</button>
+        </div>
+        <div class="inline-row" style="margin-bottom:6px;">
+          <input type="text" id="templateName" class="field" placeholder="Template Name">
+          <button id="saveTemplateBtn" class="btn btn-secondary" style="flex:0 0 80px;">Save</button>
+        </div>
+        <textarea id="templateExercises" class="field" placeholder="Exercises (one per line)" style="margin-bottom:6px;"></textarea>
+        <button id="deleteTemplateBtn" class="btn btn-reset">Delete Template</button>
+      </div>
+
       <!-- Exercise search & filters -->
       <input type="text" id="exerciseSearch" list="exerciseList" placeholder="Search exercises" class="field" style="margin-bottom:6px;">
       <datalist id="exerciseList"></datalist>
