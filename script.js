@@ -9,7 +9,8 @@ const WT_KEYS = {
   schema: 'wt_schema_version',
   ffQuery: 'wt_ff_query',
   ffFilter: 'wt_ff_filter',
-  recent: 'wt_recent_exercises'
+  recent: 'wt_recent_exercises',
+  templates: 'wt_templates'
 };
 
 const WT_SCHEMA_VERSION = 2;
@@ -209,6 +210,31 @@ const wtStorage = {
   }
 };
 
+function saveTemplate(name, exercises) {
+  if (!name) return;
+  const all = wtStorage.get(WT_KEYS.templates, {});
+  all[name] = (exercises || []).map(normalizeExercise);
+  wtStorage.set(WT_KEYS.templates, all);
+}
+
+function loadTemplate(name) {
+  const all = wtStorage.get(WT_KEYS.templates, {});
+  const tpl = all[name];
+  if (!tpl) return null;
+  return tpl.map((e) => ({
+    ...normalizeExercise(e),
+    sets: Array.isArray(e.sets) ? e.sets.map((s) => ({ ...s })) : [],
+  }));
+}
+
+function deleteTemplate(name) {
+  const all = wtStorage.get(WT_KEYS.templates, {});
+  if (!(name in all)) return false;
+  delete all[name];
+  wtStorage.set(WT_KEYS.templates, all);
+  return true;
+}
+
 // schema versioning (simple bootstrap)
 (function ensureSchema() {
   const v = Number(lsGetRaw(WT_KEYS.schema)) || 0;
@@ -381,6 +407,80 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseList = document.getElementById("exerciseList");
   const muscleFilter = document.getElementById("muscleFilter");
   if (muscleFilter) muscleFilter.remove();
+
+  const templateSelect = document.getElementById("templateSelect");
+  const loadTemplateBtn = document.getElementById("loadTemplateBtn");
+  const templateNameInput = document.getElementById("templateName");
+  const saveTemplateBtn = document.getElementById("saveTemplateBtn");
+  const templateExercisesInput = document.getElementById("templateExercises");
+  const deleteTemplateBtn = document.getElementById("deleteTemplateBtn");
+
+  function refreshTemplateSelect() {
+    if (!templateSelect) return;
+    const all = wtStorage.get(WT_KEYS.templates, {});
+    const opts = ["<option value=\"\">Select Template</option>"];
+    Object.keys(all).forEach((n) => {
+      opts.push(`<option value="${n}">${n}</option>`);
+    });
+    templateSelect.innerHTML = opts.join("");
+  }
+  refreshTemplateSelect();
+
+  if (saveTemplateBtn) {
+    saveTemplateBtn.addEventListener("click", () => {
+      const name = templateNameInput.value.trim();
+      if (!name) return;
+      const lines = templateExercisesInput.value
+        .split(/\n+/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const exs = lines.map((n) => ({ name: n, isCardio: false, isSuperset: false, sets: [] }));
+      saveTemplate(name, exs);
+      refreshTemplateSelect();
+      templateSelect.value = name;
+    });
+  }
+
+  if (templateSelect) {
+    templateSelect.addEventListener("change", () => {
+      const name = templateSelect.value;
+      if (name) {
+        const tpl = loadTemplate(name) || [];
+        templateNameInput.value = name;
+        templateExercisesInput.value = tpl.map((e) => e.name).join("\n");
+      } else {
+        templateNameInput.value = "";
+        templateExercisesInput.value = "";
+      }
+    });
+  }
+
+  if (deleteTemplateBtn) {
+    deleteTemplateBtn.addEventListener("click", () => {
+      const name = templateSelect.value;
+      if (!name) return;
+      if (!confirm("Delete template?")) return;
+      deleteTemplate(name);
+      refreshTemplateSelect();
+      templateSelect.value = "";
+      templateNameInput.value = "";
+      templateExercisesInput.value = "";
+    });
+  }
+
+  if (loadTemplateBtn) {
+    loadTemplateBtn.addEventListener("click", () => {
+      const name = templateSelect.value;
+      if (!name) return;
+      const tpl = loadTemplate(name);
+      if (!tpl) return;
+      session.exercises = tpl.map((e) => ({ ...e, sets: [] }));
+      currentExercise = null;
+      saveState();
+      updateSummary();
+      updateSetsToday();
+    });
+  }
 
   let adjustHandlersAttached = false;
 
@@ -2655,5 +2755,5 @@ if (typeof window !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter, getLastSetForExercise, computeNextDefaults, wtStorage };
+module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter, getLastSetForExercise, computeNextDefaults, wtStorage, saveTemplate, loadTemplate, deleteTemplate, WT_KEYS };
 }
