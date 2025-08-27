@@ -415,21 +415,25 @@ if (typeof document !== 'undefined') {
     });
 
     saveTodayBtn.addEventListener('click', () => {
-      if (typeof window.getSessionSnapshot !== 'function') {
-        alert('Session not available');
-        return;
-      }
-      const snapshot = window.getSessionSnapshot();
-      if (!snapshot.length) {
-        alert('No session data to save');
-        return;
-      }
-      const lines = snapshotToLines(snapshot);
-      const res = mergeHistory({[selectedDate]: lines});
-      save();
-      renderDay();
-      renderCalendar();
-      alert(`Saved ${res.added} lines, ${res.skipped} duplicates`);
+      // Wait for session to be available
+      const waitForSession = () => {
+        if (typeof window.getSessionSnapshot !== 'function') {
+          setTimeout(waitForSession, 100);
+          return;
+        }
+        const snapshot = window.getSessionSnapshot();
+        if (!snapshot.length) {
+          alert('No session data to save');
+          return;
+        }
+        const lines = snapshotToLines(snapshot);
+        const res = mergeHistory({[selectedDate]: lines});
+        save();
+        renderDay();
+        renderCalendar();
+        alert(`Saved ${res.added} lines, ${res.skipped} duplicates`);
+      };
+      waitForSession();
     });
 
     window.addEventListener('wt-history-updated', () => {

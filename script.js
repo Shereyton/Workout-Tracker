@@ -241,7 +241,7 @@ let restStartMs = 0;
 let restSetIndex = null;
 
 function canLogSet(w, r) {
-  return !Number.isNaN(w) && !Number.isNaN(r) && r > 0;
+  return !Number.isNaN(w) && !Number.isNaN(r) && w >= 0 && w <= 9999 && r > 0 && r <= 999;
 }
 
 function canLogCardio(distance, duration, name) {
@@ -641,12 +641,21 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const s = wtStorage.get(WT_KEYS.session, {exercises:[], startedAt:null});
       const c = wtStorage.get(WT_KEYS.current, null);
       session = s; currentExercise = c;
-      rebuildSetsList?.(); updateSetCounter?.(); updateSummary?.();
-      // console.info('Recovered state from backup');
+      // Functions will be called after recovery is complete
     }
   }
 
-  if (needsRecover) tryRecoverState();
+  if (needsRecover) {
+    // Delay recovery until functions are defined
+    setTimeout(() => {
+      tryRecoverState();
+      if (currentExercise) {
+        rebuildSetsList();
+        updateSetCounter();
+        updateSummary();
+      }
+    }, 0);
+  }
 
   function updateLogButtonState() {
     if (!currentExercise) {
@@ -704,7 +713,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           break;
         }
       } catch (e) {
-        // try next
+        console.warn(`Failed to load exercises from ${p}:`, e);
       }
     }
     if (!allExercises.length) {
@@ -715,11 +724,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           allExercises = mod.default;
           break;
         } catch (e) {
-          // try next
+          console.warn(`Failed to load exercises from ${p}:`, e);
         }
       }
     }
-    if (!Array.isArray(allExercises)) allExercises = [];
+    if (!Array.isArray(allExercises)) {
+      allExercises = [];
+      console.warn('No exercise database found, using empty list');
+    }
     const custom = wtStorage.get(WT_KEYS.custom, []);
     custom.forEach((n) =>
       allExercises.push({
@@ -907,7 +919,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const n1 = supersetSelect1.value;
     const n2 = supersetSelect2.value;
     if (!n1 || !n2) {
-      alert("Choose two exercises");
+      showToast("Choose two exercises");
       return;
     }
     supersetBuilder.classList.add("hidden");
@@ -1020,7 +1032,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         return { name: ex, weight: w, reps: r };
       });
       if (setGroup.some((s) => !canLogSet(s.weight, s.reps))) {
-        alert("Enter weight & reps for all exercises");
+        showToast("Enter weight & reps for all exercises");
         return;
       }
       const useTimer = useTimerEl.checked;
@@ -1061,7 +1073,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const s = parseInt(durationSecInput.value, 10) || 0;
       const t = m * 60 + s;
       if (!canLogCardio(d, t, currentExercise.name)) {
-        alert(
+        showToast(
           ["Jump Rope", "Plank"].includes(currentExercise.name)
             ? "Enter duration"
             : "Enter distance & duration",
@@ -1107,7 +1119,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const r = parseInt(repsInput.value, 10);
 
     if (!canLogSet(w, r)) {
-      alert("Enter weight & reps");
+      showToast("Enter weight & reps");
       return;
     }
 
@@ -1329,7 +1341,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
             ex.reps = r;
           });
           if (bad) {
-            alert("Enter valid numbers");
+            showToast("Enter valid numbers");
             return;
           }
         } else if (currentExercise.isCardio) {
@@ -1352,7 +1364,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           const newPlanned = vPlanned === "" ? null : parseInt(vPlanned, 10);
           const newActual = vActual === "" ? null : parseInt(vActual, 10);
           if (!canLogCardio(newD, newDur, currentExercise.name)) {
-            alert(
+            showToast(
               ["Jump Rope", "Plank"].includes(currentExercise.name)
                 ? "Enter valid duration"
                 : "Enter valid distance & duration",
@@ -1373,7 +1385,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           const newActual = vActual === "" ? null : parseInt(vActual, 10);
 
           if (isNaN(newW) || isNaN(newR)) {
-            alert("Enter valid weight & reps");
+            showToast("Enter valid weight & reps");
             return;
           }
 
@@ -1476,6 +1488,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         setTimeout(() => restBox.classList.add("hidden"), 1500);
       }
     }, 1000);
+    
+    // Cleanup timer on page unload
+    window.addEventListener('beforeunload', stopRest, { once: true });
   }
 
   function stopRest() {
@@ -1677,7 +1692,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       if (last && last.length) {
         exportExercises = last;
       } else {
-        alert("No workout data yet.");
+        showToast("No workout data yet.");
         return;
       }
     }
