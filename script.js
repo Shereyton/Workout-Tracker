@@ -382,6 +382,58 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const muscleFilter = document.getElementById("muscleFilter");
   if (muscleFilter) muscleFilter.remove();
 
+  const reminderTimeInput = document.getElementById("reminderTime");
+  const reminderDayInputs = Array.from(
+    document.querySelectorAll("input[name='reminderDay']")
+  );
+  const saveReminderBtn = document.getElementById("saveReminder");
+
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js");
+  }
+  if ("Notification" in window) {
+    Notification.requestPermission();
+  }
+
+  let reminderTimer = null;
+
+  function scheduleFromStorage() {
+    const sched = wtReminders.loadSchedule();
+    if (!sched) return;
+    if (reminderTimeInput) reminderTimeInput.value = sched.time;
+    if (reminderDayInputs) {
+      reminderDayInputs.forEach((cb) => {
+        cb.checked = sched.days.includes(parseInt(cb.value, 10));
+      });
+    }
+    if (reminderTimer) clearTimeout(reminderTimer);
+    reminderTimer = wtReminders.scheduleNotification(sched, () => {
+      if (Notification.permission === "granted") {
+        new Notification("Workout Reminder", { body: "Time to workout!" });
+      }
+    });
+    if (navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: "schedule",
+        schedule: sched,
+      });
+    }
+  }
+
+  if (saveReminderBtn) {
+    saveReminderBtn.addEventListener("click", () => {
+      const time = reminderTimeInput.value;
+      const days = reminderDayInputs
+        .filter((cb) => cb.checked)
+        .map((cb) => parseInt(cb.value, 10));
+      const sched = { time, days };
+      wtReminders.saveSchedule(sched);
+      scheduleFromStorage();
+    });
+  }
+
+  scheduleFromStorage();
+
   let adjustHandlersAttached = false;
 
   function injectAdjustControls() {

@@ -27,7 +27,25 @@
           <select id="supersetSelect1"></select>
           <select id="supersetSelect2"></select>
         </div>
-        <button id="beginSuperset" class="btn btn-primary">Begin Superset</button>
+      <button id="beginSuperset" class="btn btn-primary">Begin Superset</button>
+      </div>
+
+      <!-- Reminders -->
+      <div class="reminder-section">
+        <h3>Reminders</h3>
+        <div class="inline-row" style="margin-bottom:6px;">
+          <input type="time" id="reminderTime" class="field">
+        </div>
+        <div id="reminderDays" class="inline-row" style="gap:4px; margin-bottom:6px;">
+          <label><input type="checkbox" name="reminderDay" value="0">Sun</label>
+          <label><input type="checkbox" name="reminderDay" value="1">Mon</label>
+          <label><input type="checkbox" name="reminderDay" value="2">Tue</label>
+          <label><input type="checkbox" name="reminderDay" value="3">Wed</label>
+          <label><input type="checkbox" name="reminderDay" value="4">Thu</label>
+          <label><input type="checkbox" name="reminderDay" value="5">Fri</label>
+          <label><input type="checkbox" name="reminderDay" value="6">Sat</label>
+        </div>
+        <button id="saveReminder" class="btn btn-secondary" style="margin-bottom:12px;">Save Reminder</button>
       </div>
 
       <!-- Exercise search & filters -->
@@ -137,6 +155,7 @@
     <span id="themeLabel">Dark</span>
   </button>
 
+<script src="reminders.js"></script>
 <script src="script.js"></script>
 <script src="calendar.js"></script>
 </body>
