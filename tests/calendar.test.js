@@ -19,6 +19,17 @@ test('parseAiText parses exported AI text format', () => {
   });
 });
 
+test('parseAiText preserves weight units', () => {
+  const sample = `WORKOUT DATA - 2024-07-04\n\nSquat:\n  Set 1: 100 kg × 5 reps`;
+  const res = parseAiText(sample, '2024-07-04');
+  expect(res).toEqual({ '2024-07-04': ['Squat: 100 kg × 5 reps'] });
+});
+
+test('parseAiText returns null without date', () => {
+  const sample = `Bench Press:\n  Set 1: 185 lbs × 5 reps`;
+  expect(parseAiText(sample)).toBeNull();
+});
+
 test('snapshotToLines retains duplicate sets with numbering', () => {
   const snapshot = [
     {
