@@ -9,7 +9,10 @@ const WT_KEYS = {
   schema: 'wt_schema_version',
   ffQuery: 'wt_ff_query',
   ffFilter: 'wt_ff_filter',
-  recent: 'wt_recent_exercises'
+  recent: 'wt_recent_exercises',
+  templates: 'wt_templates',
+  authToken: 'wt_auth_token',
+  syncTime: 'wt_sync_time'
 };
 
 const WT_SCHEMA_VERSION = 2;
@@ -2628,6 +2631,105 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
 }
 
+/* ---- SYNC & AUTH ---- */
+async function apiFetch(path, opts = {}) {
+  const token = wtStorage.get(WT_KEYS.authToken, null);
+  const headers = Object.assign({}, opts.headers || {});
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return fetch(path, { ...opts, headers });
+}
+
+async function login(email, password) {
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  if (!res.ok) throw new Error('Login failed');
+  const data = await res.json();
+  wtStorage.set(WT_KEYS.authToken, data.token);
+  return data.token;
+}
+
+function logout() {
+  const token = wtStorage.get(WT_KEYS.authToken, null);
+  if (token) {
+    fetch('/api/logout', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+  }
+  wtStorage.clear(WT_KEYS.authToken);
+}
+
+async function syncPull() {
+  const res = await apiFetch('/api/data');
+  if (!res.ok) throw new Error('Pull failed');
+  const data = await res.json();
+  const localTime = wtStorage.get(WT_KEYS.syncTime, 0);
+  if (!localTime || (data.updatedAt || 0) > localTime) {
+    wtStorage.set(WT_KEYS.history, data.wt_history || {});
+    wtStorage.set(WT_KEYS.templates, data.templates || {});
+    wtStorage.set(WT_KEYS.syncTime, data.updatedAt || Date.now());
+    return 'pulled';
+  }
+  return 'noop';
+}
+
+async function syncPush() {
+  const payload = {
+    wt_history: wtStorage.get(WT_KEYS.history, {}),
+    templates: wtStorage.get(WT_KEYS.templates, {}),
+    updatedAt: wtStorage.get(WT_KEYS.syncTime, 0)
+  };
+  const res = await apiFetch('/api/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (res.status === 409) {
+    const server = await res.json();
+    if ((server.updatedAt || 0) > payload.updatedAt) {
+      wtStorage.set(WT_KEYS.history, server.wt_history || {});
+      wtStorage.set(WT_KEYS.templates, server.templates || {});
+      wtStorage.set(WT_KEYS.syncTime, server.updatedAt);
+      return 'conflict-server';
+    }
+  }
+  if (!res.ok) throw new Error('Push failed');
+  const json = await res.json();
+  wtStorage.set(WT_KEYS.syncTime, json.updatedAt || Date.now());
+  return 'pushed';
+}
+
+if (typeof document !== 'undefined' && document.getElementById('loginBtn')) {
+  const loginBtn = document.getElementById('loginBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const syncBtn = document.getElementById('syncBtn');
+  loginBtn.addEventListener('click', async () => {
+    const email = document.getElementById('emailInput').value;
+    const pass = document.getElementById('passwordInput').value;
+    try {
+      await login(email, pass);
+      loginBtn.classList.add('hidden');
+      logoutBtn.classList.remove('hidden');
+    } catch {
+      alert('Login failed');
+    }
+  });
+  logoutBtn.addEventListener('click', () => {
+    logout();
+    logoutBtn.classList.add('hidden');
+    loginBtn.classList.remove('hidden');
+  });
+  syncBtn.addEventListener('click', async () => {
+    try {
+      await syncPush();
+      await syncPull();
+      alert('Synced');
+    } catch {
+      alert('Sync failed');
+    }
+  });
+}
+
 function getSessionSnapshot() {
   const snapshot = session.exercises.map((ex) => ({
     name: ex.name,
@@ -2655,5 +2757,5 @@ if (typeof window !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter, getLastSetForExercise, computeNextDefaults, wtStorage };
+module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter, getLastSetForExercise, computeNextDefaults, wtStorage, login, logout, syncPush, syncPull, WT_KEYS };
 }

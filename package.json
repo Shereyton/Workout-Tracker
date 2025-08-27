@@ -6,6 +6,9 @@
     "test": "jest",
     "test:watch": "jest --watchAll"
   },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
   "devDependencies": {
     "jest": "^29.6.1",
     "jest-environment-jsdom": "^30.0.5"
