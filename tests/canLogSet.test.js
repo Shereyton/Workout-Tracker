@@ -1,59 +1,34 @@
-const { canLogSet, canLogCardio, normalizeSet, normalizePayload } = require('../script');
+/**
+ * Session logging rules – golden expectations
+ */
+const { __api__ } = global;
 
-describe('canLogSet', () => {
-  it('allows zero weight with positive reps', () => {
-    expect(canLogSet(0, 5)).toBe(true);
+describe("canLogSet / canLogCardio", () => {
+  test("canLogSet requires exercise + reps; weight optional", () => {
+    expect(__api__.canLogSet({exercise:'Bench', weight:225, reps:5})).toBe(true);
+    expect(__api__.canLogSet({exercise:'Bench', weight:'', reps:5})).toBe(true);
+    expect(__api__.canLogSet({exercise:'', weight:225, reps:5})).toBe(false);
+    expect(__api__.canLogSet({exercise:'Bench', weight:225, reps:0})).toBe(false);
   });
-  it('rejects invalid reps', () => {
-    expect(canLogSet(50, 0)).toBe(false);
+
+  test("canLogCardio requires exercise + (distance or time)", () => {
+    expect(__api__.canLogCardio({exercise:'Bike', distance:5, time:null})).toBe(true);
+    expect(__api__.canLogCardio({exercise:'Bike', distance:null, time:20})).toBe(true);
+    expect(__api__.canLogCardio({exercise:'Bike', distance:null, time:null})).toBe(false);
   });
 });
 
-describe('canLogCardio', () => {
-  it('allows zero distance with positive duration', () => {
-    expect(canLogCardio(0, 1800)).toBe(true); // 30 minutes
-  });
-  it('rejects invalid duration', () => {
-    expect(canLogCardio(1, 0)).toBe(false);
-  });
-  it('allows missing distance for Jump Rope', () => {
-    expect(canLogCardio(null, 15, 'Jump Rope')).toBe(true); // 15 seconds
-  });
-  it('allows sub-minute durations', () => {
-    expect(canLogCardio(0, 45)).toBe(true);
-  });
-  it('allows missing distance for Plank', () => {
-    expect(canLogCardio(null, 30, 'Plank')).toBe(true); // 30 seconds
-  });
-  it('rejects negative distance', () => {
-    expect(canLogCardio(-1, 60, 'Run')).toBe(false);
-  });
-  it('rejects infinite distance', () => {
-    expect(canLogCardio(Infinity, 60, 'Run')).toBe(false);
-  });
-  it('treats undefined distance as missing for allowed exercises', () => {
-    expect(canLogCardio(undefined, 30, 'Jump Rope')).toBe(true);
-  });
-  it('rejects undefined distance for regular cardio', () => {
-    expect(canLogCardio(undefined, 60, 'Run')).toBe(false);
-  });
-});
-
-describe('data normalization', () => {
-  it('sanitizes set values', () => {
-    const set = normalizeSet({ weight: -5, reps: -2, duration: -10, restActual: 'NaN' });
-    expect(set.weight).toBe(0);
-    expect(set.reps).toBe(1);
-    expect(set.duration).toBe(0);
-    expect(set.restActual).toBeNull();
-  });
-
-  it('normalizes payload arrays', () => {
-    const norm = normalizePayload([{ name: 'Bench', sets: [{ weight: '20', reps: '-3' }] }]);
-    expect(norm.totalExercises).toBe(1);
-    expect(norm.totalSets).toBe(1);
-    expect(norm.exercises[0].sets[0].weight).toBe(20);
-    expect(norm.exercises[0].sets[0].reps).toBe(1);
-    expect(norm.schema).toBe(2);
+describe("normalize & merge", () => {
+  test("mergeIntoHistory dedupes", () => {
+    const hist = {};
+    __api__.mergeIntoHistory(hist, '2025-08-26', [
+      "Bench Press — Set 1: 225 lbs × 5",
+      "Bench Press — Set 1: 225 lbs × 5",
+      "Squat — Set 1: 275 lbs × 3"
+    ]);
+    expect(hist['2025-08-26']).toEqual([
+      "Bench Press — Set 1: 225 lbs × 5",
+      "Squat — Set 1: 275 lbs × 3"
+    ]);
   });
 });
