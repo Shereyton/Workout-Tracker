@@ -9,7 +9,9 @@ const WT_KEYS = {
   schema: 'wt_schema_version',
   ffQuery: 'wt_ff_query',
   ffFilter: 'wt_ff_filter',
-  recent: 'wt_recent_exercises'
+  recent: 'wt_recent_exercises',
+  prs: 'wt_prs',
+  goals: 'wt_goals'
 };
 
 const WT_SCHEMA_VERSION = 2;
@@ -209,6 +211,11 @@ const wtStorage = {
   }
 };
 
+let prs = wtStorage.get(WT_KEYS.prs, {});
+let goals = wtStorage.get(WT_KEYS.goals, {});
+let renderPRs = null;
+let renderGoals = null;
+
 // schema versioning (simple bootstrap)
 (function ensureSchema() {
   const v = Number(lsGetRaw(WT_KEYS.schema)) || 0;
@@ -217,6 +224,49 @@ const wtStorage = {
     lsSetRaw(WT_KEYS.schema, String(WT_SCHEMA_VERSION));
   }
 })();
+
+function setGoal(name, weight) {
+  const w = Number(weight);
+  if (!name || !Number.isFinite(w) || w <= 0) return;
+  goals[name] = { weight: w };
+  wtStorage.set(WT_KEYS.goals, goals);
+  if (typeof renderGoals === 'function') renderGoals();
+}
+
+function clearPRsGoals() {
+  prs = {};
+  goals = {};
+  wtStorage.set(WT_KEYS.prs, prs);
+  wtStorage.set(WT_KEYS.goals, goals);
+  if (typeof renderPRs === 'function') renderPRs();
+  if (typeof renderGoals === 'function') renderGoals();
+}
+
+function checkAndUpdatePR(name, weight, reps) {
+  const w = Number(weight);
+  const r = Number(reps);
+  let prUpdated = false;
+  let goalMet = false;
+  if (!Number.isFinite(w) || w <= 0) return { prUpdated, goalMet };
+  const cur = prs[name];
+  if (!cur || w > cur.weight) {
+    prs[name] = { weight: w, reps: r };
+    wtStorage.set(WT_KEYS.prs, prs);
+    prUpdated = true;
+    if (typeof globalThis !== 'undefined' && typeof globalThis.showToast === 'function') {
+      globalThis.showToast(`New PR for ${name}: ${w} × ${r}`);
+    }
+    if (typeof renderPRs === 'function') renderPRs();
+  }
+  const goal = goals[name];
+  if (goal && w >= goal.weight) {
+    goalMet = true;
+    if (typeof globalThis !== 'undefined' && typeof globalThis.showToast === 'function') {
+      globalThis.showToast(`Goal met for ${name}!`);
+    }
+  }
+  return { prUpdated, goalMet };
+}
 
 /* ------------------ STATE ------------------ */
 let session = { exercises: [], startedAt: null };
@@ -380,9 +430,59 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseSearch = document.getElementById("exerciseSearch");
   const exerciseList = document.getElementById("exerciseList");
   const muscleFilter = document.getElementById("muscleFilter");
+  const prListEl = document.getElementById("prList");
+  const goalListEl = document.getElementById("goalList");
+  const goalExerciseInput = document.getElementById("goalExercise");
+  const goalWeightInput = document.getElementById("goalWeight");
+  const saveGoalBtn = document.getElementById("saveGoal");
   if (muscleFilter) muscleFilter.remove();
 
   let adjustHandlersAttached = false;
+
+  renderPRs = function () {
+    if (!prListEl) return;
+    prListEl.innerHTML = "";
+    Object.entries(prs).forEach(([name, pr]) => {
+      const div = document.createElement("div");
+      div.textContent = `${name}: ${pr.weight} × ${pr.reps}`;
+      prListEl.appendChild(div);
+    });
+  };
+
+  renderGoals = function () {
+    if (!goalListEl) return;
+    goalListEl.innerHTML = "";
+    Object.entries(goals).forEach(([name, g]) => {
+      const row = document.createElement("div");
+      row.className = "inline-row";
+      const span = document.createElement("span");
+      span.textContent = `${name}: ${g.weight}`;
+      span.style.flex = "1";
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "btn-mini";
+      del.textContent = "✕";
+      del.addEventListener("click", () => {
+        delete goals[name];
+        wtStorage.set(WT_KEYS.goals, goals);
+        renderGoals();
+      });
+      row.appendChild(span);
+      row.appendChild(del);
+      goalListEl.appendChild(row);
+    });
+  };
+
+  if (saveGoalBtn) {
+    saveGoalBtn.addEventListener("click", () => {
+      setGoal(goalExerciseInput.value.trim(), parseFloat(goalWeightInput.value));
+      goalExerciseInput.value = "";
+      goalWeightInput.value = "";
+    });
+  }
+
+  renderPRs();
+  renderGoals();
 
   function injectAdjustControls() {
     if (!weightInput || !repsInput) return;
@@ -1717,6 +1817,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
       updateSummary();
       updateSetsToday();
+      setGroup.forEach((s) => checkAndUpdatePR(s.name, s.weight, s.reps));
       saveState();
       updateLogButtonState();
       announce(`Logged set ${currentExercise.nextSet - 1} for ${currentExercise.name}`);
@@ -1809,6 +1910,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     updateSummary();
     updateSetsToday();
+    checkAndUpdatePR(currentExercise.name, w, r);
     saveState();
     updateLogButtonState();
     announce(`Logged set ${currentExercise.nextSet - 1} for ${currentExercise.name}`);
@@ -2655,5 +2757,5 @@ if (typeof window !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter, getLastSetForExercise, computeNextDefaults, wtStorage };
+module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter, getLastSetForExercise, computeNextDefaults, wtStorage, checkAndUpdatePR, setGoal, clearPRsGoals, WT_KEYS };
 }
