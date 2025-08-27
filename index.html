@@ -1,173 +1,134 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no" />
-<title>Workout Tracker Pro</title>
-<meta name="description" content="Lightweight mobile workout tracker with export + AI summary">
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Workout Tracker</title>
+  <meta name="color-scheme" content="light dark" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>Workout Tracker Pro</h1>
-      <div id="today" class="date"></div>
-    </div>
+  <header class="app-header">
+    <h1>Workout Tracker</h1>
+    <div class="badge" id="schemaBadge" title="Storage Schema Version">v2</div>
+  </header>
 
-    <div class="section">
+  <main class="container">
+    <section class="card">
+      <h2>Session</h2>
 
-      <!-- Add Custom Exercise -->
-      <div class="inline-row" style="margin-bottom:6px;">
-        <input type="text" id="customExercise" placeholder="Add Custom Exercise" class="field">
-        <button id="addExercise" class="btn btn-secondary" style="flex:0 0 120px;">Add</button>
-      </div>
-      <button id="startSuperset" class="btn btn-secondary" style="margin-bottom:12px;">Start Superset</button>
-      <div id="supersetBuilder" class="superset-builder hidden">
-        <div class="inline-row" style="margin-bottom:6px;">
-          <select id="supersetSelect1"></select>
-          <select id="supersetSelect2"></select>
-        </div>
-        <button id="beginSuperset" class="btn btn-primary">Begin Superset</button>
+      <div class="controls-row">
+        <button id="startSession" class="btn">Start</button>
+        <button id="finishSession" class="btn" disabled>Finish</button>
+        <button id="resetSession" class="btn btn-secondary" disabled>Reset</button>
+        <button id="saveTodaySession" class="btn btn-outline" title="Save current session to today’s history" disabled>Save Today</button>
       </div>
 
-      <!-- Templates -->
-      <div id="templateManager" style="margin-bottom:12px;">
-        <div class="inline-row" style="margin-bottom:6px;">
-          <select id="templateSelect" class="field">
-            <option value="">Select Template</option>
-          </select>
-          <button id="loadTemplateBtn" class="btn btn-secondary" style="flex:0 0 80px;">Load</button>
-        </div>
-        <div class="inline-row" style="margin-bottom:6px;">
-          <input type="text" id="templateName" class="field" placeholder="Template Name">
-          <button id="saveTemplateBtn" class="btn btn-secondary" style="flex:0 0 80px;">Save</button>
-        </div>
-        <textarea id="templateExercises" class="field" placeholder="Exercises (one per line)" style="margin-bottom:6px;"></textarea>
-        <button id="deleteTemplateBtn" class="btn btn-reset">Delete Template</button>
-      </div>
+      <div id="sessionMeta" class="muted small"></div>
 
-      <!-- Exercise search & filters -->
-      <input type="text" id="exerciseSearch" list="exerciseList" placeholder="Search exercises" class="field" style="margin-bottom:6px;">
-      <datalist id="exerciseList"></datalist>
-      <select id="muscleFilter" class="field" style="margin-bottom:6px;">
-        <option value="">All Categories</option>
-      </select>
-
-      <!-- Choose Exercise -->
-      <select id="exerciseSelect">
-        <option value="">Select Exercise</option>
-      </select>
-
-      <!-- Interface -->
-      <div id="interface" class="hidden">
-        <div class="current-exercise">
-          <h2 id="exerciseName"></h2>
-          <div class="set-info">Set <span id="setCounter">1</span></div>
-        </div>
-
-        <!-- timer controls -->
-        <div class="inline-row" style="margin-bottom:8px;">
-          <label style="display:flex;align-items:center;gap:8px;">
-            <input type="checkbox" id="useTimer" checked> Use rest timer
+      <div id="sessionPanel" class="session-grid">
+        <div class="session-inputs">
+          <label class="stack">
+            <span class="label">Exercise</span>
+            <input id="exerciseInput" type="text" list="exerciseList" placeholder="e.g., Bench Press" />
+            <datalist id="exerciseList"></datalist>
           </label>
-          <input type="number" id="restSecsInput" class="field" placeholder="Rest (sec)" value="90" min="5">
-        </div>
 
-        <div id="restBox" class="rest-timer hidden">
-          <div>Rest Time</div>
-          <div id="restDisplay" class="timer-display">01:30</div>
-          <div style="font-size:11px; margin-top:4px; opacity:.8;">Tap to cancel</div>
-        </div>
-
-        <div class="inline-row" id="standardInputs">
-          <input type="number" id="weight" min="0" step="1" class="field" placeholder="Weight (lbs)">
-          <input type="number" id="reps"   min="1" step="1" class="field" placeholder="Reps">
-        </div>
-        <div class="inline-row hidden" id="cardioInputs">
-          <input type="number" id="distance" min="0" step="0.01" class="field" placeholder="Distance (mi)">
-          <input type="number" id="durationMin" min="0" step="1" class="field" placeholder="Min">
-          <input type="number" id="durationSec" min="0" step="1" class="field" placeholder="Sec">
-        </div>
-        <div id="supersetInputs" class="superset-inputs hidden"></div>
-
-        <button id="logBtn" class="btn btn-primary">Log Set</button>
-        <button id="nextExerciseBtn" class="btn btn-secondary">Next Exercise</button>
-        <button id="finishBtn" class="btn btn-finish">Finish Workout</button>
-        <button id="resetBtn" class="btn btn-reset">Reset Workout</button>
-
-        <div class="sets-history">
-          <h3>Today's Sets</h3>
-          <div id="setsList"></div>
-        </div>
-      </div>
-
-      <div class="summary" id="summaryBox">
-        <h3>Workout Summary</h3>
-        <div id="summaryText">Start your first exercise to begin tracking.</div>
-        <div class="notice">Autosaves locally. Export when finished.</div>
-      </div>
-
-      <div id="calendarSection">
-        <h3>Workout History</h3>
-        <div class="calendar-nav">
-          <button id="calPrev" class="btn btn-secondary">Prev</button>
-          <div id="calTitle"></div>
-          <button id="calNext" class="btn btn-secondary">Next</button>
-        </div>
-        <div class="calendar-controls">
-          <button id="calToday" class="btn btn-secondary">Today</button>
-          <input type="date" id="calGoto" class="field">
-          <button id="calGo" class="btn btn-secondary" disabled>Go</button>
-        </div>
-        <div id="calendar"></div>
-        <div id="dayDetails" class="day-details">
-          <h4 id="dayTitle"></h4>
-          <ul id="entries"></ul>
-          <div class="inline-row" style="margin-top:6px;">
-            <input type="text" id="entryInput" class="field" placeholder="Add workout note">
-            <button id="addEntry" class="btn btn-secondary" style="flex:0 0 80px;">Add</button>
+          <div class="grid-3">
+            <label class="stack">
+              <span class="label">Weight (lbs)</span>
+              <input id="weightInput" type="number" inputmode="decimal" placeholder="e.g., 225" />
+            </label>
+            <label class="stack">
+              <span class="label">Reps</span>
+              <input id="repsInput" type="number" inputmode="numeric" placeholder="e.g., 5" />
+            </label>
+            <label class="stack">
+              <span class="label">Notes</span>
+              <input id="notesInput" type="text" placeholder="optional…" />
+            </label>
           </div>
-          <button id="resetDay" class="btn btn-reset" style="margin-top:8px;">Reset Day</button>
+
+          <div class="controls-row">
+            <button id="logSet" class="btn">Log Set</button>
+            <button id="logCardio" class="btn btn-outline" title="Log distance/time based work">Log Cardio</button>
+          </div>
         </div>
-        <div class="history-actions">
-          <button id="saveTodaySession" class="btn btn-secondary">Save Today from Session</button>
-          <button id="exportHistory" class="btn btn-secondary">Export History</button>
-          <input type="file" id="importHistoryFile" style="display:none" accept="application/json">
-          <button id="importHistory" class="btn btn-secondary">Import History</button>
-        </div>
-        <div id="pasteImport">
-          <textarea id="pasteJson" placeholder="Paste JSON / AI text / CSV here"></textarea>
-          <button id="importFromPaste" class="btn btn-secondary" style="margin-top:8px;">Import From Paste</button>
+
+        <div class="session-log">
+          <div class="session-log-header">
+            <h3>Sets</h3>
+            <button id="clearSession" class="btn btn-mini btn-danger" disabled>Clear</button>
+          </div>
+          <ul id="setList" class="list"></ul>
         </div>
       </div>
+    </section>
 
-      <button id="exportBtn" class="btn btn-export">Export (JSON + AI + CSV)</button>
-
-      <div id="goalsPrsSection">
-        <h3>Goals</h3>
-        <textarea id="goalsInput" class="field" placeholder="Bench Press: 200"></textarea>
-        <button id="saveGoalsBtn" class="btn btn-secondary" style="margin-top:6px;">Save Goals</button>
-        <h3>Personal Records</h3>
-        <textarea id="prsInput" class="field" placeholder="Bench Press: 185"></textarea>
-        <button id="savePrsBtn" class="btn btn-secondary" style="margin-top:6px;">Save PRs</button>
+    <section class="card">
+      <h2>History</h2>
+      <div class="controls-row wrap">
+        <button id="exportHistory" class="btn btn-outline">Export JSON</button>
+        <label class="btn btn-outline file">
+          Import JSON
+          <input id="importHistoryFile" type="file" accept=".json,application/json" />
+        </label>
+        <button id="pasteJson" class="btn btn-outline">Paste JSON</button>
+        <button id="importFromPaste" class="btn btn-outline">Import From Paste</button>
+        <button id="resetDay" class="btn btn-danger" disabled>Reset Day</button>
       </div>
 
-      <h3>Progress Charts</h3>
-      <canvas id="volumeChart" width="300" height="150"></canvas>
+      <div id="dayHeader" class="day-header">
+        <h3 id="dayTitle">—</h3>
+      </div>
+      <ul id="entries" class="list"></ul>
+      <div class="add-entry-row">
+        <input id="entryInput" type="text" placeholder="Add a note for this day…" />
+        <button id="addEntry" class="btn">Add</button>
+      </div>
+    </section>
 
-    </div>
-  </div>
-  <div class="footer-space"></div>
+    <section class="card">
+      <h2>Calendar</h2>
+      <div class="calendar-controls">
+        <button id="calPrev" class="btn btn-mini">Prev</button>
+        <div class="cal-title-row">
+          <div id="calTitle" class="cal-title">—</div>
+          <button id="calToday" class="btn btn-mini">Today</button>
+        </div>
+        <div class="goto-row">
+          <label class="stack">
+            <span class="label">Go to (YYYY-MM-DD)</span>
+            <input id="calGoto" type="text" inputmode="numeric" placeholder="2025-08-26" />
+          </label>
+          <button id="calGo" class="btn btn-mini" disabled>Go</button>
+        </div>
+        <button id="calNext" class="btn btn-mini">Next</button>
+      </div>
+      <div id="calendar" class="calendar"></div>
+    </section>
 
-  <!-- Floating Theme Toggle -->
-  <button id="darkToggle" aria-label="Toggle dark mode">
-    <span id="themeIcon">🌙</span>
-    <span id="themeLabel">Dark</span>
-  </button>
+    <section class="card">
+      <h2>Backup</h2>
+      <div class="controls-row wrap">
+        <button id="backupToClipboard" class="btn btn-outline">Copy JSON to Clipboard</button>
+        <button id="backupToFile" class="btn btn-outline">Download JSON</button>
+        <label class="btn btn-outline file">
+          Restore from JSON
+          <input id="restoreFromFile" type="file" accept=".json,application/json" />
+        </label>
+      </div>
+      <p class="muted small">Storage key: <code>wt_history</code> • Schema: <code>2</code></p>
+    </section>
+  </main>
 
-<script src="script.js"></script>
-<script src="charts.js"></script>
-<script src="calendar.js"></script>
+  <footer class="app-footer">
+    <span>Workout Tracker</span>
+    <a href="README.md" target="_blank" rel="noopener">README</a>
+  </footer>
+
+  <script type="module" src="exercises.js"></script>
+  <script type="module" src="calendar.js"></script>
+  <script type="module" src="script.js"></script>
 </body>
 </html>
-
