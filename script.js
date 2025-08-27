@@ -10,7 +10,6 @@ const WT_KEYS = {
   ffQuery: 'wt_ff_query',
   ffFilter: 'wt_ff_filter',
   recent: 'wt_recent_exercises',
-  templates: 'wt_templates',
   prs: 'wt_prs',
   goals: 'wt_goals'
 };
@@ -139,23 +138,6 @@ function safeParse(str, def) {
   try { return JSON.parse(str); } catch { return def; }
 }
 
-function saveTemplate(name, exercises) {
-  const all = wtStorage.get(WT_KEYS.templates, {});
-  all[name] = JSON.parse(JSON.stringify(exercises || []));
-  wtStorage.set(WT_KEYS.templates, all);
-}
-
-function loadTemplate(name) {
-  const all = wtStorage.get(WT_KEYS.templates, {});
-  return JSON.parse(JSON.stringify(all[name] || []));
-}
-
-function deleteTemplate(name) {
-  const all = wtStorage.get(WT_KEYS.templates, {});
-  delete all[name];
-  wtStorage.set(WT_KEYS.templates, all);
-}
-
 function checkPrAndGoal(exName, weight) {
   const prs = wtStorage.get(WT_KEYS.prs, {});
   const goals = wtStorage.get(WT_KEYS.goals, {});
@@ -199,6 +181,47 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   if (missingCritical) return;
 
   // ... assign all elements as before ...
+
+  // Restore exercise selection and search functionality
+  const exerciseSelect = document.getElementById("exerciseSelect");
+  const exerciseSearch = document.getElementById("exerciseSearch");
+  const exerciseList = document.getElementById("exerciseList");
+  const interfaceBox = document.getElementById("interface");
+  const exerciseNameEl = document.getElementById("exerciseName");
+
+  if (exerciseSelect && exerciseSearch && exerciseList && interfaceBox && exerciseNameEl) {
+    fetch("data/exercises.json")
+      .then(r => r.json())
+      .then(data => {
+        data.forEach(ex => {
+          const opt = document.createElement("option");
+          opt.value = ex.name;
+          opt.textContent = ex.name;
+          exerciseSelect.appendChild(opt);
+
+          const dlOpt = document.createElement("option");
+          dlOpt.value = ex.name;
+          exerciseList.appendChild(dlOpt);
+        });
+      })
+      .catch(() => {});
+
+    exerciseSelect.addEventListener("change", () => {
+      const name = exerciseSelect.value;
+      if (!name) return;
+      exerciseNameEl.textContent = name;
+      interfaceBox.classList.remove("hidden");
+    });
+
+    exerciseSearch.addEventListener("change", () => {
+      const name = exerciseSearch.value;
+      const option = Array.from(exerciseSelect.options).find(o => o.value === name);
+      if (option) {
+        exerciseSelect.value = name;
+        exerciseSelect.dispatchEvent(new Event("change"));
+      }
+    });
+  }
 
   // PATCH: Use hasLocalStorage() everywhere
   // PATCH: Defensive event handler attachment
@@ -270,9 +293,6 @@ if (typeof module !== "undefined") {
     getLastSetForExercise,
     computeNextDefaults,
     wtStorage,
-    saveTemplate,
-    loadTemplate,
-    deleteTemplate,
     checkPrAndGoal,
     WT_KEYS,
     hasLocalStorage
