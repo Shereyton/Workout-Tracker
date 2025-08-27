@@ -204,15 +204,40 @@ if (typeof document !== 'undefined') {
         editBtn.textContent = 'Edit';
         editBtn.className = 'btn-mini edit';
         editBtn.addEventListener('click', () => {
-          const updated = prompt('Edit entry', text);
-          if(updated !== null){
-            history[selectedDate][idx] = updated.trim();
-            if(!history[selectedDate][idx]) history[selectedDate].splice(idx,1);
-            if(history[selectedDate].length === 0) delete history[selectedDate];
-            save();
-            renderDay();
-            renderCalendar();
-          }
+          if (li.querySelector('.edit-form')) return;
+          const form = document.createElement('div');
+          form.className = 'edit-form';
+          form.innerHTML = `
+            <div class="row">
+              <input type="text" class="editEntryInput" value="${text}">
+            </div>
+            <div class="row2">
+              <button type="button" class="btn-mini edit" data-action="save">Save</button>
+              <button type="button" class="btn-mini del" data-action="cancel">Cancel</button>
+            </div>
+          `;
+          li.appendChild(form);
+          const input = form.querySelector('.editEntryInput');
+          input.focus();
+          form.addEventListener('click', ev => {
+            const action = ev.target.getAttribute('data-action');
+            if (action === 'save') {
+              const updated = input.value.trim();
+              if (updated) {
+                history[selectedDate][idx] = updated;
+              } else {
+                history[selectedDate].splice(idx,1);
+                if (history[selectedDate].length === 0) delete history[selectedDate];
+              }
+              save();
+              renderDay();
+              renderCalendar();
+            }
+            if (action === 'cancel') {
+              form.remove();
+              editBtn.focus();
+            }
+          });
         });
         actions.appendChild(editBtn);
 
