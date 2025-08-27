@@ -10,7 +10,9 @@ const WT_KEYS = {
   ffQuery: 'wt_ff_query',
   ffFilter: 'wt_ff_filter',
   recent: 'wt_recent_exercises',
-  templates: 'wt_templates'
+  templates: 'wt_templates',
+  prs: 'wt_prs',
+  goals: 'wt_goals'
 };
 
 const WT_SCHEMA_VERSION = 2;
@@ -280,6 +282,9 @@ let restSecondsRemaining = 0;
 let restStartMs = 0;
 let restSetIndex = null;
 
+let prs = wtStorage.get(WT_KEYS.prs, {});
+let goals = wtStorage.get(WT_KEYS.goals, {});
+
 function canLogSet(w, r) {
   return !Number.isNaN(w) && !Number.isNaN(r) && r > 0;
 }
@@ -367,6 +372,50 @@ function computeNextDefaults(last) {
   return { weight: nextW, reps: r };
 }
 
+function parseNameValueLines(text) {
+  const obj = {};
+  if (!text) return obj;
+  text.split(/\n+/).forEach((line) => {
+    const [name, val] = line.split(":");
+    const w = parseFloat(val);
+    if (name && !Number.isNaN(w)) obj[name.trim()] = w;
+  });
+  return obj;
+}
+
+function objToLines(obj) {
+  return Object.entries(obj)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
+}
+
+function checkPrAndGoal(name, weight) {
+  const prsLocal = wtStorage.get(WT_KEYS.prs, {});
+  const goalsLocal = wtStorage.get(WT_KEYS.goals, {});
+  let prUpdated = false;
+  let goalMet = false;
+  if (Number.isFinite(weight)) {
+    if (weight > (prsLocal[name] || 0)) {
+      prsLocal[name] = weight;
+      wtStorage.set(WT_KEYS.prs, prsLocal);
+      prUpdated = true;
+      if (typeof globalThis.showToast === 'function') {
+        try { globalThis.showToast(`New PR for ${name}: ${weight} lbs`); } catch {}
+      }
+    }
+    const goalVal = goalsLocal[name];
+    if (goalVal != null && weight >= goalVal) {
+      goalMet = true;
+      if (typeof globalThis.showToast === 'function') {
+        try { globalThis.showToast(`Goal achieved for ${name}!`); } catch {}
+      }
+    }
+  }
+  prs = prsLocal;
+  goals = goalsLocal;
+  return { prUpdated, goalMet, prs: prsLocal, goals: goalsLocal };
+}
+
 /* ------------------ ELEMENTS ------------------ */
 if (typeof document !== "undefined" && document.getElementById("today")) {
   const todayEl = document.getElementById("today");
@@ -408,12 +457,41 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const muscleFilter = document.getElementById("muscleFilter");
   if (muscleFilter) muscleFilter.remove();
 
+  const goalsInput = document.getElementById("goalsInput");
+  const saveGoalsBtn = document.getElementById("saveGoalsBtn");
+  const prsInput = document.getElementById("prsInput");
+  const savePrsBtn = document.getElementById("savePrsBtn");
+
   const templateSelect = document.getElementById("templateSelect");
   const loadTemplateBtn = document.getElementById("loadTemplateBtn");
   const templateNameInput = document.getElementById("templateName");
   const saveTemplateBtn = document.getElementById("saveTemplateBtn");
   const templateExercisesInput = document.getElementById("templateExercises");
   const deleteTemplateBtn = document.getElementById("deleteTemplateBtn");
+
+  function refreshGoalPrEditors() {
+    if (goalsInput) goalsInput.value = objToLines(goals);
+    if (prsInput) prsInput.value = objToLines(prs);
+  }
+  refreshGoalPrEditors();
+
+  if (saveGoalsBtn) {
+    saveGoalsBtn.addEventListener("click", () => {
+      goals = parseNameValueLines(goalsInput.value);
+      wtStorage.set(WT_KEYS.goals, goals);
+      showToast("Goals saved");
+      refreshGoalPrEditors();
+    });
+  }
+
+  if (savePrsBtn) {
+    savePrsBtn.addEventListener("click", () => {
+      prs = parseNameValueLines(prsInput.value);
+      wtStorage.set(WT_KEYS.prs, prs);
+      showToast("PRs saved");
+      refreshGoalPrEditors();
+    });
+  }
 
   function refreshTemplateSelect() {
     if (!templateSelect) return;
@@ -1818,6 +1896,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       updateSummary();
       updateSetsToday();
       saveState();
+      let changed = false;
+      setGroup.forEach((s) => {
+        const res = checkPrAndGoal(s.name, s.weight);
+        if (res.prUpdated || res.goalMet) changed = true;
+      });
+      if (changed) refreshGoalPrEditors();
       updateLogButtonState();
       announce(`Logged set ${currentExercise.nextSet - 1} for ${currentExercise.name}`);
       document.getElementById("weight0").focus();
@@ -1910,6 +1994,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateSummary();
     updateSetsToday();
     saveState();
+    const res = checkPrAndGoal(currentExercise.name, w);
+    if (res.prUpdated || res.goalMet) refreshGoalPrEditors();
     updateLogButtonState();
     announce(`Logged set ${currentExercise.nextSet - 1} for ${currentExercise.name}`);
   });
@@ -2755,5 +2841,5 @@ if (typeof window !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter, getLastSetForExercise, computeNextDefaults, wtStorage, saveTemplate, loadTemplate, deleteTemplate, WT_KEYS };
+module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload, ffMatchesFilter, getLastSetForExercise, computeNextDefaults, wtStorage, saveTemplate, loadTemplate, deleteTemplate, WT_KEYS, checkPrAndGoal };
 }
