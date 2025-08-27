@@ -229,7 +229,7 @@ body.dark #calendarSection{
 .day-details{border:1px solid #e6eaef;border-radius:8px;padding:10px;margin-bottom:12px;}
 .day-details h4{margin-bottom:8px;}
 .day-details ul{list-style:disc;margin-left:20px;margin-bottom:8px;}
-.entry-item{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;}
+.entry-item{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap;}
 .entry-item span{flex:1;}
 .entry-actions{display:flex;gap:6px;}
 .history-actions{display:flex;gap:8px;flex-wrap:wrap;}
