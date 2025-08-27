@@ -123,7 +123,10 @@ if (typeof document !== 'undefined') {
     let saveTimer=null;
     function scheduleSave(){
       clearTimeout(saveTimer);
-      saveTimer = setTimeout(()=>{ localStorage.setItem(STORAGE_KEY, JSON.stringify(rawHistory)); },80);
+      saveTimer = setTimeout(()=>{
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(rawHistory));
+        if (typeof renderVolumeChart === 'function') renderVolumeChart();
+      },80);
     }
     function getEntries(date){
       const v = rawHistory[date];
@@ -191,12 +194,17 @@ if (typeof document !== 'undefined') {
       container.innerHTML='';
       cards.length=0;
       const dates = Object.keys(rawHistory).sort((a,b)=>b.localeCompare(a)).slice(0,90);
-      if(dates.length===0){ container.textContent='No history'; return; }
+      if(dates.length===0){
+        container.textContent='No history';
+        if (typeof renderVolumeChart === 'function') renderVolumeChart();
+        return;
+      }
       dates.forEach((date, idx)=>{
         const card = createDayCard(date, idx<7, idx<14);
         container.appendChild(card.el);
         cards.push(card);
       });
+      if (typeof renderVolumeChart === 'function') renderVolumeChart();
     }
 
     function createDayCard(date, expandedDefault, buildNow){
