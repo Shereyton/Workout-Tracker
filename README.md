@@ -1,16 +1,25 @@
-# Workout Tracker
+# Workout Tracker (Golden)
 
-This is a lightweight web-based workout tracker. Log sets with any weight (including zero for bodyweight exercises) and export data as JSON, CSV, or AI-ready text. Finished sessions are saved locally so you can export even after closing the workout.
+This is the stable build — **no charts** — focused on clean session logging, history, and a simple calendar.
 
-**Note:** Charts are temporarily removed. You can export JSON/CSV and view history via the calendar and session summary.
+## Key
+- Storage schema: **v2**
+- Keys: `wt_history`, `wt_meta`
+- Export/Import: JSON + CSV; paste supports JSON, CSV, and AI text
 
-### History
+## Calendar
+- 7 weekday headers + 6 rows (42 cells)
+- Out-of-month days muted
+- Days with entries have a green dot
+- Clicking a day selects it and refreshes the day panel
 
-Workout history is saved to local storage under `wt_history`. You can export this history (which also copies the JSON to your clipboard) or import additional entries.
+## Session
+- Log strength (exercise / weight / reps / notes) and cardio (exercise / distance / time)
+- Convert session to history via **Finish** or **Save Today**
 
-1. **Import History** – choose a JSON file from disk (entries merge and de-duplicate).
-2. **Paste Import** – paste JSON, AI text, or CSV into the box and import.
+## Backup
+- Copy JSON to clipboard
+- Download JSON
+- Restore from JSON file
 
-The calendar includes Prev/Next buttons plus Today and Go-to-date controls for quick navigation. After importing, the calendar re-renders and you'll see your notes immediately.
-
-Run tests with `npm test`.
+> This golden build intentionally **excludes charts** and other experimental features.
