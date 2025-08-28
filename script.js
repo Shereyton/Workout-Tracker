@@ -4,9 +4,10 @@ const WT_KEYS = {
   current: 'wt_currentExercise',
   last: 'wt_lastWorkout',
   history: 'wt_history',
-  custom: 'custom_exercises',
+  custom: 'wt_customExercises',
   theme: 'wt_theme',
-  schema: 'wt_schema_version'
+  schema: 'wt_schemaVersion',
+  prefSessionTime: 'wt_pref_sessionTimeAlways',
 };
 
 const WT_SCHEMA_VERSION = 2;
@@ -324,6 +325,22 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     reader.readAsText(file);
     importInput.value = '';
   });
+
+  /* ------------------ SESSION TIME PREF TOGGLE ------------------ */
+  const toggleSessionPrefBtn = document.getElementById('toggleSessionPrefBtn');
+  function updateSessionPrefButton() {
+    const on = !!wtStorage.get(WT_KEYS.prefSessionTime, false);
+    toggleSessionPrefBtn.textContent = `Auto-include session time in export: ${on ? 'ON' : 'OFF'}`;
+  }
+  if (toggleSessionPrefBtn) {
+    updateSessionPrefButton();
+    toggleSessionPrefBtn.addEventListener('click', () => {
+      const on = !!wtStorage.get(WT_KEYS.prefSessionTime, false);
+      wtStorage.set(WT_KEYS.prefSessionTime, !on);
+      updateSessionPrefButton();
+      showToast(`Always include session time ${!on ? 'enabled' : 'disabled'}.`);
+    });
+  }
 
   pasteBtn.addEventListener('click', openPasteImport);
 
@@ -1710,13 +1727,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       noText: "No",
       title: "Export Options",
     }).then((includeNotes) => {
-      confirmModal("Include session time in export?", {
-        yesText: "Yes",
-        noText: "No",
-        title: "Export Options",
-      }).then((includeSessionTime) => {
-        performExport(exportExercises, includeNotes, includeSessionTime);
-      });
+      // Honor preference: if ON include without asking; if OFF exclude without asking
+      const alwaysSession = !!wtStorage.get(WT_KEYS.prefSessionTime, false);
+      performExport(exportExercises, includeNotes, alwaysSession);
     });
   });
   
@@ -1789,9 +1802,19 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       `workout_${payload.date}.json`,
     );
 
-    // CSV (with rest columns)
-    let csv =
+    // CSV (with rest columns). If session time is included, prepend session metadata rows.
+    const csvHeader =
       "Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)\n";
+    let csv = csvHeader;
+    if (includeSessionTime && sessionMeta) {
+      const meta = [
+        `SessionStart,${sessionMeta.sessionStart}`,
+        `SessionEnd,${sessionMeta.sessionEnd}`,
+        `SessionDuration(sec),${sessionMeta.sessionDurationSec}`,
+        "",
+      ].join("\n");
+      csv = meta + "\n" + csvHeader;
+    }
     exportExercises.forEach((ex) => {
       ex.sets.forEach((s) => {
         if (ex.isSuperset) {
@@ -1809,6 +1832,17 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       new Blob([csv], { type: "text/csv" }),
       `workout_${payload.date}.csv`,
     );
+
+    // If always-on preference is enabled, provide a quick way to disable it
+    if (wtStorage.get(WT_KEYS.prefSessionTime, false)) {
+      showToast("Always include session time is ON", {
+        actionLabel: "Turn off",
+        onAction: () => {
+          wtStorage.set(WT_KEYS.prefSessionTime, false);
+          showToast("Preference updated: session time won't be auto-included.");
+        },
+      });
+    }
 
     // AI text
     let aiText = `WORKOUT DATA - ${payload.date}\n\n`;
