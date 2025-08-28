@@ -1041,6 +1041,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         set: currentExercise.nextSet,
         exercises: setGroup,
         time: new Date().toLocaleTimeString(),
+        ts: Date.now(),
         restPlanned: planned,
         restActual: null,
       });
@@ -1050,6 +1051,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       );
       currentExercise.nextSet++;
       updateSetCounter();
+
       currentExercise.exercises.forEach((_, i) => {
         document.getElementById(`weight${i}`).value = "";
         document.getElementById(`reps${i}`).value = "";
@@ -1087,6 +1089,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         distance: d,
         duration: t,
         time: new Date().toLocaleTimeString(),
+        ts: Date.now(),
         restPlanned: planned,
         restActual: null,
       });
@@ -1131,6 +1134,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       weight: w,
       reps: r,
       time: new Date().toLocaleTimeString(),
+      ts: Date.now(),
       restPlanned: planned,
       restActual: null,
     });
@@ -1700,17 +1704,23 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
     }
     
-    // Use a reliable modal to ask whether to include notes
+    // Ask whether to include notes first, then ask for session time
     confirmModal("Include workout notes in export?", {
       yesText: "Yes",
       noText: "No",
       title: "Export Options",
     }).then((includeNotes) => {
-      performExport(exportExercises, includeNotes);
+      confirmModal("Include session time in export?", {
+        yesText: "Yes",
+        noText: "No",
+        title: "Export Options",
+      }).then((includeSessionTime) => {
+        performExport(exportExercises, includeNotes, includeSessionTime);
+      });
     });
   });
   
-  function performExport(exportExercises, includeNotes) {
+  function performExport(exportExercises, includeNotes, includeSessionTime) {
     
     const totalSets = exportExercises.reduce(
       (sum, e) => sum + e.sets.length,
@@ -1739,6 +1749,38 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       workoutNotes: includeNotes ? workoutNotes : undefined,
       schema: WT_SCHEMA_VERSION,
     };
+
+    // Compute session time if requested
+    let sessionMeta = null;
+    if (includeSessionTime) {
+      const timestamps = [];
+      exportExercises.forEach((ex) => {
+        ex.sets.forEach((s) => {
+          if (s && typeof s.ts === 'number') timestamps.push(s.ts);
+        });
+      });
+      // If a session is active, use the live timer window: startedAt -> now
+      let startTs = null;
+      let endTs = null;
+      if (session && session.startedAt) {
+        startTs = new Date(session.startedAt).getTime();
+        endTs = Date.now();
+      } else {
+        // Fallback to timestamps when exporting a past snapshot
+        startTs = timestamps.length ? Math.min(...timestamps) : null;
+        endTs = timestamps.length ? Math.max(...timestamps) : null;
+      }
+
+      if (startTs != null && endTs >= startTs) {
+        const durationSec = Math.max(0, Math.round((endTs - startTs) / 1000));
+        sessionMeta = {
+          sessionStart: new Date(startTs).toISOString(),
+          sessionEnd: new Date(endTs).toISOString(),
+          sessionDurationSec: durationSec,
+        };
+        payload.session = sessionMeta;
+      }
+    }
 
     // JSON
     const jsonStr = JSON.stringify(payload, null, 2);
@@ -1770,6 +1812,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     // AI text
     let aiText = `WORKOUT DATA - ${payload.date}\n\n`;
+    if (includeSessionTime && sessionMeta) {
+      aiText += `Session Time: ${formatSec(sessionMeta.sessionDurationSec)}\n\n`;
+    }
     exportExercises.forEach((ex) => {
       if (ex.isSuperset) {
         aiText += `${ex.name}:\n`;
