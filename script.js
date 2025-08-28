@@ -1234,8 +1234,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     else if (action === "edit") openEditForm(item, idx);
   });
 
-  function deleteSet(idx) {
-    if (!confirm("Delete this set?")) return;
+  async function deleteSet(idx) {
+    const ok = await confirmModal("Delete this set?", { yesText: 'Delete', noText: 'Cancel' });
+    if (!ok) return;
     pushUndo({
       type: "deleteSet",
       payload: {
@@ -1606,8 +1607,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   /* ------------------ RESET WORKOUT ------------------ */
-  resetBtn.addEventListener("click", () => {
-    if (!confirm("Reset entire workout?")) return;
+  resetBtn.addEventListener("click", async () => {
+    const ok = await confirmModal("Reset entire workout?", { yesText: 'Reset', noText: 'Cancel', title: 'Reset Workout' });
+    if (!ok) return;
     const prevSession = JSON.parse(JSON.stringify(session));
     const prevCurrent = JSON.parse(JSON.stringify(currentExercise));
     pushUndo({ type: "reset", payload: { prevSession, prevCurrent } });
@@ -1617,8 +1619,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
 
   /* ------------------ FINISH WORKOUT ------------------ */
-  finishBtn.addEventListener("click", () => {
-    if (!confirm("Finish workout?")) return;
+  finishBtn.addEventListener("click", async () => {
+    const ok = await confirmModal("Finish workout?", { yesText: 'Finish', noText: 'Cancel', title: 'Finish Workout' });
+    if (!ok) return;
     const prevSession = JSON.parse(JSON.stringify(session));
     const prevCurrent = JSON.parse(JSON.stringify(currentExercise));
     pushUndo({ type: "finish", payload: { prevSession, prevCurrent } });
@@ -1696,16 +1699,44 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         return;
       }
     }
+    
+    // Use a reliable modal to ask whether to include notes
+    confirmModal("Include workout notes in export?", {
+      yesText: "Yes",
+      noText: "No",
+      title: "Export Options",
+    }).then((includeNotes) => {
+      performExport(exportExercises, includeNotes);
+    });
+  });
+  
+  function performExport(exportExercises, includeNotes) {
+    
     const totalSets = exportExercises.reduce(
       (sum, e) => sum + e.sets.length,
       0,
     );
+    
+    // Get workout notes from calendar history if user wants them
+    let workoutNotes = [];
+    const currentDate = getLocalDateString();
+    if (includeNotes) {
+      // Access calendar history directly from localStorage (same as calendar.js uses)
+      const calendarHistory = JSON.parse(localStorage.getItem('wt_history')) || {};
+      workoutNotes = calendarHistory[currentDate] || [];
+      // Remove workout log lines (keep only freeform notes)
+      // Matches formats like: "Bench Press: Set 1 - 135 lbs × 8 reps" or "Bench Press: 135 lbs × 8 reps"
+      const logLineRe = /^(?:[^:]+:\s*)?(?:Set\s*\d+\s*[-–:]?\s*)?\d+(?:\.\d+)?\s*(?:lbs|kg)\s*[×xX]\s*\d+\s*reps/i;
+      workoutNotes = workoutNotes.filter(line => !logLineRe.test(String(line).trim()));
+    }
+    
     const payload = {
-      date: new Date().toISOString().split("T")[0],
+      date: currentDate,
       timestamp: new Date().toISOString(),
       totalExercises: exportExercises.length,
       totalSets,
       exercises: exportExercises,
+      workoutNotes: includeNotes ? workoutNotes : undefined,
       schema: WT_SCHEMA_VERSION,
     };
 
@@ -1792,6 +1823,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
       aiText += "\n";
     });
+    
+    // Add workout notes to AI text if included
+    if (includeNotes && workoutNotes.length > 0) {
+      aiText += `Workout Notes:\n`;
+      workoutNotes.forEach(note => {
+        aiText += `- ${note}\n`;
+      });
+      aiText += `\n`;
+    }
+    
     aiText += `Summary: ${payload.totalExercises} exercises, ${payload.totalSets} total sets.\n\n`;
     aiText += `Please analyze progress vs previous sessions, suggest next targets, identify weak points, and recommend optimal weight/rep progressions.`;
 
@@ -1805,7 +1846,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     } else {
       alert("Exported JSON + CSV. Copy this manually:\n\n" + aiText);
     }
-  });
+  }
 
   function triggerDownload(blob, filename) {
     const link = document.createElement("a");
@@ -1828,6 +1869,45 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   /* ------------------ UTILS ------------------ */
+  // Local date string in the same format calendar.js uses (YYYY-MM-DD, local time)
+  function getLocalDateString() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  // Stable confirm modal to replace native confirm() which may auto-dismiss in some environments
+  function confirmModal(message, options = {}) {
+    const { title = 'Confirm', yesText = 'OK', noText = 'Cancel' } = options;
+    return new Promise((resolve) => {
+      const modal = document.createElement('div');
+      modal.style.cssText = `
+        position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000;
+        display: flex; align-items: center; justify-content: center; padding: 12px;
+      `;
+      const dialog = document.createElement('div');
+      dialog.style.cssText = `
+        background: #fff; color: #000; padding: 16px 20px; border-radius: 8px; width: 100%;
+        max-width: 420px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+      `;
+      dialog.innerHTML = `
+        <h3 style="margin:0 0 10px 0; font-size:18px;">${title}</h3>
+        <p style="margin:0 0 16px 0; line-height:1.4;">${message}</p>
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button id="cmCancel" class="btn btn-secondary">${noText}</button>
+          <button id="cmOk" class="btn">${yesText}</button>
+        </div>
+      `;
+      modal.appendChild(dialog);
+      document.body.appendChild(modal);
+      const cleanup = () => { document.body.removeChild(modal); };
+      modal.addEventListener('click', (e) => { if (e.target === modal) { cleanup(); resolve(false); } });
+      dialog.querySelector('#cmCancel').addEventListener('click', () => { cleanup(); resolve(false); });
+      dialog.querySelector('#cmOk').addEventListener('click', () => { cleanup(); resolve(true); });
+    });
+  }
   function formatSec(sec) {
     const m = Math.floor(sec / 60),
       s = sec % 60;

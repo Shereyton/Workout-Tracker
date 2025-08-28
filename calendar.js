@@ -184,6 +184,37 @@ if (typeof document !== 'undefined') {
       }
     }
 
+    // Simple, reliable modal confirm to avoid native confirm() disappearing
+    function confirmModal(message, options = {}){
+      const { title = 'Confirm', yesText = 'OK', noText = 'Cancel' } = options;
+      return new Promise((resolve) => {
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+          position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000;
+          display: flex; align-items: center; justify-content: center; padding: 12px;
+        `;
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+          background: #fff; color: #000; padding: 16px 20px; border-radius: 8px; width: 100%;
+          max-width: 420px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+        `;
+        dialog.innerHTML = `
+          <h3 style="margin:0 0 10px 0; font-size:18px;">${title}</h3>
+          <p style="margin:0 0 16px 0; line-height:1.4;">${message}</p>
+          <div style="display:flex; gap:8px; justify-content:flex-end;">
+            <button id="cmCancel" class="btn btn-secondary">${noText}</button>
+            <button id="cmOk" class="btn">${yesText}</button>
+          </div>
+        `;
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        const cleanup = () => { document.body.removeChild(modal); };
+        modal.addEventListener('click', (e) => { if (e.target === modal) { cleanup(); resolve(false); } });
+        dialog.querySelector('#cmCancel').addEventListener('click', () => { cleanup(); resolve(false); });
+        dialog.querySelector('#cmOk').addEventListener('click', () => { cleanup(); resolve(true); });
+      });
+    }
+
     function renderDay(){
       const dateObj = parseDateLocal(selectedDate);
       dayTitle.textContent = dateObj.toDateString();
@@ -244,14 +275,14 @@ if (typeof document !== 'undefined') {
         const delBtn = document.createElement('button');
         delBtn.textContent = 'Del';
         delBtn.className = 'btn-mini del';
-        delBtn.addEventListener('click', () => {
-          if(confirm('Delete entry?')){
-            history[selectedDate].splice(idx,1);
-            if(history[selectedDate].length === 0) delete history[selectedDate];
-            save();
-            renderDay();
-            renderCalendar();
-          }
+        delBtn.addEventListener('click', async () => {
+          const ok = await confirmModal('Delete entry?', { yesText: 'Delete', noText: 'Cancel', title: 'Delete Entry' });
+          if(!ok) return;
+          history[selectedDate].splice(idx,1);
+          if(history[selectedDate].length === 0) delete history[selectedDate];
+          save();
+          renderDay();
+          renderCalendar();
         });
         actions.appendChild(delBtn);
 
@@ -275,13 +306,13 @@ if (typeof document !== 'undefined') {
     });
 
     if(resetDayBtn){
-      resetDayBtn.addEventListener('click', () => {
-        if(confirm('Clear all entries for this day?')){
-          delete history[selectedDate];
-          save();
-          renderDay();
-          renderCalendar();
-        }
+      resetDayBtn.addEventListener('click', async () => {
+        const ok = await confirmModal('Clear all entries for this day?', { yesText: 'Clear', noText: 'Cancel', title: 'Clear Day' });
+        if(!ok) return;
+        delete history[selectedDate];
+        save();
+        renderDay();
+        renderCalendar();
       });
     }
 
