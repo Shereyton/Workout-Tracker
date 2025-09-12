@@ -24,6 +24,18 @@ function normalizeSet(s) {
   if ('weight' in out) out.weight = coercePositiveNumber(out.weight);
   if ('reps' in out)
     out.reps = Math.max(1, Math.floor(coercePositiveNumber(out.reps)));
+  // Normalize superset inner exercises if present
+  if (Array.isArray(out.exercises)) {
+    out.exercises = out.exercises.map((sub) => {
+      const subOut = { ...sub };
+      if ('weight' in subOut)
+        subOut.weight = coercePositiveNumber(subOut.weight);
+      if ('reps' in subOut)
+        subOut.reps = Math.max(1, Math.floor(coercePositiveNumber(subOut.reps)));
+      if ('name' in subOut) subOut.name = String(subOut.name || 'Unknown');
+      return subOut;
+    });
+  }
   if ('distance' in out && out.distance !== null) {
     const d = Number(out.distance);
     out.distance = Number.isFinite(d) && d >= 0 ? d : null;
@@ -682,7 +694,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     if (currentExercise.isSuperset) {
       const ok = currentExercise.exercises.every((_, i) => {
-        const w = parseInt(document.getElementById(`weight${i}`).value, 10);
+        const w = parseFloat(document.getElementById(`weight${i}`).value);
         const r = parseInt(document.getElementById(`reps${i}`).value, 10);
         return canLogSet(w, r);
       });
@@ -702,7 +714,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       return;
     }
 
-    const w = parseInt(weightInput.value, 10);
+    const w = parseFloat(weightInput.value);
     const r = parseInt(repsInput.value, 10);
     logBtn.disabled = !canLogSet(w, r);
   }
@@ -1030,7 +1042,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     arr.forEach((name, i) => {
       const row = document.createElement("div");
       row.className = "inline-row";
-      row.innerHTML = `<input type="number" id="weight${i}" class="field superset-field" placeholder="${name} weight" min="0"><input type="number" id="reps${i}" class="field superset-field" placeholder="${name} reps" min="1">`;
+      row.innerHTML = `<input type="number" id="weight${i}" class="field superset-field" placeholder="${name} weight" min="0" step="0.5"><input type="number" id="reps${i}" class="field superset-field" placeholder="${name} reps" min="1" step="1">`;
       supersetInputs.appendChild(row);
     });
   }
@@ -1044,7 +1056,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   logBtn.addEventListener("click", function () {
     if (currentExercise.isSuperset) {
       const setGroup = currentExercise.exercises.map((ex, i) => {
-        const w = parseInt(document.getElementById(`weight${i}`).value, 10);
+        const w = parseFloat(document.getElementById(`weight${i}`).value);
         const r = parseInt(document.getElementById(`reps${i}`).value, 10);
         return { name: ex, weight: w, reps: r };
       });
@@ -1054,7 +1066,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
       const useTimer = useTimerEl.checked;
       const planned = useTimer ? parseInt(restSecsInput.value, 10) || 0 : null;
-      currentExercise.sets.push({
+      // Normalize inner exercises and wrap in normalized set object
+      const supersetSet = normalizeSet({
         set: currentExercise.nextSet,
         exercises: setGroup,
         time: new Date().toLocaleTimeString(),
@@ -1062,6 +1075,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         restPlanned: planned,
         restActual: null,
       });
+      currentExercise.sets.push(supersetSet);
       addSetElement(
         currentExercise.sets[currentExercise.sets.length - 1],
         currentExercise.sets.length - 1,
@@ -1101,7 +1115,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
       const useTimer = useTimerEl.checked;
       const planned = useTimer ? parseInt(restSecsInput.value, 10) || 0 : null;
-      currentExercise.sets.push({
+      const cardioSet = normalizeSet({
         set: currentExercise.nextSet,
         distance: d,
         duration: t,
@@ -1110,6 +1124,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         restPlanned: planned,
         restActual: null,
       });
+      currentExercise.sets.push(cardioSet);
       addSetElement(
         currentExercise.sets[currentExercise.sets.length - 1],
         currentExercise.sets.length - 1,
@@ -1135,7 +1150,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       return;
     }
 
-    const w = parseInt(weightInput.value, 10);
+    const w = parseFloat(weightInput.value);
     const r = parseInt(repsInput.value, 10);
 
     if (!canLogSet(w, r)) {
@@ -1146,7 +1161,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const useTimer = useTimerEl.checked;
     const planned = useTimer ? parseInt(restSecsInput.value, 10) || 0 : null;
 
-    currentExercise.sets.push({
+    const strengthSet = normalizeSet({
       set: currentExercise.nextSet,
       weight: w,
       reps: r,
@@ -1155,6 +1170,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       restPlanned: planned,
       restActual: null,
     });
+    currentExercise.sets.push(strengthSet);
 
     addSetElement(
       currentExercise.sets[currentExercise.sets.length - 1],
@@ -1291,7 +1307,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (currentExercise.isSuperset) {
       let rows = "";
       s.exercises.forEach((ex, i) => {
-        rows += `<div class="row"><span style="font-size:12px;flex-basis:100%;">${ex.name}</span><input type="number" class="editW${i}" value="${ex.weight}" min="0"><input type="number" class="editR${i}" value="${ex.reps}" min="1"></div>`;
+        rows += `<div class="row"><span style=\"font-size:12px;flex-basis:100%;\">${ex.name}</span><input type=\"number\" class=\"editW${i}\" value=\"${ex.weight}\" min=\"0\" step=\"0.5\"><input type=\"number\" class=\"editR${i}\" value=\"${ex.reps}\" min=\"1\" step=\"1\"></div>`;
       });
       form.innerHTML = `${rows}<div class="row2"><button type="button" class="btn-mini edit" data-edit-save>Save</button><button type="button" class="btn-mini del" data-edit-cancel>Cancel</button></div>`;
     } else if (currentExercise.isCardio) {
@@ -1334,8 +1350,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     } else {
       form.innerHTML = `
       <div class="row">
-        <input type="number" class="editW" value="${s.weight}" min="0">
-        <input type="number" class="editR" value="${s.reps}"   min="1">
+        <input type="number" class="editW" value="${s.weight}" min="0" step="0.5">
+        <input type="number" class="editR" value="${s.reps}"   min="1" step="1">
       </div>
       <div class="row">
         <input type="number" class="editRestPlanned" value="${s.restPlanned ?? ""}" min="0" placeholder="Rest planned (sec)">
@@ -1356,14 +1372,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         if (currentExercise.isSuperset) {
           let bad = false;
           s.exercises.forEach((ex, i) => {
-            const w = parseInt(form.querySelector(`.editW${i}`).value, 10);
+            const w = parseFloat(form.querySelector(`.editW${i}`).value);
             const r = parseInt(form.querySelector(`.editR${i}`).value, 10);
-            if (isNaN(w) || isNaN(r)) bad = true;
-            ex.weight = w;
-            ex.reps = r;
+            if (!canLogSet(w, r)) bad = true;
+            const norm = normalizeSet({ name: ex.name, weight: w, reps: r });
+            ex.weight = norm.weight;
+            ex.reps = norm.reps;
           });
           if (bad) {
-            showToast("Enter valid numbers");
+            showToast("Enter valid numbers for all exercises");
             return;
           }
         } else if (currentExercise.isCardio) {
@@ -1393,12 +1410,18 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
             );
             return;
           }
-          s.distance = newD;
-          s.duration = newDur;
-          s.restPlanned = newPlanned;
-          s.restActual = newActual;
+          const norm = normalizeSet({
+            distance: newD,
+            duration: newDur,
+            restPlanned: newPlanned,
+            restActual: newActual,
+          });
+          s.distance = norm.distance;
+          s.duration = norm.duration;
+          s.restPlanned = norm.restPlanned;
+          s.restActual = norm.restActual;
         } else {
-          const newW = parseInt(form.querySelector(".editW").value, 10);
+          const newW = parseFloat(form.querySelector(".editW").value);
           const newR = parseInt(form.querySelector(".editR").value, 10);
           const vPlanned = form.querySelector(".editRestPlanned").value;
           const vActual = form.querySelector(".editRestActual").value;
@@ -1406,15 +1429,21 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           const newPlanned = vPlanned === "" ? null : parseInt(vPlanned, 10);
           const newActual = vActual === "" ? null : parseInt(vActual, 10);
 
-          if (isNaN(newW) || isNaN(newR)) {
+          if (!canLogSet(newW, newR)) {
             showToast("Enter valid weight & reps");
             return;
           }
 
-          s.weight = newW;
-          s.reps = newR;
-          s.restPlanned = newPlanned;
-          s.restActual = newActual;
+          const norm = normalizeSet({
+            weight: newW,
+            reps: newR,
+            restPlanned: newPlanned,
+            restActual: newActual,
+          });
+          s.weight = norm.weight;
+          s.reps = norm.reps;
+          s.restPlanned = norm.restPlanned;
+          s.restActual = norm.restActual;
         }
 
         saveState();
@@ -1479,7 +1508,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const existing = session.exercises.find((e) => e.name === ex.name);
     if (existing) {
       ex.sets.forEach((s) => {
-        existing.sets.push({ ...s, set: existing.sets.length + 1 });
+        const norm = normalizeSet({ ...s, set: existing.sets.length + 1 });
+        existing.sets.push(norm);
       });
     } else {
       session.exercises.push({
@@ -1487,7 +1517,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         isSuperset: ex.isSuperset || false,
         isCardio: ex.isCardio || false,
         exercises: ex.exercises ? [...ex.exercises] : undefined,
-        sets: ex.sets.map((s) => ({ ...s })),
+        sets: ex.sets.map((s) => normalizeSet({ ...s })),
       });
     }
   }
@@ -1579,7 +1609,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   function buildExportExercises() {
     const exportExercises = session.exercises.map((e) => ({
       ...e,
-      sets: [...e.sets],
+      sets: e.sets.map((s) => normalizeSet({ ...s })),
     }));
     if (currentExercise && currentExercise.sets.length) {
       const exExisting = exportExercises.find(
@@ -1587,7 +1617,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       );
       if (exExisting) {
         currentExercise.sets.forEach((s) => {
-          exExisting.sets.push({ ...s, set: exExisting.sets.length + 1 });
+          const norm = normalizeSet({ ...s, set: exExisting.sets.length + 1 });
+          exExisting.sets.push(norm);
         });
       } else {
         exportExercises.push({
@@ -1597,7 +1628,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           exercises: currentExercise.exercises
             ? [...currentExercise.exercises]
             : undefined,
-          sets: currentExercise.sets.map((s) => ({ ...s })),
+          sets: currentExercise.sets.map((s) => normalizeSet({ ...s })),
         });
       }
     }
@@ -1734,15 +1765,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
   
   function performExport(exportExercises, includeNotes, includeSessionTime) {
-    
-    const totalSets = exportExercises.reduce(
-      (sum, e) => sum + e.sets.length,
-      0,
-    );
-    
+    // Build normalized payload skeleton first to guarantee clean values
+    const currentDate = getLocalDateString();
+    const normalized = normalizePayload({
+      date: currentDate,
+      timestamp: new Date().toISOString(),
+      exercises: exportExercises,
+    });
+
     // Get workout notes from calendar history if user wants them
     let workoutNotes = [];
-    const currentDate = getLocalDateString();
     if (includeNotes) {
       // Access calendar history directly from localStorage (same as calendar.js uses)
       const calendarHistory = JSON.parse(localStorage.getItem('wt_history')) || {};
@@ -1752,22 +1784,18 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const logLineRe = /^(?:[^:]+:\s*)?(?:Set\s*\d+\s*[-–:]?\s*)?\d+(?:\.\d+)?\s*(?:lbs|kg)\s*[×xX]\s*\d+\s*reps/i;
       workoutNotes = workoutNotes.filter(line => !logLineRe.test(String(line).trim()));
     }
-    
+
+    // Start with normalized payload and attach optional notes
     const payload = {
-      date: currentDate,
-      timestamp: new Date().toISOString(),
-      totalExercises: exportExercises.length,
-      totalSets,
-      exercises: exportExercises,
+      ...normalized,
       workoutNotes: includeNotes ? workoutNotes : undefined,
-      schema: WT_SCHEMA_VERSION,
     };
 
     // Compute session time if requested
     let sessionMeta = null;
     if (includeSessionTime) {
       const timestamps = [];
-      exportExercises.forEach((ex) => {
+      payload.exercises.forEach((ex) => {
         ex.sets.forEach((s) => {
           if (s && typeof s.ts === 'number') timestamps.push(s.ts);
         });
@@ -1815,7 +1843,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       ].join("\n");
       csv = meta + "\n" + csvHeader;
     }
-    exportExercises.forEach((ex) => {
+    payload.exercises.forEach((ex) => {
       ex.sets.forEach((s) => {
         if (ex.isSuperset) {
           s.exercises.forEach((sub) => {
@@ -1849,7 +1877,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (includeSessionTime && sessionMeta) {
       aiText += `Session Time: ${formatSec(sessionMeta.sessionDurationSec)}\n\n`;
     }
-    exportExercises.forEach((ex) => {
+    payload.exercises.forEach((ex) => {
       if (ex.isSuperset) {
         aiText += `${ex.name}:\n`;
         ex.sets.forEach((s) => {
@@ -2054,7 +2082,7 @@ function getSessionSnapshot() {
     isSuperset: ex.isSuperset || false,
     isCardio: ex.isCardio || false,
     exercises: ex.exercises ? [...ex.exercises] : undefined,
-    sets: ex.sets.map((s) => ({ ...s })),
+    sets: ex.sets.map((s) => normalizeSet({ ...s })),
   }));
   if (currentExercise) {
     snapshot.push({
@@ -2064,7 +2092,7 @@ function getSessionSnapshot() {
       exercises: currentExercise.exercises
         ? [...currentExercise.exercises]
         : undefined,
-      sets: currentExercise.sets.map((s) => ({ ...s })),
+      sets: currentExercise.sets.map((s) => normalizeSet({ ...s })),
     });
   }
   return snapshot;
