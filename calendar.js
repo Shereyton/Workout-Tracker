@@ -75,7 +75,40 @@ if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
     if(!document.getElementById('calendar')) return;
     const STORAGE_KEY = 'wt_history';
-    let history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+    let storageErrorShown = false;
+
+    function extractJsonFromText(text){
+      let cleaned = text.replace(/^\uFEFF/, '');
+      cleaned = cleaned.replace(/```(?:json)?|```/gi,'');
+      cleaned = cleaned.replace(/[“”]/g,'"').replace(/[‘’]/g,"'");
+      const match = cleaned.match(/({[\s\S]*}|\[[\s\S]*\])/);
+      if(match){
+        return match[0].replace(/,\s*([}\]])/g,'$1');
+      }
+      return null;
+    }
+
+    function safeParseJson(text){
+      try{ return JSON.parse(text); }catch(e){}
+      const extracted = extractJsonFromText(text);
+      if(!extracted) return null;
+      try{ return JSON.parse(extracted); }catch(e){}
+      return null;
+    }
+
+    function loadStoredHistory(){
+      try{
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if(!raw) return {};
+        const parsed = safeParseJson(raw);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      }catch(err){
+        console.warn('Failed to read workout history from storage', err);
+        return {};
+      }
+    }
+
+    let history = loadStoredHistory();
     let current = new Date();
     current.setDate(1);
     let selectedDate = formatDate(new Date());
@@ -97,7 +130,7 @@ if (typeof document !== 'undefined') {
     const calGo = document.getElementById('calGo');
     const pasteJson = document.getElementById('pasteJson');
     const importFromPaste = document.getElementById('importFromPaste');
-      const resetDayBtn = document.getElementById('resetDay');
+    const resetDayBtn = document.getElementById('resetDay');
 
     function updateDateInput(){
       calGoto.value = selectedDate;
@@ -110,7 +143,15 @@ if (typeof document !== 'undefined') {
     }
 
     function save(){
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      try{
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      }catch(err){
+        console.error('Failed to save workout history', err);
+        if(!storageErrorShown){
+          alert('Unable to save workout history. Storage may be full or disabled.');
+          storageErrorShown = true;
+        }
+      }
     }
 
     function mergeHistory(obj){
@@ -389,25 +430,6 @@ if (typeof document !== 'undefined') {
       }
       alert('Could not parse input. Supported: JSON, AI text, CSV. Input: '+text.slice(0,120));
       return false;
-    }
-
-    function safeParseJson(text){
-      try{ return JSON.parse(text); }catch(e){}
-      const extracted = extractJsonFromText(text);
-      if(!extracted) return null;
-      try{ return JSON.parse(extracted); }catch(e){}
-      return null;
-    }
-
-    function extractJsonFromText(text){
-      let cleaned = text.replace(/^\uFEFF/, '');
-      cleaned = cleaned.replace(/```(?:json)?|```/gi,'');
-      cleaned = cleaned.replace(/[“”]/g,'"').replace(/[‘’]/g,"'");
-      const match = cleaned.match(/({[\s\S]*}|\[[\s\S]*\])/);
-      if(match){
-        return match[0].replace(/,\s*([}\]])/g,'$1');
-      }
-      return null;
     }
 
     calPrev.addEventListener('click', () => {

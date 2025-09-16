@@ -110,6 +110,10 @@ function normalizePayload(payload) {
   };
 }
 
+function deepClone(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
 // Merge imported exercises into wt_history lines (for charts and history)
 function mergeIntoHistory(payload) {
   const hist = wtStorage.get(WT_KEYS.history, {});
@@ -580,11 +584,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       showToast('Nothing to import');
       return;
     }
-    const prevSession = JSON.parse(JSON.stringify(session));
-    const prevCurrent = currentExercise
-      ? JSON.parse(JSON.stringify(currentExercise))
-      : null;
+    const prevSession = deepClone(session);
+    const prevCurrent = deepClone(currentExercise);
     pushUndo({ type: 'import', payload: { prevSession, prevCurrent } });
+    stopRest();
+    restSetIndex = null;
+    restSecondsRemaining = 0;
+    restStartMs = 0;
+    restBox.classList.add('hidden');
+    restDisplay.textContent = '00:00';
+    stopSessionTimer();
     session = { exercises: normalized.exercises, startedAt: null };
     currentExercise = null;
     wtStorage.set(WT_KEYS.last, normalized.exercises);
@@ -1279,7 +1288,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       payload: {
         exerciseName: currentExercise?.name,
         exerciseIndex: null,
-        removedSet: { ...currentExercise.sets[idx] },
+        removedSet: deepClone(currentExercise.sets[idx]),
         removedIndex: idx,
       },
     });
@@ -1662,8 +1671,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   resetBtn.addEventListener("click", async () => {
     const ok = await confirmModal("Reset entire workout?", { yesText: 'Reset', noText: 'Cancel', title: 'Reset Workout' });
     if (!ok) return;
-    const prevSession = JSON.parse(JSON.stringify(session));
-    const prevCurrent = JSON.parse(JSON.stringify(currentExercise));
+    const prevSession = deepClone(session);
+    const prevCurrent = deepClone(currentExercise);
     pushUndo({ type: "reset", payload: { prevSession, prevCurrent } });
     endWorkout();
     announce("Workout reset");
@@ -1674,8 +1683,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   finishBtn.addEventListener("click", async () => {
     const ok = await confirmModal("Finish workout?", { yesText: 'Finish', noText: 'Cancel', title: 'Finish Workout' });
     if (!ok) return;
-    const prevSession = JSON.parse(JSON.stringify(session));
-    const prevCurrent = JSON.parse(JSON.stringify(currentExercise));
+    const prevSession = deepClone(session);
+    const prevCurrent = deepClone(currentExercise);
     pushUndo({ type: "finish", payload: { prevSession, prevCurrent } });
     endWorkout();
     announce("Workout finished");

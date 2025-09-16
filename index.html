@@ -17,13 +17,13 @@
     <div class="section">
 
       <!-- Add Custom Exercise -->
-      <div class="inline-row" style="margin-bottom:6px;">
+      <div class="inline-row inline-row--tight">
         <input type="text" id="customExercise" placeholder="Add Custom Exercise" class="field">
-        <button id="addExercise" class="btn btn-secondary" style="flex:0 0 120px;">Add</button>
+        <button id="addExercise" class="btn btn-secondary flex-fixed-120">Add</button>
       </div>
-      <button id="startSuperset" class="btn btn-secondary" style="margin-bottom:12px;">Start Superset</button>
+      <button id="startSuperset" class="btn btn-secondary">Start Superset</button>
       <div id="supersetBuilder" class="superset-builder hidden">
-        <div class="inline-row" style="margin-bottom:6px;">
+        <div class="inline-row inline-row--tight">
           <select id="supersetSelect1"></select>
           <select id="supersetSelect2"></select>
         </div>
@@ -31,9 +31,9 @@
       </div>
 
       <!-- Exercise search & filters -->
-      <input type="text" id="exerciseSearch" list="exerciseList" placeholder="Search exercises" class="field" style="margin-bottom:6px;">
+      <input type="text" id="exerciseSearch" list="exerciseList" placeholder="Search exercises" class="field field--compact">
       <datalist id="exerciseList"></datalist>
-      <select id="muscleFilter" class="field" style="margin-bottom:6px;">
+      <select id="muscleFilter" class="field field--compact">
         <option value="">All Categories</option>
       </select>
 
@@ -50,8 +50,8 @@
         </div>
 
         <!-- timer controls -->
-        <div class="inline-row" style="margin-bottom:8px;">
-          <label style="display:flex;align-items:center;gap:8px;">
+        <div class="inline-row mb-8">
+          <label class="inline-label">
             <input type="checkbox" id="useTimer" checked> Use rest timer
           </label>
           <input type="number" id="restSecsInput" class="field" placeholder="Rest (sec)" value="90" min="5">
@@ -60,7 +60,7 @@
         <div id="restBox" class="rest-timer hidden">
           <div>Rest Time</div>
           <div id="restDisplay" class="timer-display">01:30</div>
-          <div style="font-size:11px; margin-top:4px; opacity:.8;">Tap to cancel</div>
+          <div class="timer-hint">Tap to cancel</div>
         </div>
 
         <div class="inline-row" id="standardInputs">
@@ -107,28 +107,28 @@
         <div id="dayDetails" class="day-details">
           <h4 id="dayTitle"></h4>
           <ul id="entries"></ul>
-          <div class="inline-row" style="margin-top:6px;">
+          <div class="inline-row mt-6">
             <input type="text" id="entryInput" class="field" placeholder="Add workout note">
-            <button id="addEntry" class="btn btn-secondary" style="flex:0 0 80px;">Add</button>
+            <button id="addEntry" class="btn btn-secondary flex-fixed-80">Add</button>
           </div>
-          <button id="resetDay" class="btn btn-reset" style="margin-top:8px;">Reset Day</button>
+          <button id="resetDay" class="btn btn-reset mt-8">Reset Day</button>
         </div>
         <div class="history-actions">
           <button id="saveTodaySession" class="btn btn-secondary">Save Today from Session</button>
           <button id="exportHistory" class="btn btn-secondary">Export History</button>
-          <input type="file" id="importHistoryFile" style="display:none" accept="application/json">
+          <input type="file" id="importHistoryFile" class="hidden-input" accept="application/json">
           <button id="importHistory" class="btn btn-secondary">Import History</button>
         </div>
         <div id="pasteImport">
           <textarea id="pasteJson" placeholder="Paste JSON / AI text / CSV here"></textarea>
-          <button id="importFromPaste" class="btn btn-secondary" style="margin-top:8px;">Import From Paste</button>
+          <button id="importFromPaste" class="btn btn-secondary mt-8">Import From Paste</button>
         </div>
       </div>
 
       <button id="exportBtn" class="btn btn-export">Export (JSON + AI + CSV)</button>
 
       <!-- Preference toggle at the bottom -->
-      <button id="toggleSessionPrefBtn" class="btn btn-secondary" style="margin-top:8px;">Auto-include session time in export: OFF</button>
+      <button id="toggleSessionPrefBtn" class="btn btn-secondary mt-8">Auto-include session time in export: OFF</button>
 
     </div>
   </div>
