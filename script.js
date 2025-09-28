@@ -312,6 +312,62 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const muscleFilter = document.getElementById("muscleFilter");
 
   // --- Import UI ---
+  function createConfirmModal(doc) {
+    return (message, options = {}) => {
+      const { title = 'Confirm', yesText = 'OK', noText = 'Cancel' } = options;
+      return new Promise((resolve) => {
+        const modal = doc.createElement('div');
+        modal.style.cssText = `
+          position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000;
+          display: flex; align-items: center; justify-content: center; padding: 12px;
+        `;
+        const dialog = doc.createElement('div');
+        dialog.style.cssText = `
+          background: #fff; color: #000; padding: 16px 20px; border-radius: 8px; width: 100%;
+          max-width: 420px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+        `;
+        dialog.innerHTML = `
+          <h3 style="margin:0 0 10px 0; font-size:18px;">${title}</h3>
+          <p style="margin:0 0 16px 0; line-height:1.4;">${message}</p>
+          <div style="display:flex; gap:8px; justify-content:flex-end;">
+            <button id="cmCancel" class="btn btn-secondary">${noText}</button>
+            <button id="cmOk" class="btn">${yesText}</button>
+          </div>
+        `;
+        modal.appendChild(dialog);
+        doc.body.appendChild(modal);
+        const cleanup = () => {
+          if (modal.parentNode) {
+            modal.parentNode.removeChild(modal);
+          }
+        };
+        modal.addEventListener('click', (e) => {
+          if (e.target === modal) {
+            cleanup();
+            resolve(false);
+          }
+        });
+        dialog.querySelector('#cmCancel').addEventListener('click', () => {
+          cleanup();
+          resolve(false);
+        });
+        dialog.querySelector('#cmOk').addEventListener('click', () => {
+          cleanup();
+          resolve(true);
+        });
+      });
+    };
+  }
+
+  const confirmModal =
+    typeof window !== 'undefined' && typeof window.wtConfirmModal === 'function'
+      ? window.wtConfirmModal
+      : createConfirmModal(document);
+
+  if (typeof window !== 'undefined') {
+    window.wtConfirmModal = confirmModal;
+  }
+
   const importInput = document.createElement('input');
   importInput.type = 'file';
   importInput.accept = 'application/json';
@@ -1995,35 +2051,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   // Stable confirm modal to replace native confirm() which may auto-dismiss in some environments
-  function confirmModal(message, options = {}) {
-    const { title = 'Confirm', yesText = 'OK', noText = 'Cancel' } = options;
-    return new Promise((resolve) => {
-      const modal = document.createElement('div');
-      modal.style.cssText = `
-        position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000;
-        display: flex; align-items: center; justify-content: center; padding: 12px;
-      `;
-      const dialog = document.createElement('div');
-      dialog.style.cssText = `
-        background: #fff; color: #000; padding: 16px 20px; border-radius: 8px; width: 100%;
-        max-width: 420px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-      `;
-      dialog.innerHTML = `
-        <h3 style="margin:0 0 10px 0; font-size:18px;">${title}</h3>
-        <p style="margin:0 0 16px 0; line-height:1.4;">${message}</p>
-        <div style="display:flex; gap:8px; justify-content:flex-end;">
-          <button id="cmCancel" class="btn btn-secondary">${noText}</button>
-          <button id="cmOk" class="btn">${yesText}</button>
-        </div>
-      `;
-      modal.appendChild(dialog);
-      document.body.appendChild(modal);
-      const cleanup = () => { document.body.removeChild(modal); };
-      modal.addEventListener('click', (e) => { if (e.target === modal) { cleanup(); resolve(false); } });
-      dialog.querySelector('#cmCancel').addEventListener('click', () => { cleanup(); resolve(false); });
-      dialog.querySelector('#cmOk').addEventListener('click', () => { cleanup(); resolve(true); });
-    });
-  }
   function formatSec(sec) {
     const m = Math.floor(sec / 60),
       s = sec % 60;

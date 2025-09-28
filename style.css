@@ -237,15 +237,21 @@ body.dark #calendarSection{
 #calendar .cal-header{font-weight:600;text-align:center;}
 .calendar-day{padding:8px;border:1px solid #e6eaef;border-radius:6px;text-align:center;cursor:pointer;}
 .calendar-day.has-data{background:#d4edda;border-color:#c3e6cb;}
+.calendar-day.has-label{border-color:#764ba2;}
+.calendar-day.has-data.has-label{background:#d4edda;border-color:#6cb2eb;}
 .calendar-day.selected{border-color:#667eea;font-weight:700;}
 .calendar-day.muted{opacity:.4;}
 .day-details{border:1px solid #e6eaef;border-radius:8px;padding:10px;margin-bottom:12px;}
 .day-details h4{margin-bottom:8px;}
+.day-label-row{gap:8px;align-items:center;flex-wrap:wrap;}
+.day-label-row .btn{width:auto;margin-bottom:0;}
 .day-details ul{list-style:disc;margin-left:20px;margin-bottom:8px;}
 .entry-item{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap;}
 .entry-item span{flex:1;}
 .entry-actions{display:flex;gap:6px;}
 .history-actions{display:flex;gap:8px;flex-wrap:wrap;}
+.history-actions .history-title-select{min-width:200px;width:auto;}
+.history-actions #exportTitleHistory{width:auto;}
 .calendar-controls{display:flex;gap:8px;margin-bottom:8px;}
 .calendar-controls #calGoto{flex:1;min-width:120px;}
 .calendar-controls .btn{width:auto;}

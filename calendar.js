@@ -75,6 +75,7 @@ if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
     if(!document.getElementById('calendar')) return;
     const STORAGE_KEY = 'wt_history';
+    const TITLE_KEY = 'wt_history_titles';
     let storageErrorShown = false;
 
     function extractJsonFromText(text){
@@ -108,7 +109,36 @@ if (typeof document !== 'undefined') {
       }
     }
 
+    function loadStoredTitles(){
+      try{
+        const raw = localStorage.getItem(TITLE_KEY);
+        if(!raw) return {};
+        const parsed = safeParseJson(raw);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      }catch(err){
+        console.warn('Failed to read history titles from storage', err);
+        return {};
+      }
+    }
+
+    function saveTitles(){
+      try{
+        const filtered = {};
+        Object.keys(titles).forEach(date => {
+          const label = titles[date];
+          if(typeof label === 'string' && label.trim()){
+            filtered[date] = label.trim();
+          }
+        });
+        titles = filtered;
+        localStorage.setItem(TITLE_KEY, JSON.stringify(filtered));
+      }catch(err){
+        console.error('Failed to save history titles', err);
+      }
+    }
+
     let history = loadStoredHistory();
+    let titles = loadStoredTitles();
     let current = new Date();
     current.setDate(1);
     let selectedDate = formatDate(new Date());
@@ -131,6 +161,51 @@ if (typeof document !== 'undefined') {
     const pasteJson = document.getElementById('pasteJson');
     const importFromPaste = document.getElementById('importFromPaste');
     const resetDayBtn = document.getElementById('resetDay');
+    const dayLabelInput = document.getElementById('dayLabelInput');
+    const saveDayLabelBtn = document.getElementById('saveDayLabel');
+    const clearDayLabelBtn = document.getElementById('clearDayLabel');
+    const titleExportSelect = document.getElementById('titleExportSelect');
+    const exportTitleHistoryBtn = document.getElementById('exportTitleHistory');
+
+    const confirmModal =
+      (typeof window !== 'undefined' && typeof window.wtConfirmModal === 'function')
+        ? window.wtConfirmModal
+        : (message, options = {}) => {
+            const title = options.title ? `${options.title}\n\n` : '';
+            const result = window.confirm(`${title}${message}`);
+            return Promise.resolve(!!result);
+          };
+
+    function getDayLabel(date){
+      const label = titles[date];
+      return typeof label === 'string' ? label : '';
+    }
+
+    function updateTitleSelect(){
+      if(!titleExportSelect) return;
+      const previous = titleExportSelect.value;
+      titleExportSelect.innerHTML = '';
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Export by title…';
+      titleExportSelect.appendChild(placeholder);
+      const unique = new Set();
+      Object.values(titles).forEach(label => {
+        if(typeof label === 'string' && label.trim()){
+          unique.add(label.trim());
+        }
+      });
+      const sorted = Array.from(unique).sort((a,b) => a.localeCompare(b));
+      sorted.forEach(label => {
+        const option = document.createElement('option');
+        option.value = label;
+        option.textContent = label;
+        titleExportSelect.appendChild(option);
+      });
+      if(previous && sorted.includes(previous)) {
+        titleExportSelect.value = previous;
+      }
+    }
 
     function updateDateInput(){
       calGoto.value = selectedDate;
@@ -154,14 +229,29 @@ if (typeof document !== 'undefined') {
       }
     }
 
-    function mergeHistory(obj){
+    function mergeHistory(raw){
+      const incomingHistory = raw && typeof raw === 'object' && !Array.isArray(raw) && raw.history && typeof raw.history === 'object'
+        ? raw.history
+        : raw;
+      const incomingTitles = raw && typeof raw === 'object' && !Array.isArray(raw) && raw.titles && typeof raw.titles === 'object'
+        ? raw.titles
+        : null;
       const dates = new Set();
       let added = 0;
       let skipped = 0;
-      Object.keys(obj).forEach(date => {
-        if(Array.isArray(obj[date])){
+      if(incomingHistory && typeof incomingHistory === 'object'){
+        Object.keys(incomingHistory).forEach(date => {
+          const payload = incomingHistory[date];
+          let entries = [];
+          let label = '';
+          if(Array.isArray(payload)){
+            entries = payload;
+          } else if(payload && typeof payload === 'object'){
+            if(Array.isArray(payload.entries)) entries = payload.entries;
+            if(typeof payload.title === 'string') label = payload.title.trim();
+          }
           if(!history[date]) history[date] = [];
-          obj[date].forEach(line => {
+          entries.forEach(line => {
             if(!history[date].includes(line)){
               history[date].push(line);
               added++; dates.add(date);
@@ -169,8 +259,25 @@ if (typeof document !== 'undefined') {
               skipped++;
             }
           });
-        }
-      });
+          if(label){
+            titles[date] = label;
+          }
+        });
+      }
+
+      if(incomingTitles){
+        Object.keys(incomingTitles).forEach(date => {
+          const label = incomingTitles[date];
+          if(typeof label === 'string' && label.trim()){
+            titles[date] = label.trim();
+          } else if(!label){
+            delete titles[date];
+          }
+        });
+      }
+
+      saveTitles();
+      updateTitleSelect();
       return {dates:[...dates], added, skipped};
     }
 
@@ -214,6 +321,11 @@ if (typeof document !== 'undefined') {
         if(history[dateStr] && history[dateStr].length){
           cell.classList.add('has-data');
         }
+        const label = getDayLabel(dateStr);
+        if(label){
+          cell.classList.add('has-label');
+          cell.setAttribute('title', `${dateStr} • ${label}`);
+        }
         if(dateStr === selectedDate) cell.classList.add('selected');
         cell.addEventListener('click', () => {
           selectedDate = dateStr;
@@ -225,40 +337,16 @@ if (typeof document !== 'undefined') {
       }
     }
 
-    // Simple, reliable modal confirm to avoid native confirm() disappearing
-    function confirmModal(message, options = {}){
-      const { title = 'Confirm', yesText = 'OK', noText = 'Cancel' } = options;
-      return new Promise((resolve) => {
-        const modal = document.createElement('div');
-        modal.style.cssText = `
-          position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000;
-          display: flex; align-items: center; justify-content: center; padding: 12px;
-        `;
-        const dialog = document.createElement('div');
-        dialog.style.cssText = `
-          background: #fff; color: #000; padding: 16px 20px; border-radius: 8px; width: 100%;
-          max-width: 420px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-        `;
-        dialog.innerHTML = `
-          <h3 style="margin:0 0 10px 0; font-size:18px;">${title}</h3>
-          <p style="margin:0 0 16px 0; line-height:1.4;">${message}</p>
-          <div style="display:flex; gap:8px; justify-content:flex-end;">
-            <button id="cmCancel" class="btn btn-secondary">${noText}</button>
-            <button id="cmOk" class="btn">${yesText}</button>
-          </div>
-        `;
-        modal.appendChild(dialog);
-        document.body.appendChild(modal);
-        const cleanup = () => { document.body.removeChild(modal); };
-        modal.addEventListener('click', (e) => { if (e.target === modal) { cleanup(); resolve(false); } });
-        dialog.querySelector('#cmCancel').addEventListener('click', () => { cleanup(); resolve(false); });
-        dialog.querySelector('#cmOk').addEventListener('click', () => { cleanup(); resolve(true); });
-      });
-    }
-
     function renderDay(){
       const dateObj = parseDateLocal(selectedDate);
-      dayTitle.textContent = dateObj.toDateString();
+      const label = getDayLabel(selectedDate);
+      dayTitle.textContent = label ? `${dateObj.toDateString()} • ${label}` : dateObj.toDateString();
+      if(dayLabelInput){
+        dayLabelInput.value = label;
+      }
+      if(clearDayLabelBtn){
+        clearDayLabelBtn.disabled = !label;
+      }
       entriesEl.innerHTML = '';
       const list = history[selectedDate] || [];
       list.forEach((text, idx) => {
@@ -331,7 +419,7 @@ if (typeof document !== 'undefined') {
         entriesEl.appendChild(li);
       });
       if(resetDayBtn){
-        resetDayBtn.disabled = list.length === 0;
+        resetDayBtn.disabled = list.length === 0 && !getDayLabel(selectedDate);
       }
       updateDateInput();
     }
@@ -344,6 +432,7 @@ if (typeof document !== 'undefined') {
       save();
       renderDay();
       renderCalendar();
+      updateTitleSelect();
     });
 
     if(resetDayBtn){
@@ -351,21 +440,126 @@ if (typeof document !== 'undefined') {
         const ok = await confirmModal('Clear all entries for this day?', { yesText: 'Clear', noText: 'Cancel', title: 'Clear Day' });
         if(!ok) return;
         delete history[selectedDate];
+        delete titles[selectedDate];
         save();
+        saveTitles();
         renderDay();
         renderCalendar();
+        updateTitleSelect();
+      });
+    }
+
+    function buildHistoryExportPayload(){
+      const payload = { history: {}, titles: {} };
+      Object.keys(history).forEach(date => {
+        const list = history[date];
+        if(Array.isArray(list)){
+          payload.history[date] = [...list];
+        }
+      });
+      Object.keys(titles).forEach(date => {
+        const label = titles[date];
+        if(typeof label === 'string' && label.trim()){
+          payload.titles[date] = label.trim();
+        }
+      });
+      if(Object.keys(payload.titles).length === 0) delete payload.titles;
+      return payload;
+    }
+
+    function triggerDownload(blob, filename){
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function slugifyLabel(label){
+      return label.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'labeled-days';
+    }
+
+    function buildTitleExport(label){
+      const dates = Object.keys(titles).filter(date => titles[date] === label);
+      const result = { label, dates: {} };
+      dates.forEach(date => {
+        result.dates[date] = {
+          title: label,
+          entries: Array.isArray(history[date]) ? [...history[date]] : []
+        };
+      });
+      return result;
+    }
+
+    if(saveDayLabelBtn){
+      saveDayLabelBtn.addEventListener('click', () => {
+        if(!dayLabelInput) return;
+        const value = dayLabelInput.value.trim();
+        if(value){
+          titles[selectedDate] = value;
+        } else {
+          delete titles[selectedDate];
+        }
+        saveTitles();
+        updateTitleSelect();
+        renderCalendar();
+        renderDay();
+      });
+    }
+
+    if(clearDayLabelBtn){
+      clearDayLabelBtn.addEventListener('click', () => {
+        delete titles[selectedDate];
+        saveTitles();
+        if(dayLabelInput) dayLabelInput.value = '';
+        updateTitleSelect();
+        renderCalendar();
+        renderDay();
+      });
+    }
+
+    if(dayLabelInput){
+      dayLabelInput.addEventListener('keydown', (e) => {
+        if(e.key === 'Enter'){
+          e.preventDefault();
+          if(saveDayLabelBtn) saveDayLabelBtn.click();
+        }
+      });
+    }
+
+    if(exportTitleHistoryBtn){
+      exportTitleHistoryBtn.addEventListener('click', () => {
+        if(!titleExportSelect) return;
+        const label = titleExportSelect.value;
+        if(!label){
+          alert('Select a title to export.');
+          return;
+        }
+        const payload = buildTitleExport(label);
+        if(!Object.keys(payload.dates).length){
+          alert(`No days found with title "${label}".`);
+          return;
+        }
+        const data = JSON.stringify(payload, null, 2);
+        const blob = new Blob([data], {type:'application/json'});
+        const filename = `workout_history_${slugifyLabel(label)}.json`;
+        triggerDownload(blob, filename);
+        if(navigator.clipboard){
+          navigator.clipboard.writeText(data).then(()=>{
+            alert(`History for "${label}" exported and copied to clipboard ✅`);
+          }).catch(()=> alert(`History for "${label}" exported (clipboard copy failed)`));
+        } else {
+          alert(`History for "${label}" exported. Copy manually:\n\n${data}`);
+        }
       });
     }
 
     exportBtn.addEventListener('click', () => {
-      const data = JSON.stringify(history, null, 2);
+      const payload = buildHistoryExportPayload();
+      const data = JSON.stringify(payload, null, 2);
       const blob = new Blob([data], {type:'application/json'});
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = 'workout_history.json';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      triggerDownload(blob, 'workout_history.json');
       if(navigator.clipboard){
         navigator.clipboard.writeText(data).then(()=>{
           alert('History exported and copied to clipboard ✅');
@@ -388,6 +582,7 @@ if (typeof document !== 'undefined') {
           save();
           renderCalendar();
           renderDay();
+          updateTitleSelect();
           alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         } else {
           alert('Invalid file');
@@ -408,7 +603,7 @@ if (typeof document !== 'undefined') {
       if(jsonObj && typeof jsonObj === 'object'){
         const res = mergeHistory(jsonObj);
         if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay();
+        save(); renderCalendar(); renderDay(); updateTitleSelect();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
       }
@@ -416,7 +611,7 @@ if (typeof document !== 'undefined') {
       if(ai){
         const res = mergeHistory(ai);
         if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay();
+        save(); renderCalendar(); renderDay(); updateTitleSelect();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
       }
@@ -424,7 +619,7 @@ if (typeof document !== 'undefined') {
       if(csv){
         const res = mergeHistory(csv);
         if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay();
+        save(); renderCalendar(); renderDay(); updateTitleSelect();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
       }
@@ -484,6 +679,7 @@ if (typeof document !== 'undefined') {
         save();
         renderDay();
         renderCalendar();
+        updateTitleSelect();
         alert(`Saved ${res.added} lines, ${res.skipped} duplicates`);
       };
       waitForSession();
@@ -492,10 +688,12 @@ if (typeof document !== 'undefined') {
     window.addEventListener('wt-history-updated', () => {
       renderCalendar();
       renderDay();
+      updateTitleSelect();
     });
 
     renderCalendar();
     renderDay();
+    updateTitleSelect();
   });
 }
 if (typeof module !== 'undefined') {

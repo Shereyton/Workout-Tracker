@@ -104,21 +104,30 @@
           <button id="calGo" class="btn btn-secondary" disabled>Go</button>
         </div>
         <div id="calendar"></div>
-        <div id="dayDetails" class="day-details">
-          <h4 id="dayTitle"></h4>
-          <ul id="entries"></ul>
-          <div class="inline-row mt-6">
-            <input type="text" id="entryInput" class="field" placeholder="Add workout note">
-            <button id="addEntry" class="btn btn-secondary flex-fixed-80">Add</button>
-          </div>
-          <button id="resetDay" class="btn btn-reset mt-8">Reset Day</button>
+      <div id="dayDetails" class="day-details">
+        <h4 id="dayTitle"></h4>
+        <div class="inline-row mt-6 day-label-row">
+          <input type="text" id="dayLabelInput" class="field" placeholder="Set day title (e.g., Back day)">
+          <button id="saveDayLabel" class="btn btn-secondary flex-fixed-120">Save</button>
+          <button id="clearDayLabel" class="btn btn-secondary flex-fixed-120" disabled>Clear</button>
         </div>
-        <div class="history-actions">
-          <button id="saveTodaySession" class="btn btn-secondary">Save Today from Session</button>
-          <button id="exportHistory" class="btn btn-secondary">Export History</button>
-          <input type="file" id="importHistoryFile" class="hidden-input" accept="application/json">
-          <button id="importHistory" class="btn btn-secondary">Import History</button>
+        <ul id="entries"></ul>
+        <div class="inline-row mt-6">
+          <input type="text" id="entryInput" class="field" placeholder="Add workout note">
+          <button id="addEntry" class="btn btn-secondary flex-fixed-80">Add</button>
         </div>
+        <button id="resetDay" class="btn btn-reset mt-8">Reset Day</button>
+      </div>
+      <div class="history-actions">
+        <button id="saveTodaySession" class="btn btn-secondary">Save Today from Session</button>
+        <button id="exportHistory" class="btn btn-secondary">Export History</button>
+        <input type="file" id="importHistoryFile" class="hidden-input" accept="application/json">
+        <button id="importHistory" class="btn btn-secondary">Import History</button>
+        <select id="titleExportSelect" class="field field--compact history-title-select">
+          <option value="">Export by title…</option>
+        </select>
+        <button id="exportTitleHistory" class="btn btn-secondary flex-fixed-120">Export Title</button>
+      </div>
         <div id="pasteImport">
           <textarea id="pasteJson" placeholder="Paste JSON / AI text / CSV here"></textarea>
           <button id="importFromPaste" class="btn btn-secondary mt-8">Import From Paste</button>
