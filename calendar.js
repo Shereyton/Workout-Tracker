@@ -38,9 +38,10 @@ function parseAiText(text, selectedDate){
 function parseCsv(text, selectedDate){
   if(!/Exercise\s*,\s*Set\s*,\s*Weight\s*,\s*Reps/i.test(text)) return null;
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  lines.shift();
+  const headerIndex = lines.findIndex(line => /Exercise\s*,\s*Set\s*,\s*Weight\s*,\s*Reps/i.test(line));
+  if(headerIndex === -1) return null;
   const out = [];
-  lines.forEach(l=>{
+  lines.slice(headerIndex + 1).forEach(l=>{
     const cols = l.split(',');
     if(cols.length >=4){
       out.push(`${cols[0].trim()}: ${cols[2].trim()} lbs × ${cols[3].trim()} reps`);

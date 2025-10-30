@@ -57,7 +57,6 @@ describe('normalizePayload - mixed exercises', () => {
     expect(norm.totalSets).toBe(
       squat.sets.length + jog.sets.length + sup.sets.length
     );
-    expect(norm.schema).toBe(2);
+    expect(norm.schema).toBe(3);
   });
 });
-

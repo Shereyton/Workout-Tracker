@@ -18,9 +18,21 @@ These guardrails apply when logging, editing, merging current exercise into sess
 
 ## Export Formats
 
-- JSON: `workout_YYYY-MM-DD.json` with fields: `date`, `timestamp`, `totalExercises`, `totalSets`, `exercises[]`, optional `workoutNotes[]`, optional `session{ sessionStart, sessionEnd, sessionDurationSec }`, and `schema` (currently 2).
+- JSON: `workout_YYYY-MM-DD.json` includes the normalized session plus context fields:
+  - Core fields: `date`, `timestamp`, `totalExercises`, `totalSets`, `exercises[]`, `schema` (currently `3`).
+  - Optional extras saved when provided: `session{ sessionStart, sessionEnd, sessionDurationSec }`, `workoutNotes[]`, `goals[]`, `recoverySnapshot`, `constraints`, `consistency`, and `exerciseHighlights`.
 - CSV: header `Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)`. If session time is included, metadata rows are prepended.
-- AI Text: human-readable summary including optional session time and workout notes (non-log freeform notes only).
+- AI Text: structured summary with session snapshot, consistency metrics, goals, recovery/constraint context, exercise highlights (including PR flags/trends), optional freeform notes, and a tailored prompt for AI coaching.
+
+## Context Panels
+
+Right under the workout summary you can capture extra context so exports tell AI exactly what you need:
+
+- **Goals & Focus** – add or remove short-term goals; these feed straight into the export.
+- **Recovery Snapshot** – one-tap chips for sleep, energy, soreness, nutrition plus optional notes so AI knows how you feel going in.
+- **Schedule & Constraints** – log upcoming conflicts and areas to de-emphasize; they’re surfaced in the AI prompt so smart plans respect your calendar/body.
+
+The export dialog now uses this context along with recent session history to compute consistency metrics, highlight trends/PRs, and expand the AI request so you get richer feedback automatically.
 
 ## History
 
@@ -34,3 +46,7 @@ The calendar includes Prev/Next buttons plus Today and Go-to-date controls for q
 ## Testing
 
 Run tests with `npm test`.
+
+## Playground Preview
+
+Run `npm run playground` to spin up a lightweight dev server (via `lite-server`) at `http://localhost:3000`. The page auto-reloads whenever you save changes to files in this repo, giving you a quick way to try updates in the browser without deploying.

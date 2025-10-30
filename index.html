@@ -91,6 +91,107 @@
         <div class="notice">Autosaves locally. Export when finished.</div>
       </div>
 
+      <div class="context-grid">
+        <section id="dayTypeSection" class="context-card">
+          <h3>Day Type</h3>
+          <div class="chip-field" data-metric="dayType">
+            <span class="chip-label">Today</span>
+            <div class="chip-options" role="group" aria-label="Day type">
+              <button class="chip-option daytype-option" data-value="Chest">Chest</button>
+              <button class="chip-option daytype-option" data-value="Back">Back</button>
+              <button class="chip-option daytype-option" data-value="Legs">Legs</button>
+              <button class="chip-option daytype-option" data-value="Shoulders">Shoulders</button>
+              <button class="chip-option daytype-option" data-value="Arms">Arms</button>
+              <button class="chip-option daytype-option" data-value="Push">Push</button>
+              <button class="chip-option daytype-option" data-value="Pull">Pull</button>
+              <button class="chip-option daytype-option" data-value="Upper">Upper</button>
+              <button class="chip-option daytype-option" data-value="Lower">Lower</button>
+              <button class="chip-option daytype-option" data-value="Full Body">Full Body</button>
+              <button class="chip-option daytype-option" data-value="Cardio">Cardio</button>
+            </div>
+          </div>
+          <div class="inline-row inline-row--tight">
+            <input type="text" id="dayTypeCustomInput" class="field field--compact" placeholder="Custom (e.g., Hypertrophy Back)">
+            <button id="addDayTypeCustomBtn" class="btn btn-secondary flex-fixed-120">Set Custom</button>
+          </div>
+          <div class="chip-field">
+            <span class="chip-label">Compare</span>
+            <div class="chip-options" role="group" aria-label="Comparison window">
+              <button class="chip-option compare-option" data-value="none">None</button>
+              <button class="chip-option compare-option" data-value="3">Last 3</button>
+              <button class="chip-option compare-option" data-value="7">Last 7</button>
+              <button class="chip-option compare-option" data-value="all">All</button>
+            </div>
+          </div>
+        </section>
+        <section id="goalsSection" class="context-card">
+          <h3>Goals &amp; Focus</h3>
+          <div class="inline-row inline-row--tight">
+            <input type="text" id="goalInput" class="field field--compact" placeholder="Add goal or focus">
+            <button id="addGoalBtn" class="btn btn-secondary flex-fixed-120">Add Goal</button>
+          </div>
+          <div id="goalsEmpty" class="empty-hint muted-text">No goals yet. Add a focus to tailor AI feedback.</div>
+          <div id="goalsChips" class="chip-list" aria-live="polite"></div>
+        </section>
+
+        <section id="recoverySection" class="context-card">
+          <h3>Recovery Snapshot</h3>
+          <div class="chip-field" data-metric="sleepQuality">
+            <span class="chip-label">Sleep</span>
+            <div class="chip-options" role="group" aria-label="Sleep quality">
+              <button class="chip-option" data-value="great">Great</button>
+              <button class="chip-option" data-value="ok">Okay</button>
+              <button class="chip-option" data-value="rough">Rough Night</button>
+            </div>
+          </div>
+          <div class="chip-field" data-metric="energy">
+            <span class="chip-label">Energy</span>
+            <div class="chip-options" role="group" aria-label="Energy level">
+              <button class="chip-option" data-value="high">High</button>
+              <button class="chip-option" data-value="steady">Steady</button>
+              <button class="chip-option" data-value="low">Low</button>
+            </div>
+          </div>
+          <div class="chip-field" data-metric="soreness">
+            <span class="chip-label">Soreness</span>
+            <div class="chip-options" role="group" aria-label="Soreness">
+              <button class="chip-option" data-value="fresh">Fresh</button>
+              <button class="chip-option" data-value="moderate">Moderate</button>
+              <button class="chip-option" data-value="beat">Beat Up</button>
+            </div>
+          </div>
+          <div class="chip-field" data-metric="nutrition">
+            <span class="chip-label">Nutrition</span>
+            <div class="chip-options" role="group" aria-label="Nutrition consistency">
+              <button class="chip-option" data-value="dialed">Dialed In</button>
+              <button class="chip-option" data-value="decent">Decent</button>
+              <button class="chip-option" data-value="off">Off Today</button>
+            </div>
+          </div>
+          <textarea id="recoveryNotes" class="field field--compact" placeholder="Optional: add quick notes (e.g., slept 6h, sore hamstrings)"></textarea>
+        </section>
+
+        <section id="constraintsSection" class="context-card">
+          <h3>Schedule &amp; Constraints</h3>
+          <div class="inline-row inline-row--tight">
+            <input type="text" id="constraintInput" class="field field--compact" placeholder="Add schedule note (e.g., Travel Friday)">
+            <button id="addConstraintBtn" class="btn btn-secondary flex-fixed-120">Add Note</button>
+          </div>
+          <div id="constraintsEmpty" class="empty-hint muted-text">No schedule notes.</div>
+          <div id="constraintsList" class="chip-list" aria-live="polite"></div>
+          <div class="chip-field chip-field--wrap" data-constraint-group="avoidAreas">
+            <span class="chip-label">Avoid Emphasis</span>
+            <div class="chip-options" role="group" aria-label="Areas to de-emphasize">
+              <button class="chip-option chip-toggle" data-value="Upper Body">Upper Body</button>
+              <button class="chip-option chip-toggle" data-value="Lower Body">Lower Body</button>
+              <button class="chip-option chip-toggle" data-value="Push">Push</button>
+              <button class="chip-option chip-toggle" data-value="Pull">Pull</button>
+              <button class="chip-option chip-toggle" data-value="Core/Conditioning">Core &amp; Conditioning</button>
+            </div>
+          </div>
+        </section>
+      </div>
+
       <div id="calendarSection">
         <h3>Workout History</h3>
         <div class="calendar-nav">
@@ -135,6 +236,9 @@
       </div>
 
       <button id="exportBtn" class="btn btn-export">Export (JSON + AI + CSV)</button>
+      <div id="exportHint" class="export-hint" aria-live="polite"></div>
+
+      <button id="resetContextBtn" class="btn btn-secondary mt-8">Reset Context</button>
 
       <!-- Preference toggle at the bottom -->
       <button id="toggleSessionPrefBtn" class="btn btn-secondary mt-8">Auto-include session time in export: OFF</button>

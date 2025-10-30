@@ -1,4 +1,4 @@
-const { parseDateLocal, parseAiText, snapshotToLines } = require('../calendar');
+const { parseDateLocal, parseAiText, parseCsv, snapshotToLines } = require('../calendar');
 
 test('parseDateLocal returns exact date', () => {
   const d = parseDateLocal('2025-08-01');
@@ -16,6 +16,21 @@ test('parseAiText parses exported AI text format', () => {
       'Bench Press: 185 lbs × 5 reps',
       'Squat: 225 lbs × 5 reps'
     ]
+  });
+});
+
+test('parseCsv ignores metadata rows before header', () => {
+  const csv = [
+    'SessionStart,2024-07-04T10:00:00Z',
+    'SessionEnd,2024-07-04T11:00:00Z',
+    'SessionDuration(sec),3600',
+    '',
+    'Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)',
+    'Bench Press,1,185,5,,,08:15,,'
+  ].join('\n');
+  const res = parseCsv(csv, '2024-07-04');
+  expect(res).toEqual({
+    '2024-07-04': ['Bench Press: 185 lbs × 5 reps']
   });
 });
 

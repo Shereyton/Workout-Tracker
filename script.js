@@ -8,9 +8,15 @@ const WT_KEYS = {
   theme: 'wt_theme',
   schema: 'wt_schemaVersion',
   prefSessionTime: 'wt_pref_sessionTimeAlways',
+  goals: 'wt_goals',
+  recovery: 'wt_recoverySnapshot',
+  constraints: 'wt_constraints',
+  archive: 'wt_sessionArchive',
+  dayType: 'wt_dayType',
+  dayCompare: 'wt_dayCompareWindow',
 };
 
-const WT_SCHEMA_VERSION = 2;
+const WT_SCHEMA_VERSION = 3;
 
 // ----- Data Health Utilities -----
 function coercePositiveNumber(n) {
@@ -100,7 +106,7 @@ function normalizePayload(payload) {
   const totalSets = exs.reduce((s, e) => s + e.sets.length, 0);
   const date = String(payload.date || new Date().toISOString().split('T')[0]);
   const ts = String(payload.timestamp || new Date().toISOString());
-  return {
+  const normalized = {
     date,
     timestamp: ts,
     totalExercises: exs.length,
@@ -108,6 +114,559 @@ function normalizePayload(payload) {
     exercises: exs,
     schema: WT_SCHEMA_VERSION,
   };
+  const goals = sanitizeGoals(payload.goals);
+  if (goals.length) normalized.goals = goals;
+  const recovery = sanitizeRecoverySnapshot(
+    payload.recoverySnapshot || payload.recoverySnapshotRaw,
+  );
+  if (hasMeaningfulRecovery(recovery)) normalized.recoverySnapshot = recovery;
+  const constraints = sanitizeConstraints(payload.constraints);
+  if (hasConstraints(constraints)) normalized.constraints = constraints;
+  const consistency = sanitizeConsistency(payload.consistency);
+  if (consistency) normalized.consistency = consistency;
+  const highlights = sanitizeExerciseHighlights(payload.exerciseHighlights);
+  if (highlights.length) normalized.exerciseHighlights = highlights;
+  return normalized;
+}
+
+const MAX_GOALS = 6;
+const MAX_NOTES = 6;
+const MAX_NOTE_LENGTH = 160;
+const RECOVERY_METRICS = {
+  sleepQuality: ['great', 'ok', 'rough'],
+  energy: ['high', 'steady', 'low'],
+  soreness: ['fresh', 'moderate', 'beat'],
+  nutrition: ['dialed', 'decent', 'off'],
+};
+const RECOVERY_METRIC_LABELS = {
+  sleepQuality: 'Sleep',
+  energy: 'Energy',
+  soreness: 'Soreness',
+  nutrition: 'Nutrition',
+};
+const RECOVERY_VALUE_LABELS = {
+  sleepQuality: {
+    great: 'Great (well rested)',
+    ok: 'Okay',
+    rough: 'Rough night',
+  },
+  energy: {
+    high: 'High',
+    steady: 'Steady',
+    low: 'Low',
+  },
+  soreness: {
+    fresh: 'Fresh',
+    moderate: 'Moderate',
+    beat: 'Beat up',
+  },
+  nutrition: {
+    dialed: 'Dialed in',
+    decent: 'Decent',
+    off: 'Off plan',
+  },
+};
+const DEFAULT_RECOVERY_SNAPSHOT = {
+  sleepQuality: null,
+  energy: null,
+  soreness: null,
+  nutrition: null,
+  notes: [],
+  updatedAt: null,
+};
+const DEFAULT_CONSTRAINTS = {
+  scheduleNotes: [],
+  avoidAreas: [],
+};
+
+function trimString(input, maxLength = 200) {
+  return String(input || '').trim().slice(0, maxLength);
+}
+
+function dedupeStrings(list, limit = 10, maxLength = 120) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  list.forEach((item) => {
+    const value = trimString(item, maxLength);
+    if (!value) return;
+    const key = value.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(value);
+  });
+  return out.slice(0, limit);
+}
+
+function sanitizeGoals(value) {
+  return dedupeStrings(value, MAX_GOALS, 140);
+}
+
+function sanitizeRecoverySnapshot(value) {
+  if (!value || typeof value !== 'object') return { ...DEFAULT_RECOVERY_SNAPSHOT };
+  const out = { ...DEFAULT_RECOVERY_SNAPSHOT };
+  Object.keys(RECOVERY_METRICS).forEach((metric) => {
+    const val = value[metric];
+    if (RECOVERY_METRICS[metric].includes(val)) out[metric] = val;
+  });
+  if (Array.isArray(value.notes)) {
+    out.notes = dedupeStrings(value.notes, MAX_NOTES, MAX_NOTE_LENGTH);
+  } else if (typeof value.notes === 'string') {
+    const trimmed = trimString(value.notes, MAX_NOTE_LENGTH);
+    out.notes = trimmed ? [trimmed] : [];
+  }
+  if (value.updatedAt) out.updatedAt = trimString(value.updatedAt, 32);
+  return out;
+}
+
+function hasMeaningfulRecovery(snapshot) {
+  if (!snapshot) return false;
+  return (
+    snapshot.notes.length > 0 ||
+    Object.keys(RECOVERY_METRICS).some((metric) => !!snapshot[metric])
+  );
+}
+
+function sanitizeConstraints(value) {
+  if (!value || typeof value !== 'object') return { ...DEFAULT_CONSTRAINTS };
+  const out = { ...DEFAULT_CONSTRAINTS };
+  out.scheduleNotes = dedupeStrings(value.scheduleNotes, MAX_NOTES, MAX_NOTE_LENGTH);
+  out.avoidAreas = dedupeStrings(value.avoidAreas, 8, 40);
+  return out;
+}
+
+function hasConstraints(constraints) {
+  if (!constraints) return false;
+  return constraints.scheduleNotes.length > 0 || constraints.avoidAreas.length > 0;
+}
+
+function sanitizeConsistency(value) {
+  if (!value || typeof value !== 'object') return null;
+  const safeNumber = (n) => {
+    const num = Number(n);
+    return Number.isFinite(num) ? num : null;
+  };
+  const out = {};
+  if (value.past7) {
+    out.past7 = {
+      daysTrained: safeNumber(value.past7.daysTrained) ?? 0,
+      totalSets: safeNumber(value.past7.totalSets) ?? 0,
+    };
+  }
+  if (value.past30) {
+    out.past30 = {
+      daysTrained: safeNumber(value.past30.daysTrained) ?? 0,
+      totalSets: safeNumber(value.past30.totalSets) ?? 0,
+    };
+  }
+  if (value.streakDays != null) {
+    out.streakDays = safeNumber(value.streakDays) ?? 0;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function sanitizeExerciseHighlights(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .slice(0, 8)
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const name = trimString(item.name, 80);
+      if (!name) return null;
+      const parsed = {
+        name,
+        today: trimString(item.today, 120) || null,
+        trend: trimString(item.trend, 160) || null,
+        previous: Array.isArray(item.previous)
+          ? item.previous.slice(0, 3).map((entry) => trimString(entry, 120)).filter(Boolean)
+          : [],
+        isPR: !!item.isPR,
+      };
+      return parsed;
+    })
+    .filter(Boolean);
+}
+
+function parseYMD(dateStr) {
+  if (typeof dateStr !== 'string') return null;
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day)
+  ) {
+    return null;
+  }
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt;
+}
+
+function formatYMD(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function formatShortDate(dateStr) {
+  const parsed = parseYMD(dateStr);
+  if (!parsed) return String(dateStr || '');
+  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function formatSecondsHuman(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${secs}s`;
+  }
+  return `${secs}s`;
+}
+
+function formatVolumeNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '0';
+  return Math.round(num).toLocaleString();
+}
+
+function formatDistanceMiles(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return `${num.toFixed(2)} mi`;
+}
+
+function describeRecoverySnapshotLines(snapshot) {
+  if (!snapshot) return [];
+  const lines = [];
+  Object.keys(RECOVERY_METRIC_LABELS).forEach((metric) => {
+    const value = snapshot[metric];
+    if (!value) return;
+    const label = RECOVERY_VALUE_LABELS[metric]
+      ? RECOVERY_VALUE_LABELS[metric][value]
+      : null;
+    if (label) {
+      lines.push(`${RECOVERY_METRIC_LABELS[metric]}: ${label}`);
+    }
+  });
+  if (Array.isArray(snapshot.notes) && snapshot.notes.length) {
+    snapshot.notes.forEach((note) => {
+      const text = trimString(note, MAX_NOTE_LENGTH);
+      if (text) lines.push(`Note: ${text}`);
+    });
+  }
+  return lines;
+}
+
+function describeConstraintsLines(constraints) {
+  if (!constraints) return [];
+  const lines = [];
+  if (Array.isArray(constraints.scheduleNotes) && constraints.scheduleNotes.length) {
+    constraints.scheduleNotes.forEach((note) => {
+      const text = trimString(note, MAX_NOTE_LENGTH);
+      if (text) lines.push(`Schedule: ${text}`);
+    });
+  }
+  if (Array.isArray(constraints.avoidAreas) && constraints.avoidAreas.length) {
+    lines.push(`Avoid Emphasis: ${constraints.avoidAreas.join(', ')}`);
+  }
+  return lines;
+}
+
+function computeSessionStats(payload) {
+  const date = payload && payload.date ? String(payload.date) : null;
+  const exercises = Array.isArray(payload && payload.exercises)
+    ? payload.exercises
+    : [];
+  const map = new Map();
+  let totalSets = 0;
+  let totalVolume = 0;
+  let totalCardioDuration = 0;
+
+  const ensureEntry = (name, type) => {
+    if (!map.has(name)) {
+      map.set(name, {
+        name,
+        type,
+        totalSets: 0,
+        totalVolume: 0,
+        totalDuration: 0,
+        totalDistance: 0,
+        topSet: null,
+        bestDescription: null,
+        longestDuration: 0,
+      });
+    }
+    return map.get(name);
+  };
+
+  const recordStrengthSet = (name, weight, reps) => {
+    const entry = ensureEntry(name, 'strength');
+    entry.totalSets += 1;
+    const vol = weight * reps;
+    entry.totalVolume += vol;
+    totalVolume += vol;
+    totalSets += 1;
+    if (
+      !entry.topSet ||
+      weight > entry.topSet.weight ||
+      (weight === entry.topSet.weight && reps > entry.topSet.reps)
+    ) {
+      entry.topSet = { weight, reps };
+      entry.bestDescription = `${weight} lbs × ${reps} reps`;
+    }
+  };
+
+  const recordCardioSet = (name, duration, distance) => {
+    const entry = ensureEntry(name, 'cardio');
+    entry.totalSets += 1;
+    entry.totalDuration += duration;
+    totalCardioDuration += duration;
+    totalSets += 1;
+    if (Number.isFinite(distance) && distance > 0) {
+      entry.totalDistance += distance;
+    }
+    if (!entry.bestDescription || duration > entry.longestDuration) {
+      entry.longestDuration = duration;
+      const distanceText = Number.isFinite(distance) && distance > 0
+        ? `${distance} mi in ${formatSecondsHuman(duration)}`
+        : `${formatSecondsHuman(duration)}`;
+      entry.bestDescription = distanceText;
+    }
+  };
+
+  exercises.forEach((exercise) => {
+    if (exercise && exercise.isSuperset) {
+      (exercise.sets || []).forEach((set) => {
+        (set.exercises || []).forEach((inner) => {
+          const name = trimString(inner.name || exercise.name || 'Exercise', 80);
+          const weight = coercePositiveNumber(inner.weight);
+          const reps = Math.max(1, Math.floor(coercePositiveNumber(inner.reps)));
+          recordStrengthSet(name, weight, reps);
+        });
+      });
+    } else if (exercise && exercise.isCardio) {
+      (exercise.sets || []).forEach((set) => {
+        const duration = Math.max(
+          0,
+          Math.floor(coercePositiveNumber(set.duration)),
+        );
+        let distance = null;
+        if (set.distance !== null && set.distance !== undefined) {
+          const d = Number(set.distance);
+          if (Number.isFinite(d) && d >= 0) distance = d;
+        }
+        recordCardioSet(trimString(exercise.name || 'Cardio', 80), duration, distance);
+      });
+    } else if (exercise) {
+      (exercise.sets || []).forEach((set) => {
+        const weight = coercePositiveNumber(set.weight);
+        const reps = Math.max(1, Math.floor(coercePositiveNumber(set.reps)));
+        recordStrengthSet(trimString(exercise.name || 'Exercise', 80), weight, reps);
+      });
+    }
+  });
+
+  const stats = Array.from(map.values()).map((entry) => ({
+    name: entry.name,
+    type: entry.type,
+    totalSets: entry.totalSets,
+    totalVolume: entry.totalVolume,
+    totalDuration: entry.totalDuration,
+    totalDistance: entry.totalDistance,
+    topSet: entry.topSet,
+    bestDescription: entry.bestDescription,
+  }));
+
+  return {
+    date,
+    totalSets,
+    totalVolume,
+    totalCardioDuration,
+    exercises: stats,
+  };
+}
+
+function buildExerciseHighlightsForExport(currentStats, previousStats) {
+  if (!currentStats || !Array.isArray(currentStats.exercises)) return [];
+  const prevByName = new Map();
+  previousStats.forEach((session) => {
+    if (!session || !Array.isArray(session.exercises)) return;
+    session.exercises.forEach((exercise) => {
+      if (!exercise || !exercise.name) return;
+      if (!prevByName.has(exercise.name)) prevByName.set(exercise.name, []);
+      prevByName.get(exercise.name).push({
+        date: session.date,
+        stats: exercise,
+      });
+    });
+  });
+
+  const highlights = [];
+  currentStats.exercises.forEach((exercise) => {
+    const name = exercise.name;
+    const prevEntries = prevByName.get(name) || [];
+    const recent = prevEntries.slice(0, 3);
+    const highlight = {
+      name,
+      today: null,
+      trend: null,
+      previous: [],
+      isPR: false,
+    };
+
+    if (exercise.type === 'strength') {
+      const description = exercise.bestDescription
+        ? `${exercise.bestDescription}`
+        : `${exercise.totalSets} sets completed`;
+      highlight.today = `${description} (${exercise.totalSets} set${exercise.totalSets === 1 ? '' : 's'})`;
+
+      const volumes = recent.map((entry) => entry.stats.totalVolume || 0);
+      if (volumes.length) {
+        const avgVolume =
+          volumes.reduce((sum, value) => sum + value, 0) / volumes.length;
+        if (avgVolume > 0) {
+          const delta = ((exercise.totalVolume - avgVolume) / avgVolume) * 100;
+          highlight.trend = `${delta >= 0 ? '+' : ''}${delta.toFixed(
+            1,
+          )}% volume vs avg last ${volumes.length}`;
+        }
+        const maxPrevWeight = prevEntries.reduce((max, entry) => {
+          const w =
+            entry.stats.topSet && Number(entry.stats.topSet.weight)
+              ? Number(entry.stats.topSet.weight)
+              : 0;
+          return Math.max(max, w);
+        }, 0);
+        const currentWeight =
+          exercise.topSet && Number(exercise.topSet.weight)
+            ? Number(exercise.topSet.weight)
+            : 0;
+        highlight.isPR = currentWeight > maxPrevWeight && maxPrevWeight > 0;
+      } else {
+        highlight.trend = "First recent strength session logged.";
+      }
+    } else if (exercise.type === 'cardio') {
+      const distanceText = formatDistanceMiles(exercise.totalDistance);
+      const durationText = formatSecondsHuman(exercise.totalDuration);
+      const base = distanceText
+        ? `${distanceText} in ${durationText}`
+        : `${durationText} total`;
+      highlight.today = `${base} (${exercise.totalSets} effort${exercise.totalSets === 1 ? '' : 's'})`;
+
+      const durations = recent.map((entry) => entry.stats.totalDuration || 0);
+      if (durations.length) {
+        const avgDuration =
+          durations.reduce((sum, value) => sum + value, 0) / durations.length;
+        if (avgDuration > 0) {
+          const delta =
+            ((exercise.totalDuration - avgDuration) / avgDuration) * 100;
+          highlight.trend = `${delta >= 0 ? '+' : ''}${delta.toFixed(
+            1,
+          )}% duration vs avg last ${durations.length}`;
+        }
+      } else {
+        highlight.trend = "First recent cardio session logged.";
+      }
+    }
+
+    highlight.previous = recent.map((entry) => {
+      const stats = entry.stats;
+      if (stats.type === 'strength') {
+        const desc = stats.bestDescription
+          ? stats.bestDescription
+          : `${stats.totalSets} sets`;
+        return `${formatShortDate(entry.date)}: ${desc}`;
+      }
+      const distanceText = formatDistanceMiles(stats.totalDistance);
+      const durationText = formatSecondsHuman(stats.totalDuration);
+      const base = distanceText
+        ? `${distanceText} in ${durationText}`
+        : durationText;
+      return `${formatShortDate(entry.date)}: ${base}`;
+    });
+
+    highlights.push(highlight);
+  });
+
+  return highlights.slice(0, 6);
+}
+
+function computeConsistencyMetricsFromStats(allStats, referenceDate) {
+  if (!Array.isArray(allStats) || !allStats.length) return null;
+  const refDate =
+    parseYMD(referenceDate) || parseYMD(allStats[0] && allStats[0].date);
+  if (!refDate) return null;
+
+  const totalsByDate = new Map();
+  allStats.forEach((session) => {
+    if (!session || !session.date) return;
+    const key = session.date;
+    const entry = totalsByDate.get(key) || { totalSets: 0 };
+    entry.totalSets += session.totalSets || 0;
+    totalsByDate.set(key, entry);
+  });
+
+  const gatherRange = (days) => {
+    const trainedDates = new Set();
+    let totalSets = 0;
+    totalsByDate.forEach((value, key) => {
+      const date = parseYMD(key);
+      if (!date) return;
+      const diff =
+        (refDate.getTime() - date.getTime()) / (1000 * 60 * 60 * 24);
+      if (diff >= 0 && diff < days) {
+        trainedDates.add(key);
+        totalSets += value.totalSets;
+      }
+    });
+    return { daysTrained: trainedDates.size, totalSets };
+  };
+
+  const past7 = gatherRange(7);
+  const past30 = gatherRange(30);
+
+  let streak = 0;
+  const streakCursor = new Date(refDate.getTime());
+  for (let i = 0; i < 120; i += 1) {
+    const key = formatYMD(streakCursor);
+    if (totalsByDate.has(key)) {
+      streak += 1;
+      streakCursor.setUTCDate(streakCursor.getUTCDate() - 1);
+    } else {
+      break;
+    }
+  }
+
+  return {
+    past7,
+    past30,
+    streakDays: streak,
+  };
+}
+
+function pruneArchive(map, limit = 90) {
+  const entries = Object.entries(map || {}).filter(
+    ([, value]) => value && typeof value === 'object',
+  );
+  entries.sort((a, b) => {
+    if (a[0] === b[0]) return 0;
+    return a[0] > b[0] ? -1 : 1;
+  });
+  if (entries.length <= limit) {
+    return Object.fromEntries(entries);
+  }
+  return Object.fromEntries(entries.slice(0, limit));
 }
 
 function deepClone(value) {
@@ -226,6 +785,17 @@ let session = { exercises: [], startedAt: null };
 let currentExercise = null;
 let needsRecover = false;
 let needsSaveAfterNormalize = false;
+let goals = sanitizeGoals(wtStorage.get(WT_KEYS.goals, []));
+let recoverySnapshot = sanitizeRecoverySnapshot(
+  wtStorage.get(WT_KEYS.recovery, DEFAULT_RECOVERY_SNAPSHOT),
+);
+let constraints = sanitizeConstraints(wtStorage.get(WT_KEYS.constraints, DEFAULT_CONSTRAINTS));
+let archivedSessions = wtStorage.get(WT_KEYS.archive, {});
+if (!archivedSessions || typeof archivedSessions !== 'object' || Array.isArray(archivedSessions)) {
+  archivedSessions = {};
+}
+let dayType = wtStorage.get(WT_KEYS.dayType, '');
+let dayCompare = wtStorage.get(WT_KEYS.dayCompare, 'none');
 if (typeof localStorage !== "undefined") {
   const s = wtStorage.get(WT_KEYS.session, null);
   const c = wtStorage.get(WT_KEYS.current, null);
@@ -310,6 +880,31 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseSearch = document.getElementById("exerciseSearch");
   const exerciseList = document.getElementById("exerciseList");
   const muscleFilter = document.getElementById("muscleFilter");
+  const goalInput = document.getElementById("goalInput");
+  const addGoalBtn = document.getElementById("addGoalBtn");
+  const goalsChips = document.getElementById("goalsChips");
+  const goalsEmpty = document.getElementById("goalsEmpty");
+  const constraintInput = document.getElementById("constraintInput");
+  const addConstraintBtn = document.getElementById("addConstraintBtn");
+  const constraintsList = document.getElementById("constraintsList");
+  const constraintsEmpty = document.getElementById("constraintsEmpty");
+  const recoveryNotes = document.getElementById("recoveryNotes");
+  const recoveryFields = Array.from(
+    document.querySelectorAll("#recoverySection .chip-field"),
+  );
+  const avoidAreaButtons = Array.from(
+    document.querySelectorAll('[data-constraint-group="avoidAreas"] .chip-option'),
+  );
+  const dayTypeButtons = Array.from(
+    document.querySelectorAll('.daytype-option'),
+  );
+  const compareButtons = Array.from(
+    document.querySelectorAll('.compare-option'),
+  );
+  const dayTypeCustomInput = document.getElementById('dayTypeCustomInput');
+  const addDayTypeCustomBtn = document.getElementById('addDayTypeCustomBtn');
+  const exportHint = document.getElementById('exportHint');
+  const resetContextBtn = document.getElementById('resetContextBtn');
 
   // --- Import UI ---
   function createConfirmModal(doc) {
@@ -466,6 +1061,385 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     handleImportText(text);
     closePasteImport();
   });
+
+  /* ------------------ GOALS, RECOVERY, CONSTRAINTS ------------------ */
+  function persistGoals() {
+    goals = sanitizeGoals(goals);
+    wtStorage.set(WT_KEYS.goals, goals);
+    renderGoals();
+  }
+
+  function renderGoals() {
+    if (!goalsChips || !goalsEmpty) return;
+    goalsChips.innerHTML = "";
+    const normalized = sanitizeGoals(goals);
+    goals = normalized;
+    goalsEmpty.classList.toggle("hidden", normalized.length > 0);
+    normalized.forEach((goal, idx) => {
+      const chip = document.createElement("div");
+      chip.className = "chip";
+      const label = document.createElement("span");
+      label.textContent = goal;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "chip-remove";
+      remove.dataset.index = String(idx);
+      remove.setAttribute("aria-label", `Remove goal ${goal}`);
+      remove.textContent = "×";
+      chip.appendChild(label);
+      chip.appendChild(remove);
+      goalsChips.appendChild(chip);
+    });
+  }
+
+  function handleAddGoal() {
+    if (!goalInput) return;
+    const value = trimString(goalInput.value, 140);
+    if (!value) return;
+    goals.push(value);
+    persistGoals();
+    goalInput.value = "";
+    updateGoalBtnState();
+  }
+
+  function updateGoalBtnState() {
+    if (!addGoalBtn || !goalInput) return;
+    addGoalBtn.disabled = !goalInput.value.trim();
+  }
+
+  if (goalsChips) {
+    goalsChips.addEventListener("click", (e) => {
+      const btn = e.target.closest(".chip-remove");
+      if (!btn) return;
+      const idx = Number(btn.dataset.index);
+      if (Number.isInteger(idx)) {
+        goals.splice(idx, 1);
+        persistGoals();
+        updateGoalBtnState();
+      }
+    });
+    renderGoals();
+  }
+  if (goalInput && addGoalBtn) {
+    goalInput.addEventListener("input", updateGoalBtnState);
+    goalInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleAddGoal();
+      }
+    });
+    addGoalBtn.addEventListener("click", handleAddGoal);
+    updateGoalBtnState();
+  }
+
+  function persistConstraints() {
+    constraints = sanitizeConstraints(constraints);
+    wtStorage.set(WT_KEYS.constraints, constraints);
+    renderConstraintsList();
+    renderAvoidAreas();
+  }
+
+  function renderConstraintsList() {
+    if (!constraintsList || !constraintsEmpty) return;
+    constraintsList.innerHTML = "";
+    const notes = Array.isArray(constraints.scheduleNotes)
+      ? constraints.scheduleNotes
+      : [];
+    const hasAvoid = Array.isArray(constraints.avoidAreas) && constraints.avoidAreas.length > 0;
+    constraintsEmpty.classList.toggle("hidden", notes.length > 0 || hasAvoid);
+    notes.forEach((note, idx) => {
+      const chip = document.createElement("div");
+      chip.className = "chip";
+      const label = document.createElement("span");
+      label.textContent = note;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "chip-remove";
+      remove.dataset.index = String(idx);
+      remove.setAttribute("aria-label", `Remove note ${note}`);
+      remove.textContent = "×";
+      chip.appendChild(label);
+      chip.appendChild(remove);
+      constraintsList.appendChild(chip);
+    });
+  }
+
+  function handleAddConstraint() {
+    if (!constraintInput) return;
+    const value = trimString(constraintInput.value, MAX_NOTE_LENGTH);
+    if (!value) return;
+    constraints.scheduleNotes = constraints.scheduleNotes || [];
+    constraints.scheduleNotes.push(value);
+    persistConstraints();
+    constraintInput.value = "";
+    updateConstraintBtnState();
+  }
+
+  function updateConstraintBtnState() {
+    if (!addConstraintBtn || !constraintInput) return;
+    addConstraintBtn.disabled = !constraintInput.value.trim();
+  }
+
+  if (constraintsList) {
+    constraintsList.addEventListener("click", (e) => {
+      const btn = e.target.closest(".chip-remove");
+      if (!btn) return;
+      const idx = Number(btn.dataset.index);
+      if (Number.isInteger(idx)) {
+        constraints.scheduleNotes.splice(idx, 1);
+        persistConstraints();
+        updateConstraintBtnState();
+      }
+    });
+    renderConstraintsList();
+  }
+
+  if (constraintInput && addConstraintBtn) {
+    constraintInput.addEventListener("input", updateConstraintBtnState);
+    constraintInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleAddConstraint();
+      }
+    });
+    addConstraintBtn.addEventListener("click", handleAddConstraint);
+    updateConstraintBtnState();
+  }
+
+  function renderAvoidAreas() {
+    if (!avoidAreaButtons.length) return;
+    const active = new Set(
+      (constraints.avoidAreas || []).map((area) => area.toLowerCase()),
+    );
+    avoidAreaButtons.forEach((btn) => {
+      const value = trimString(btn.dataset.value, 40);
+      if (!value) return;
+      const isActive = active.has(value.toLowerCase());
+      btn.classList.toggle("active", isActive);
+      btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+    constraintsEmpty?.classList.toggle(
+      "hidden",
+      (constraints.scheduleNotes && constraints.scheduleNotes.length > 0) ||
+        (constraints.avoidAreas && constraints.avoidAreas.length > 0),
+    );
+  }
+
+  if (avoidAreaButtons.length) {
+    avoidAreaButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const value = trimString(btn.dataset.value, 40);
+        if (!value) return;
+        const list = constraints.avoidAreas || [];
+        const idx = list.findIndex(
+          (entry) => entry.toLowerCase() === value.toLowerCase(),
+        );
+        if (idx >= 0) {
+          list.splice(idx, 1);
+        } else {
+          list.push(value);
+        }
+        constraints.avoidAreas = list;
+        persistConstraints();
+      });
+    });
+    renderAvoidAreas();
+  }
+
+  function persistRecoverySnapshot() {
+    recoverySnapshot.updatedAt = new Date().toISOString();
+    recoverySnapshot = sanitizeRecoverySnapshot(recoverySnapshot);
+    wtStorage.set(WT_KEYS.recovery, recoverySnapshot);
+  }
+
+  function renderRecovery() {
+    if (recoveryFields.length) {
+      recoveryFields.forEach((field) => {
+        const metric = field.dataset.metric;
+        if (!metric) return;
+        const value = recoverySnapshot[metric];
+        const buttons = field.querySelectorAll(".chip-option");
+        buttons.forEach((btn) => {
+          const isActive = value && btn.dataset.value === value;
+          btn.classList.toggle("active", !!isActive);
+          btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+        });
+      });
+    }
+    if (recoveryNotes) {
+      const text = (recoverySnapshot.notes || []).join("\n");
+      if (recoveryNotes.value !== text) recoveryNotes.value = text;
+    }
+  }
+
+  if (recoveryFields.length) {
+    recoveryFields.forEach((field) => {
+      const metric = field.dataset.metric;
+      if (!metric) return;
+      const buttons = field.querySelectorAll(".chip-option");
+      buttons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const value = trimString(btn.dataset.value, 20);
+          if (!value) return;
+          if (recoverySnapshot[metric] === value) {
+            recoverySnapshot[metric] = null;
+          } else {
+            recoverySnapshot[metric] = value;
+          }
+          persistRecoverySnapshot();
+          renderRecovery();
+        });
+      });
+    });
+  }
+
+  if (recoveryNotes) {
+    const handleRecoveryNotesInput = debounce(() => {
+      const lines = recoveryNotes.value
+        .split(/\r?\n/)
+        .map((line) => trimString(line, MAX_NOTE_LENGTH))
+        .filter(Boolean)
+        .slice(0, MAX_NOTES);
+      recoverySnapshot.notes = lines;
+      persistRecoverySnapshot();
+    }, 250);
+    recoveryNotes.addEventListener("input", handleRecoveryNotesInput);
+  }
+
+  renderRecovery();
+
+  /* ------------------ DAY TYPE ------------------ */
+  function renderDayType() {
+    if (dayTypeButtons.length) {
+      dayTypeButtons.forEach((btn) => {
+        const v = String(btn.dataset.value || '');
+        const active = v.toLowerCase() === String(dayType || '').toLowerCase();
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+    }
+    if (compareButtons.length) {
+      compareButtons.forEach((btn) => {
+        const v = String(btn.dataset.value || '');
+        const active = v === String(dayCompare || '3');
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+    }
+  }
+
+  function persistDayType() {
+    wtStorage.set(WT_KEYS.dayType, dayType);
+    // Sync to calendar titles for today
+    try {
+      const TITLE_KEY = 'wt_history_titles';
+      const raw = localStorage.getItem(TITLE_KEY);
+      const titles = raw ? JSON.parse(raw) : {};
+      const today = getLocalDateString();
+      if (dayType) titles[today] = String(dayType);
+      else delete titles[today];
+      localStorage.setItem(TITLE_KEY, JSON.stringify(titles));
+      window.dispatchEvent(new Event('wt-history-updated'));
+    } catch {}
+  }
+
+  if (dayTypeButtons.length) {
+    dayTypeButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const v = String(btn.dataset.value || '').trim();
+        dayType = dayType && dayType.toLowerCase() === v.toLowerCase() ? '' : v;
+        persistDayType();
+        renderDayType();
+        updateExportHint();
+      });
+    });
+  }
+  if (compareButtons.length) {
+    compareButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        dayCompare = String(btn.dataset.value || '3');
+        wtStorage.set(WT_KEYS.dayCompare, dayCompare);
+        renderDayType();
+        updateExportHint();
+      });
+    });
+  }
+  renderDayType();
+
+  function updateExportHint() {
+    if (!exportHint) return;
+    const day = dayType ? `Day: ${dayType}` : 'Day: —';
+    let win = 'Compare: —';
+    if (dayCompare === 'none') win = 'Compare: None';
+    else if (dayCompare === '3') win = 'Compare: Last 3';
+    else if (dayCompare === '7') win = 'Compare: Last 7';
+    else if (dayCompare === 'all') win = 'Compare: All';
+    exportHint.textContent = `${day} • ${win}`;
+  }
+  updateExportHint();
+
+  if (addDayTypeCustomBtn && dayTypeCustomInput) {
+    const updateBtn = () => {
+      addDayTypeCustomBtn.disabled = !dayTypeCustomInput.value.trim();
+    };
+    dayTypeCustomInput.addEventListener('input', updateBtn);
+    dayTypeCustomInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addDayTypeCustomBtn.click();
+      }
+    });
+    addDayTypeCustomBtn.addEventListener('click', () => {
+      const v = trimString(dayTypeCustomInput.value, 40);
+      if (!v) return;
+      dayType = v;
+      persistDayType();
+      renderDayType();
+      updateExportHint();
+      dayTypeCustomInput.value = '';
+      updateBtn();
+    });
+    updateBtn();
+  }
+
+  if (resetContextBtn) {
+    resetContextBtn.addEventListener('click', async () => {
+      const ok = await confirmModal('Reset Goals, Recovery, Constraints, Day Type & Compare?', { yesText: 'Reset', noText: 'Cancel', title: 'Reset Context' });
+      if (!ok) return;
+      goals = [];
+      recoverySnapshot = { ...DEFAULT_RECOVERY_SNAPSHOT };
+      constraints = { ...DEFAULT_CONSTRAINTS };
+      dayType = '';
+      dayCompare = 'none';
+      wtStorage.set(WT_KEYS.goals, goals);
+      wtStorage.set(WT_KEYS.recovery, recoverySnapshot);
+      wtStorage.set(WT_KEYS.constraints, constraints);
+      wtStorage.set(WT_KEYS.dayType, dayType);
+      wtStorage.set(WT_KEYS.dayCompare, dayCompare);
+      renderGoals();
+      renderConstraintsList();
+      renderAvoidAreas();
+      renderRecovery();
+      renderDayType();
+      updateExportHint();
+      showToast('Context reset.');
+    });
+  }
+
+  // Accessibility: Space/Enter toggles for chip buttons
+  function bindChipKeyboard(group) {
+    group.forEach((btn) => {
+      btn.addEventListener('keydown', (e) => {
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault();
+          btn.click();
+        }
+      });
+    });
+  }
+  bindChipKeyboard(avoidAreaButtons);
+  bindChipKeyboard(dayTypeButtons);
+  bindChipKeyboard(compareButtons);
 
   // Screen reader live region
   const srStatus = document.createElement("div");
@@ -1830,33 +2804,36 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
   
   function performExport(exportExercises, includeNotes, includeSessionTime) {
-    // Build normalized payload skeleton first to guarantee clean values
     const currentDate = getLocalDateString();
+    const goalsForExport = sanitizeGoals(goals);
+    const recoveryForExport = sanitizeRecoverySnapshot(recoverySnapshot);
+    const constraintsForExport = sanitizeConstraints(constraints);
+
     const normalized = normalizePayload({
       date: currentDate,
       timestamp: new Date().toISOString(),
       exercises: exportExercises,
+      goals: goalsForExport,
+      recoverySnapshot: recoveryForExport,
+      constraints: constraintsForExport,
     });
 
-    // Get workout notes from calendar history if user wants them
+    const payload = { ...normalized };
+
     let workoutNotes = [];
     if (includeNotes) {
-      // Access calendar history directly from localStorage (same as calendar.js uses)
-      const calendarHistory = JSON.parse(localStorage.getItem('wt_history')) || {};
-      workoutNotes = calendarHistory[currentDate] || [];
-      // Remove workout log lines (keep only freeform notes)
-      // Matches formats like: "Bench Press: Set 1 - 135 lbs × 8 reps" or "Bench Press: 135 lbs × 8 reps"
-      const logLineRe = /^(?:[^:]+:\s*)?(?:Set\s*\d+\s*[-–:]?\s*)?\d+(?:\.\d+)?\s*(?:lbs|kg)\s*[×xX]\s*\d+\s*reps/i;
-      workoutNotes = workoutNotes.filter(line => !logLineRe.test(String(line).trim()));
+      const history = wtStorage.get(WT_KEYS.history, {});
+      workoutNotes = Array.isArray(history[currentDate]) ? history[currentDate] : [];
+      const logLineRe =
+        /^(?:[^:]+:\s*)?(?:Set\s*\d+\s*[-–:]?\s*)?\d+(?:\.\d+)?\s*(?:lbs|kg)\s*[×xX]\s*\d+\s*reps/i;
+      workoutNotes = workoutNotes.filter((line) =>
+        !logLineRe.test(String(line).trim()),
+      );
+      if (workoutNotes.length) {
+        payload.workoutNotes = workoutNotes;
+      }
     }
 
-    // Start with normalized payload and attach optional notes
-    const payload = {
-      ...normalized,
-      workoutNotes: includeNotes ? workoutNotes : undefined,
-    };
-
-    // Compute session time if requested
     let sessionMeta = null;
     if (includeSessionTime) {
       const timestamps = [];
@@ -1865,18 +2842,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           if (s && typeof s.ts === 'number') timestamps.push(s.ts);
         });
       });
-      // If a session is active, use the live timer window: startedAt -> now
       let startTs = null;
       let endTs = null;
       if (session && session.startedAt) {
         startTs = new Date(session.startedAt).getTime();
         endTs = Date.now();
-      } else {
-        // Fallback to timestamps when exporting a past snapshot
-        startTs = timestamps.length ? Math.min(...timestamps) : null;
-        endTs = timestamps.length ? Math.max(...timestamps) : null;
+      } else if (timestamps.length) {
+        startTs = Math.min(...timestamps);
+        endTs = Math.max(...timestamps);
       }
-
       if (startTs != null && endTs >= startTs) {
         const durationSec = Math.max(0, Math.round((endTs - startTs) / 1000));
         sessionMeta = {
@@ -1888,14 +2862,99 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
     }
 
-    // JSON
+    // Load calendar titles to match day type
+    let titlesByDate = {};
+    try {
+      const rawTitles = localStorage.getItem('wt_history_titles');
+      titlesByDate = rawTitles ? JSON.parse(rawTitles) : {};
+    } catch {}
+
+    let previousSessions = Object.entries(archivedSessions || {})
+      .filter(([date]) => date !== payload.date)
+      .map(([date, data]) =>
+        normalizePayload({
+          ...data,
+          date: data && data.date ? data.date : date,
+        }),
+      )
+      .sort((a, b) => (a.date > b.date ? -1 : 1));
+
+    // If a day type is selected, filter to matching titles
+    if (dayType) {
+      const target = String(dayType).toLowerCase();
+      const keywordMap = {
+        back: ['row', 'pull', 'lat', 'pulldown', 'deadlift', 'rear delt'],
+        chest: ['bench', 'press', 'push up', 'fly'],
+        legs: ['squat', 'leg', 'lunge', 'calf', 'hamstring', 'quad'],
+        shoulders: ['overhead', 'ohp', 'shoulder', 'lateral raise', 'rear delt'],
+        arms: ['curl', 'tricep', 'bicep', 'extension', 'skullcrusher'],
+        push: ['bench', 'press', 'shoulder', 'tricep', 'dip', 'push'],
+        pull: ['row', 'pull', 'lat', 'pulldown', 'curl', 'deadlift'],
+        upper: ['bench', 'press', 'row', 'pull', 'curl', 'tricep', 'shoulder'],
+        lower: ['squat', 'leg', 'lunge', 'calf', 'deadlift', 'hamstring', 'quad'],
+        cardio: ['run', 'jog', 'walk', 'bike', 'cycle', 'rower', 'elliptical', 'jump rope', 'plank']
+      };
+      const kw = keywordMap[target] || [];
+
+      const titleOrHeuristic = (s) => {
+        const t = String(titlesByDate[s.date] || '').toLowerCase();
+        if (t === target) return true;
+        if (!kw.length) return false;
+        // Heuristic: count matches by exercise name
+        let names = [];
+        if (Array.isArray(s.exercises)) {
+          s.exercises.forEach((ex) => {
+            if (!ex) return;
+            if (ex.isSuperset && Array.isArray(ex.sets)) {
+              ex.sets.forEach((set) => {
+                (set.exercises || []).forEach((inner) => names.push(String(inner.name || '')));
+              });
+            } else {
+              names.push(String(ex.name || ''));
+            }
+          });
+        }
+        const total = names.length || 1;
+        const hits = names.filter((n) => {
+          const low = n.toLowerCase();
+          return kw.some((k) => low.includes(k));
+        }).length;
+        return hits / total >= 0.4; // include if ~40% exercises match
+      };
+
+      previousSessions = previousSessions.filter(titleOrHeuristic);
+    }
+
+    // Limit by comparison window (or none)
+    if (dayCompare === 'none') previousSessions = [];
+    else if (dayCompare === '3') previousSessions = previousSessions.slice(0, 3);
+    else if (dayCompare === '7') previousSessions = previousSessions.slice(0, 7);
+
+    const currentStats = computeSessionStats(payload);
+    const previousStats = previousSessions.map((session) =>
+      computeSessionStats(session),
+    );
+    const highlights = buildExerciseHighlightsForExport(
+      currentStats,
+      previousStats,
+    );
+    if (highlights.length) {
+      payload.exerciseHighlights = sanitizeExerciseHighlights(highlights);
+    }
+    const consistency = computeConsistencyMetricsFromStats(
+      [currentStats, ...previousStats],
+      payload.date,
+    );
+    if (consistency) {
+      payload.consistency = sanitizeConsistency(consistency);
+    }
+
     const jsonStr = JSON.stringify(payload, null, 2);
     triggerDownload(
       new Blob([jsonStr], { type: "application/json" }),
       `workout_${payload.date}.json`,
     );
 
-    // CSV (with rest columns). If session time is included, prepend session metadata rows.
     const csvHeader =
       "Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)\n";
     let csv = csvHeader;
@@ -1926,7 +2985,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       `workout_${payload.date}.csv`,
     );
 
-    // If always-on preference is enabled, provide a quick way to disable it
     if (wtStorage.get(WT_KEYS.prefSessionTime, false)) {
       showToast("Always include session time is ON", {
         actionLabel: "Turn off",
@@ -1937,76 +2995,102 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       });
     }
 
-    // AI text
+    const consistencyLines = payload.consistency
+      ? [
+          `Past 7 days: ${payload.consistency.past7?.daysTrained ?? 0} training day(s), ${payload.consistency.past7?.totalSets ?? 0} sets`,
+          `Past 30 days: ${payload.consistency.past30?.daysTrained ?? 0} training day(s), ${payload.consistency.past30?.totalSets ?? 0} sets`,
+          `Current streak: ${payload.consistency.streakDays ?? 0} day(s)`,
+        ]
+      : [];
+    const recoveryLines = describeRecoverySnapshotLines(payload.recoverySnapshot);
+    const constraintLines = describeConstraintsLines(payload.constraints);
+
     let aiText = `WORKOUT DATA - ${payload.date}\n\n`;
-    if (includeSessionTime && sessionMeta) {
-      aiText += `Session Time: ${formatSec(sessionMeta.sessionDurationSec)}\n\n`;
+    aiText += `SESSION SNAPSHOT\n`;
+    aiText += `- Total sets: ${payload.totalSets}\n`;
+    aiText += `- Volume load: ${formatVolumeNumber(currentStats.totalVolume)} (sum weight × reps)\n`;
+    if (currentStats.totalCardioDuration) {
+      aiText += `- Cardio duration: ${formatSecondsHuman(currentStats.totalCardioDuration)}\n`;
     }
-    payload.exercises.forEach((ex) => {
-      if (ex.isSuperset) {
-        aiText += `${ex.name}:\n`;
-        ex.sets.forEach((s) => {
-          const rp =
-            s.restPlanned != null
-              ? ` (planned ${formatSec(s.restPlanned)}`
-              : "";
-          const ra =
-            s.restActual != null
-              ? `${rp ? "; " : " ("}actual ${formatSec(s.restActual)})`
-              : rp
-                ? ")"
-                : "";
-          s.exercises.forEach((sub) => {
-            aiText += `  Set ${s.set} - ${sub.name}: ${sub.weight} lbs × ${sub.reps} reps${rp || ra ? (rp ? rp : "") + (ra ? ra : "") : ""}\n`;
+    if (includeSessionTime && sessionMeta) {
+      aiText += `- Session duration: ${formatSecondsHuman(sessionMeta.sessionDurationSec)}\n`;
+    }
+    aiText += `\n`;
+
+    aiText += `CONSISTENCY\n`;
+    if (consistencyLines.length) {
+      consistencyLines.forEach((line) => {
+        aiText += `- ${line}\n`;
+      });
+    } else {
+      aiText += `- No historical data available yet.\n`;
+    }
+    aiText += `\n`;
+
+    aiText += `GOALS & FOCUS\n`;
+    if (goalsForExport.length) {
+      goalsForExport.forEach((goal) => {
+        aiText += `- ${goal}\n`;
+      });
+    } else {
+      aiText += `- None specified.\n`;
+    }
+    aiText += `\n`;
+
+    aiText += `RECOVERY SNAPSHOT\n`;
+    if (recoveryLines.length) {
+      recoveryLines.forEach((line) => {
+        aiText += `- ${line}\n`;
+      });
+    } else {
+      aiText += `- No recovery notes today.\n`;
+    }
+    aiText += `\n`;
+
+    aiText += `SCHEDULE & CONSTRAINTS\n`;
+    if (constraintLines.length) {
+      constraintLines.forEach((line) => {
+        aiText += `- ${line}\n`;
+      });
+    } else {
+      aiText += `- No upcoming constraints reported.\n`;
+    }
+    aiText += `\n`;
+
+    aiText += `EXERCISE HIGHLIGHTS\n`;
+    if (payload.exerciseHighlights && payload.exerciseHighlights.length) {
+      payload.exerciseHighlights.forEach((highlight) => {
+        aiText += `${highlight.name}:\n`;
+        if (highlight.today) aiText += `  Today: ${highlight.today}\n`;
+        if (highlight.trend) aiText += `  Trend: ${highlight.trend}\n`;
+        if (highlight.previous && highlight.previous.length) {
+          aiText += `  Recent:\n`;
+          highlight.previous.forEach((prev) => {
+            aiText += `    - ${prev}\n`;
           });
-        });
-      } else if (ex.isCardio) {
-        aiText += `${ex.name}:\n`;
-        ex.sets.forEach((s) => {
-          const rp =
-            s.restPlanned != null
-              ? ` (planned ${formatSec(s.restPlanned)}`
-              : "";
-          const ra =
-            s.restActual != null
-              ? `${rp ? "; " : " ("}actual ${formatSec(s.restActual)})`
-              : rp
-                ? ")"
-                : "";
-          const dist = s.distance != null ? `${s.distance} mi in ` : "";
-          const dur = formatSec(s.duration);
-          aiText += `  Set ${s.set}: ${dist}${dur}${rp || ra ? (rp ? rp : "") + (ra ? ra : "") : ""}\n`;
-        });
-      } else {
-        aiText += `${ex.name}:\n`;
-        ex.sets.forEach((s) => {
-          const rp =
-            s.restPlanned != null
-              ? ` (planned ${formatSec(s.restPlanned)}`
-              : "";
-          const ra =
-            s.restActual != null
-              ? `${rp ? "; " : " ("}actual ${formatSec(s.restActual)})`
-              : rp
-                ? ")"
-                : "";
-          aiText += `  Set ${s.set}: ${s.weight} lbs × ${s.reps} reps${rp || ra ? (rp ? rp : "") + (ra ? ra : "") : ""}\n`;
-        });
-      }
-      aiText += "\n";
-    });
-    
-    // Add workout notes to AI text if included
-    if (includeNotes && workoutNotes.length > 0) {
-      aiText += `Workout Notes:\n`;
-      workoutNotes.forEach(note => {
+        }
+        if (highlight.isPR) {
+          aiText += `  PR: New personal best on the top set.\n`;
+        }
+        aiText += `\n`;
+      });
+    } else {
+      aiText += `- No past data yet to compare.\n\n`;
+    }
+
+    if (includeNotes && workoutNotes.length) {
+      aiText += `WORKOUT NOTES\n`;
+      workoutNotes.forEach((note) => {
         aiText += `- ${note}\n`;
       });
       aiText += `\n`;
     }
-    
-    aiText += `Summary: ${payload.totalExercises} exercises, ${payload.totalSets} total sets.\n\n`;
-    aiText += `Please analyze progress vs previous sessions, suggest next targets, identify weak points, and recommend optimal weight/rep progressions.`;
+
+    aiText += `NEXT STEPS REQUEST\n`;
+    aiText += `Please analyze the session and consistency metrics, flag regressions or PRs, and craft the next workout. Prioritize:\n`;
+    aiText += `1. Insight: Note strength/cardio trends, weak points, or fatigue signals.\n`;
+    aiText += `2. Next workout: Provide a detailed plan aligned with goals, respecting constraints and recovery data.\n`;
+    aiText += `3. Progression: Suggest load/rep adjustments and technique cues to keep momentum.\n`;
 
     if (navigator.clipboard) {
       navigator.clipboard
@@ -2018,6 +3102,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     } else {
       alert("Exported JSON + CSV. Copy this manually:\n\n" + aiText);
     }
+
+    archivedSessions[payload.date] = payload;
+    archivedSessions = pruneArchive(archivedSessions, 120);
+    wtStorage.set(WT_KEYS.archive, archivedSessions);
   }
 
   function triggerDownload(blob, filename) {
@@ -2052,9 +3140,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   // Stable confirm modal to replace native confirm() which may auto-dismiss in some environments
   function formatSec(sec) {
-    const m = Math.floor(sec / 60),
-      s = sec % 60;
-    return `${m}m ${s}s`;
+    return formatSecondsHuman(sec);
   }
 
   /* ------------------ SHORTCUTS ------------------ */
@@ -2139,5 +3225,13 @@ if (typeof window !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-module.exports = { canLogSet, canLogCardio, normalizeSet, normalizePayload };
+module.exports = {
+  canLogSet,
+  canLogCardio,
+  normalizeSet,
+  normalizePayload,
+  computeSessionStats,
+  buildExerciseHighlightsForExport,
+  computeConsistencyMetricsFromStats,
+};
 }

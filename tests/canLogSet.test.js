@@ -45,6 +45,6 @@ describe('data normalization', () => {
     expect(norm.totalSets).toBe(1);
     expect(norm.exercises[0].sets[0].weight).toBe(20);
     expect(norm.exercises[0].sets[0].reps).toBe(1);
-    expect(norm.schema).toBe(2);
+    expect(norm.schema).toBe(3);
   });
 });

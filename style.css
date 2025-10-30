@@ -181,6 +181,80 @@ body.dark .summary{
 }
 .summary h3{margin:0 0 10px;font-size:16px;}
 .notice{font-size:12px;opacity:.65;margin-top:4px;}
+.export-hint{font-size:12px;color:var(--muted-fg);margin-top:-6px;margin-bottom:10px;}
+
+.context-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+  gap:16px;
+  margin-top:24px;
+}
+.context-card{
+  border-radius:16px;
+  padding:16px 18px;
+  background:#f8f9fb;
+  border:1px solid #e3e8ef;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+body.dark .context-card{background:#20242a;border-color:#2d333c;}
+.context-card h3{font-size:16px;margin-bottom:2px;}
+.muted-text{color:var(--muted-fg);font-size:13px;}
+.empty-hint{font-size:13px;color:var(--muted-fg);}
+.chip-list{display:flex;flex-wrap:wrap;gap:8px;}
+.chip-list .chip{
+  padding:7px 12px;
+  border-radius:999px;
+  font-size:13px;
+  background:#e9ecf3;
+  color:#39404f;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+body.dark .chip-list .chip{background:#2d333c;color:#f5f6fa;}
+.chip-remove{
+  background:none;
+  border:none;
+  cursor:pointer;
+  color:inherit;
+  font-size:13px;
+  font-weight:700;
+}
+.chip-field{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.chip-field .chip-label{font-weight:600;font-size:13px;min-width:72px;}
+.chip-options{display:flex;gap:8px;flex-wrap:wrap;}
+.chip-option{
+  border:1px solid #d8deea;
+  background:#fff;
+  color:#39404f;
+  padding:8px 12px;
+  border-radius:999px;
+  cursor:pointer;
+  font-size:13px;
+  font-weight:600;
+  transition:var(--transition);
+}
+.chip-option:hover{transform:translateY(-1px);}
+.chip-option.active{
+  background:var(--grad-main);
+  color:#fff;
+  border-color:transparent;
+  box-shadow:0 6px 14px -6px rgba(102,126,234,.45);
+}
+.chip-option.daytype-option.active{ box-shadow:0 6px 14px -6px rgba(118,75,162,.45); }
+.chip-option.compare-option.active{ box-shadow:0 6px 14px -6px rgba(56,239,125,.45); }
+.chip-option.chip-toggle{
+  background:#fff;
+}
+.chip-option.chip-toggle.active{
+  background:linear-gradient(135deg,#ffd86f,#fc6262);
+  color:#2c2c2c;
+  border:none;
+}
+.chip-field--wrap{align-items:flex-start;}
+.chip-field--wrap .chip-label{margin-top:6px;}
 
 #darkToggle{
   position:fixed;
@@ -267,4 +341,7 @@ body.dark #calendarSection{
   .inline-row .field{width:100%;}
   .calendar-controls{flex-direction:column;}
   .calendar-controls #calGoto,.calendar-controls .btn{width:100%;}
+  .context-grid{grid-template-columns:1fr;}
+  .chip-options{gap:6px;}
+  .chip-option{padding:7px 10px;}
 }
