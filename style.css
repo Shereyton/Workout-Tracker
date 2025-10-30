@@ -214,6 +214,23 @@ body.dark .context-card{background:#20242a;border-color:#2d333c;}
   gap:6px;
 }
 body.dark .chip-list .chip{background:#2d333c;color:#f5f6fa;}
+.goal-chip{padding:0;}
+.goal-chip .chip-goal-toggle{
+  border:none;
+  background:none;
+  color:inherit;
+  font:inherit;
+  padding:7px 10px;
+  cursor:pointer;
+  border-radius:999px;
+}
+.goal-chip.active .chip-goal-toggle{
+  background:var(--grad-main);
+  color:#fff;
+}
+.goal-chip .chip-goal-toggle:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;}
+.goal-chip.active{box-shadow:0 6px 14px -6px rgba(102,126,234,.45);}
+.goal-chip.active .chip-remove{color:#fff;}
 .chip-remove{
   background:none;
   border:none;

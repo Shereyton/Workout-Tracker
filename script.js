@@ -115,7 +115,7 @@ function normalizePayload(payload) {
     schema: WT_SCHEMA_VERSION,
   };
   const goals = sanitizeGoals(payload.goals);
-  if (goals.length) normalized.goals = goals;
+  if (goals.length) normalized.goals = goals.map((g) => g.text);
   const recovery = sanitizeRecoverySnapshot(
     payload.recoverySnapshot || payload.recoverySnapshotRaw,
   );
@@ -129,7 +129,7 @@ function normalizePayload(payload) {
   return normalized;
 }
 
-const MAX_GOALS = 6;
+const MAX_GOALS = 10;
 const MAX_NOTES = 6;
 const MAX_NOTE_LENGTH = 160;
 const RECOVERY_METRICS = {
@@ -198,8 +198,35 @@ function dedupeStrings(list, limit = 10, maxLength = 120) {
   return out.slice(0, limit);
 }
 
+function normalizeGoalEntry(item) {
+  if (!item) return null;
+  if (typeof item === 'string') {
+    const text = trimString(item, 140);
+    if (!text) return null;
+    return { text, active: true };
+  }
+  if (typeof item === 'object') {
+    const text = trimString(item.text || item.name || '', 140);
+    if (!text) return null;
+    return { text, active: !!item.active };
+  }
+  return null;
+}
+
 function sanitizeGoals(value) {
-  return dedupeStrings(value, MAX_GOALS, 140);
+  if (!Array.isArray(value)) return [];
+  const seen = new Map();
+  value.forEach((item) => {
+    const norm = normalizeGoalEntry(item);
+    if (!norm) return;
+    const key = norm.text.toLowerCase();
+    if (!seen.has(key)) {
+      seen.set(key, norm);
+    } else if (norm.active) {
+      seen.get(key).active = true;
+    }
+  });
+  return Array.from(seen.values()).slice(0, MAX_GOALS);
 }
 
 function sanitizeRecoverySnapshot(value) {
@@ -1067,36 +1094,47 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     goals = sanitizeGoals(goals);
     wtStorage.set(WT_KEYS.goals, goals);
     renderGoals();
+    updateExportHint();
   }
 
   function renderGoals() {
     if (!goalsChips || !goalsEmpty) return;
     goalsChips.innerHTML = "";
-    const normalized = sanitizeGoals(goals);
-    goals = normalized;
-    goalsEmpty.classList.toggle("hidden", normalized.length > 0);
-    normalized.forEach((goal, idx) => {
+    goals = sanitizeGoals(goals);
+    const activeCount = goals.filter((g) => g.active).length;
+    goalsEmpty.classList.toggle("hidden", goals.length > 0);
+    goals.forEach((goal, idx) => {
       const chip = document.createElement("div");
-      chip.className = "chip";
-      const label = document.createElement("span");
-      label.textContent = goal;
+      chip.className = "chip goal-chip";
+      if (goal.active) chip.classList.add("active");
+
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "chip-goal-toggle";
+      toggle.dataset.index = String(idx);
+      toggle.textContent = goal.text;
+      toggle.setAttribute("aria-pressed", goal.active ? "true" : "false");
+      chip.appendChild(toggle);
+
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "chip-remove";
       remove.dataset.index = String(idx);
-      remove.setAttribute("aria-label", `Remove goal ${goal}`);
+      remove.setAttribute("aria-label", `Remove goal ${goal.text}`);
       remove.textContent = "×";
-      chip.appendChild(label);
       chip.appendChild(remove);
+
       goalsChips.appendChild(chip);
     });
+
+    bindChipKeyboard(Array.from(goalsChips.querySelectorAll('.chip-goal-toggle')));
   }
 
   function handleAddGoal() {
     if (!goalInput) return;
     const value = trimString(goalInput.value, 140);
     if (!value) return;
-    goals.push(value);
+    goals.push({ text: value, active: true });
     persistGoals();
     goalInput.value = "";
     updateGoalBtnState();
@@ -1110,12 +1148,23 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   if (goalsChips) {
     goalsChips.addEventListener("click", (e) => {
       const btn = e.target.closest(".chip-remove");
-      if (!btn) return;
-      const idx = Number(btn.dataset.index);
-      if (Number.isInteger(idx)) {
-        goals.splice(idx, 1);
-        persistGoals();
-        updateGoalBtnState();
+      if (btn) {
+        const idx = Number(btn.dataset.index);
+        if (Number.isInteger(idx)) {
+          goals.splice(idx, 1);
+          persistGoals();
+          updateGoalBtnState();
+        }
+        return;
+      }
+      const toggle = e.target.closest('.chip-goal-toggle');
+      if (toggle) {
+        const idx = Number(toggle.dataset.index);
+        if (Number.isInteger(idx) && goals[idx]) {
+          goals[idx].active = !goals[idx].active;
+          persistGoals();
+          updateGoalBtnState();
+        }
       }
     });
     renderGoals();
@@ -1374,7 +1423,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     else if (dayCompare === '3') win = 'Compare: Last 3';
     else if (dayCompare === '7') win = 'Compare: Last 7';
     else if (dayCompare === 'all') win = 'Compare: All';
-    exportHint.textContent = `${day} • ${win}`;
+    const goalCount = goals.filter((g) => g.active).length;
+    const goalText = goalCount ? `Goals: ${goalCount}` : 'Goals: None';
+    exportHint.textContent = `${day} • ${win} • ${goalText}`;
   }
   updateExportHint();
 
@@ -2805,7 +2856,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   
   function performExport(exportExercises, includeNotes, includeSessionTime) {
     const currentDate = getLocalDateString();
-    const goalsForExport = sanitizeGoals(goals);
+    const goalsForExport = sanitizeGoals(goals)
+      .filter((g) => g.active)
+      .map((g) => g.text);
     const recoveryForExport = sanitizeRecoverySnapshot(recoverySnapshot);
     const constraintsForExport = sanitizeConstraints(constraints);
 

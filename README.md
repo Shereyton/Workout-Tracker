@@ -28,7 +28,7 @@ These guardrails apply when logging, editing, merging current exercise into sess
 
 Right under the workout summary you can capture extra context so exports tell AI exactly what you need:
 
-- **Goals & Focus** – add or remove short-term goals; these feed straight into the export.
+- **Goals & Focus** – add or remove short-term goals, then tap a goal chip to mark it “active” for today. Only active goals flow into the export so you can tailor each workout (or export with none).
 - **Recovery Snapshot** – one-tap chips for sleep, energy, soreness, nutrition plus optional notes so AI knows how you feel going in.
 - **Schedule & Constraints** – log upcoming conflicts and areas to de-emphasize; they’re surfaced in the AI prompt so smart plans respect your calendar/body.
 
