@@ -3139,6 +3139,39 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       aiText += `\n`;
     }
 
+    aiText += `DETAILED SET LOG\n`;
+    if (payload.exercises.length) {
+      payload.exercises.forEach((ex) => {
+        aiText += `${ex.name}:\n`;
+        ex.sets.forEach((s) => {
+          const rp =
+            s.restPlanned != null
+              ? ` (planned ${formatSec(s.restPlanned)}`
+              : "";
+          const ra =
+            s.restActual != null
+              ? `${rp ? "; " : " ("}actual ${formatSec(s.restActual)})`
+              : rp
+                ? ")"
+                : "";
+          const rest = rp || ra ? (rp ? rp : "") + (ra ? ra : "") : "";
+          if (ex.isSuperset) {
+            const parts = (s.exercises || []).map((sub) => `${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`).join(" | ");
+            aiText += `  Set ${s.set}: ${parts}${rest ? rest : ""}\n`;
+          } else if (ex.isCardio) {
+            const dist = s.distance != null ? `${s.distance} mi` : "";
+            const dur = formatSec(s.duration);
+            aiText += `  Set ${s.set}: ${dist ? dist + " in " : ""}${dur}${rest ? rest : ""}\n`;
+          } else {
+            aiText += `  Set ${s.set}: ${s.weight} lbs × ${s.reps} reps${rest ? rest : ""}\n`;
+          }
+        });
+        aiText += `\n`;
+      });
+    } else {
+      aiText += `- No sets logged.\n\n`;
+    }
+
     aiText += `NEXT STEPS REQUEST\n`;
     aiText += `Please analyze the session and consistency metrics, flag regressions or PRs, and craft the next workout. Prioritize:\n`;
     aiText += `1. Insight: Note strength/cardio trends, weak points, or fatigue signals.\n`;
