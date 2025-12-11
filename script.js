@@ -14,6 +14,7 @@ const WT_KEYS = {
   dayType: 'wt_dayType',
   dayCompare: 'wt_dayCompareWindow',
   progressionGuard: 'wt_progressionGuard',
+  deload: 'wt_deloadSession',
 };
 
 const WT_SCHEMA_VERSION = 3;
@@ -312,6 +313,12 @@ function formatDistanceMiles(value) {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return null;
   return `${num.toFixed(2)} mi`;
+}
+
+function roundToStep(value, step = 0.5) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return Math.round(num / step) * step;
 }
 
 function describeConstraintsLines(constraints) {
@@ -740,6 +747,7 @@ if (!archivedSessions || typeof archivedSessions !== 'object' || Array.isArray(a
 let dayType = wtStorage.get(WT_KEYS.dayType, '');
 let dayCompare = wtStorage.get(WT_KEYS.dayCompare, 'none');
 let progressionGuard = !!wtStorage.get(WT_KEYS.progressionGuard, false);
+let deloadSession = !!wtStorage.get(WT_KEYS.deload, false);
 if (typeof localStorage !== "undefined") {
   const s = wtStorage.get(WT_KEYS.session, null);
   const c = wtStorage.get(WT_KEYS.current, null);
@@ -846,6 +854,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exportHint = document.getElementById('exportHint');
   const resetContextBtn = document.getElementById('resetContextBtn');
   const progressionGuardToggle = document.getElementById('progressionGuardToggle');
+  const deloadToggle = document.getElementById('deloadToggle');
 
   // --- Import UI ---
   function createConfirmModal(doc) {
@@ -1279,7 +1288,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const goalCount = goals.filter((g) => g.active).length;
     const goalText = goalCount ? `Goals: ${goalCount}` : 'Goals: None';
     const progText = progressionGuard ? 'Progression Guard: ON' : 'Progression Guard: OFF';
-    exportHint.textContent = `${day} • ${win} • ${goalText} • ${progText}`;
+    const deloadText = deloadSession ? 'Deload: ON' : 'Deload: OFF';
+    exportHint.textContent = `${day} • ${win} • ${goalText} • ${progText} • ${deloadText}`;
   }
   updateExportHint();
 
@@ -1288,6 +1298,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     progressionGuardToggle.addEventListener('change', () => {
       progressionGuard = progressionGuardToggle.checked;
       wtStorage.set(WT_KEYS.progressionGuard, progressionGuard);
+      updateExportHint();
+    });
+  }
+
+  if (deloadToggle) {
+    deloadToggle.checked = deloadSession;
+    deloadToggle.addEventListener('change', () => {
+      deloadSession = deloadToggle.checked;
+      wtStorage.set(WT_KEYS.deload, deloadSession);
       updateExportHint();
     });
   }
@@ -1325,11 +1344,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       dayType = '';
       dayCompare = 'none';
       progressionGuard = false;
+      deloadSession = false;
       wtStorage.set(WT_KEYS.goals, goals);
       wtStorage.set(WT_KEYS.constraints, constraints);
       wtStorage.set(WT_KEYS.dayType, dayType);
       wtStorage.set(WT_KEYS.dayCompare, dayCompare);
       wtStorage.set(WT_KEYS.progressionGuard, progressionGuard);
+      wtStorage.set(WT_KEYS.deload, deloadSession);
       renderGoals();
       renderConstraintsList();
       renderAvoidAreas();
@@ -2862,21 +2883,43 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       });
     });
     const progressionLines = [];
+    const nextTargetLines = [];
     (currentStats.exercises || []).forEach((ex) => {
       const prev = prevByName.get(ex.name);
-      if (!prev) return;
-      const volChange = formatPercentChange(ex.totalVolume, prev.totalVolume);
-      const topChange = formatPercentChange(
-        ex.topSet?.weight ?? null,
-        prev.topSet?.weight ?? null,
-      );
-      const prevTop = formatTopSet(prev.topSet);
-      const currTop = formatTopSet(ex.topSet);
-      const prevVol = formatVolumeNumber(prev.totalVolume);
-      const currVol = formatVolumeNumber(ex.totalVolume);
-      progressionLines.push(
-        `${ex.name} – Volume: ${prevVol} → ${currVol} (${volChange}); Top set: ${prevTop} → ${currTop} (${topChange})`,
-      );
+      if (prev) {
+        const volChange = formatPercentChange(ex.totalVolume, prev.totalVolume);
+        const topChange = formatPercentChange(
+          ex.topSet?.weight ?? null,
+          prev.topSet?.weight ?? null,
+        );
+        const prevTop = formatTopSet(prev.topSet);
+        const currTop = formatTopSet(ex.topSet);
+        const prevVol = formatVolumeNumber(prev.totalVolume);
+        const currVol = formatVolumeNumber(ex.totalVolume);
+        progressionLines.push(
+          `${ex.name} – Volume: ${prevVol} → ${currVol} (${volChange}); Top set: ${prevTop} → ${currTop} (${topChange})`,
+        );
+      }
+
+      const currTopWeight = ex.topSet?.weight;
+      const currTopReps = ex.topSet?.reps;
+      const currVolume = ex.totalVolume || 0;
+      if (Number.isFinite(currTopWeight) && Number.isFinite(currTopReps)) {
+        let targetTop;
+        if (deloadSession) {
+          const deloadWeight = roundToStep(currTopWeight * 0.9, 0.5);
+          targetTop = `${deloadWeight}×${currTopReps} (deload ~-10%)`;
+        } else {
+          const nextWeight = roundToStep(currTopWeight * 1.025, 0.5);
+          targetTop = `${nextWeight}×${currTopReps} (~+2.5% load)`;
+        }
+        const volBumpPct = deloadSession ? -0.1 : 0.03;
+        const nextVol = Math.max(0, Math.round(currVolume * (1 + volBumpPct)));
+        const volPctText = `${volBumpPct >= 0 ? '+' : ''}${(volBumpPct * 100).toFixed(1)}%`;
+        nextTargetLines.push(
+          `${ex.name} – Next top set target: ${targetTop}; Next volume target: ${formatVolumeNumber(currVolume)} → ${formatVolumeNumber(nextVol)} (${volPctText})`,
+        );
+      }
     });
 
     const jsonStr = JSON.stringify(payload, null, 2);
@@ -2958,6 +3001,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       aiText += `- No upcoming constraints reported.\n`;
     }
     aiText += `\n`;
+    if (deloadSession) {
+      aiText += `DELOAD SESSION\n- User marked this as a deload: prioritize recovery, reduce load/volume, maintain technique.\n\n`;
+    }
 
     if (progressionGuard) {
       aiText += `PROGRESSION METRICS (from recent sessions in this chat)\n`;
@@ -2974,6 +3020,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       aiText += `- Ensure the user is never stagnating: verify load/rep/volume progression against recent sessions you already have in this conversation and propose increases or quality improvements.\n`;
       aiText += `- Use math: compare volume (weight × reps), top-set loads, and total sets vs those prior sessions; call out regressions and prescribe stepwise progressions.\n`;
       aiText += `- If progression is unsafe, suggest form cues or rep/tempo quality gains to keep advancing.\n\n`;
+    }
+
+    if (nextTargetLines.length) {
+      aiText += `NEXT TARGETS (auto)\n`;
+      nextTargetLines.forEach((line) => {
+        aiText += `- ${line}\n`;
+      });
+      aiText += `\n`;
     }
 
     aiText += `EXERCISE HIGHLIGHTS\n`;

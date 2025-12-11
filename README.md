@@ -20,13 +20,14 @@ These guardrails apply when logging, editing, merging current exercise into sess
   - Core fields: `date`, `timestamp`, `totalExercises`, `totalSets`, `exercises[]`, `schema` (currently `3`).
   - Optional extras saved when provided: `session{ sessionStart, sessionEnd, sessionDurationSec }`, `workoutNotes[]`, `goals[]`, `constraints`, and `exerciseHighlights`.
 - CSV: header `Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)`. If session time is included, metadata rows are prepended.
-- AI Text: structured summary with session snapshot, goals, constraints, exercise highlights (including PR flags/trends), optional freeform notes, and an optional “Progression Guard” directive to prevent stagnation (tells the AI to use prior workouts in the same chat plus today’s log).
+- AI Text: structured summary with session snapshot, goals, constraints, exercise highlights (including PR flags/trends), optional freeform notes, and an optional “Progression Guard” directive to prevent stagnation (tells the AI to use prior workouts in the same chat plus today’s log). When enabled, the export includes per-exercise progression metrics and auto “next targets” for every lift logged.
 
 ## Context Panels
 
 Right under the workout summary you can capture extra context so exports tell AI exactly what you need:
 
-- **Goals & Focus** – add or remove short-term goals, then tap a goal chip to mark it “active” for today. Only active goals flow into the export so you can tailor each workout (or export with none). Toggle “Require AI to drive progression” to add a mandatory anti-stagnation directive to the AI prompt.
+- **Goals & Focus** – add or remove short-term goals, then tap a goal chip to mark it “active” for today. Only active goals flow into the export so you can tailor each workout (or export with none). Toggle “Require AI to drive progression” to add a mandatory anti-stagnation directive and include auto progression metrics/next targets in the export.
+- **Deload** – optional checkbox to mark a deload day; the AI text will tell the model to keep loads/volume conservative.
 - **Schedule & Constraints** – log upcoming conflicts and areas to de-emphasize; they’re surfaced in the AI prompt so smart plans respect your calendar/body.
 
 The export dialog uses this context along with recent session history to highlight trends/PRs and expand the AI request so you get richer feedback automatically.
