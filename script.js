@@ -14,7 +14,6 @@ const WT_KEYS = {
   dayType: 'wt_dayType',
   dayCompare: 'wt_dayCompareWindow',
   progressionGuard: 'wt_progressionGuard',
-  deload: 'wt_deloadSession',
 };
 
 const WT_SCHEMA_VERSION = 3;
@@ -747,7 +746,6 @@ if (!archivedSessions || typeof archivedSessions !== 'object' || Array.isArray(a
 let dayType = wtStorage.get(WT_KEYS.dayType, '');
 let dayCompare = wtStorage.get(WT_KEYS.dayCompare, 'none');
 let progressionGuard = !!wtStorage.get(WT_KEYS.progressionGuard, false);
-let deloadSession = !!wtStorage.get(WT_KEYS.deload, false);
 if (typeof localStorage !== "undefined") {
   const s = wtStorage.get(WT_KEYS.session, null);
   const c = wtStorage.get(WT_KEYS.current, null);
@@ -854,7 +852,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exportHint = document.getElementById('exportHint');
   const resetContextBtn = document.getElementById('resetContextBtn');
   const progressionGuardToggle = document.getElementById('progressionGuardToggle');
-  const deloadToggle = document.getElementById('deloadToggle');
 
   // --- Import UI ---
   function createConfirmModal(doc) {
@@ -1288,8 +1285,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const goalCount = goals.filter((g) => g.active).length;
     const goalText = goalCount ? `Goals: ${goalCount}` : 'Goals: None';
     const progText = progressionGuard ? 'Progression Guard: ON' : 'Progression Guard: OFF';
-    const deloadText = deloadSession ? 'Deload: ON' : 'Deload: OFF';
-    exportHint.textContent = `${day} • ${win} • ${goalText} • ${progText} • ${deloadText}`;
+    exportHint.textContent = `${day} • ${win} • ${goalText} • ${progText}`;
   }
   updateExportHint();
 
@@ -1298,15 +1294,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     progressionGuardToggle.addEventListener('change', () => {
       progressionGuard = progressionGuardToggle.checked;
       wtStorage.set(WT_KEYS.progressionGuard, progressionGuard);
-      updateExportHint();
-    });
-  }
-
-  if (deloadToggle) {
-    deloadToggle.checked = deloadSession;
-    deloadToggle.addEventListener('change', () => {
-      deloadSession = deloadToggle.checked;
-      wtStorage.set(WT_KEYS.deload, deloadSession);
       updateExportHint();
     });
   }
@@ -1344,13 +1331,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       dayType = '';
       dayCompare = 'none';
       progressionGuard = false;
-      deloadSession = false;
       wtStorage.set(WT_KEYS.goals, goals);
       wtStorage.set(WT_KEYS.constraints, constraints);
       wtStorage.set(WT_KEYS.dayType, dayType);
       wtStorage.set(WT_KEYS.dayCompare, dayCompare);
       wtStorage.set(WT_KEYS.progressionGuard, progressionGuard);
-      wtStorage.set(WT_KEYS.deload, deloadSession);
       renderGoals();
       renderConstraintsList();
       renderAvoidAreas();
@@ -2905,15 +2890,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const currTopReps = ex.topSet?.reps;
       const currVolume = ex.totalVolume || 0;
       if (Number.isFinite(currTopWeight) && Number.isFinite(currTopReps)) {
-        let targetTop;
-        if (deloadSession) {
-          const deloadWeight = roundToStep(currTopWeight * 0.9, 0.5);
-          targetTop = `${deloadWeight}×${currTopReps} (deload ~-10%)`;
-        } else {
-          const nextWeight = roundToStep(currTopWeight * 1.025, 0.5);
-          targetTop = `${nextWeight}×${currTopReps} (~+2.5% load)`;
-        }
-        const volBumpPct = deloadSession ? -0.1 : 0.03;
+        const nextWeight = roundToStep(currTopWeight * 1.025, 0.5);
+        const targetTop = `${nextWeight}×${currTopReps} (~+2.5% load)`;
+        const volBumpPct = 0.03;
         const nextVol = Math.max(0, Math.round(currVolume * (1 + volBumpPct)));
         const volPctText = `${volBumpPct >= 0 ? '+' : ''}${(volBumpPct * 100).toFixed(1)}%`;
         nextTargetLines.push(
@@ -3001,10 +2980,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       aiText += `- No upcoming constraints reported.\n`;
     }
     aiText += `\n`;
-    if (deloadSession) {
-      aiText += `DELOAD SESSION\n- User marked this as a deload: prioritize recovery, reduce load/volume, maintain technique.\n\n`;
-    }
-
     if (progressionGuard) {
       aiText += `PROGRESSION METRICS (from recent sessions in this chat)\n`;
       if (progressionLines.length) {

@@ -27,7 +27,6 @@ These guardrails apply when logging, editing, merging current exercise into sess
 Right under the workout summary you can capture extra context so exports tell AI exactly what you need:
 
 - **Goals & Focus** – add or remove short-term goals, then tap a goal chip to mark it “active” for today. Only active goals flow into the export so you can tailor each workout (or export with none). Toggle “Require AI to drive progression” to add a mandatory anti-stagnation directive and include auto progression metrics/next targets in the export.
-- **Deload** – optional checkbox to mark a deload day; the AI text will tell the model to keep loads/volume conservative.
 - **Schedule & Constraints** – log upcoming conflicts and areas to de-emphasize; they’re surfaced in the AI prompt so smart plans respect your calendar/body.
 
 The export dialog uses this context along with recent session history to highlight trends/PRs and expand the AI request so you get richer feedback automatically.
