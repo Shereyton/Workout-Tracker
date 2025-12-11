@@ -20,7 +20,7 @@ These guardrails apply when logging, editing, merging current exercise into sess
   - Core fields: `date`, `timestamp`, `totalExercises`, `totalSets`, `exercises[]`, `schema` (currently `3`).
   - Optional extras saved when provided: `session{ sessionStart, sessionEnd, sessionDurationSec }`, `workoutNotes[]`, `goals[]`, `constraints`, and `exerciseHighlights`.
 - CSV: header `Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)`. If session time is included, metadata rows are prepended.
-- AI Text: structured summary with session snapshot, goals, constraints, exercise highlights (including PR flags/trends), optional freeform notes, and an optional “Progression Guard” directive to prevent stagnation.
+- AI Text: structured summary with session snapshot, goals, constraints, exercise highlights (including PR flags/trends), optional freeform notes, and an optional “Progression Guard” directive to prevent stagnation (tells the AI to use prior workouts in the same chat plus today’s log).
 
 ## Context Panels
 

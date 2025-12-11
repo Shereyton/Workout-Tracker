@@ -2922,8 +2922,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     if (progressionGuard) {
       aiText += `PROGRESSION GUARD (MANDATORY IF INCLUDED)\n`;
-      aiText += `- Ensure the user is never stagnating: verify load/rep/volume progression against recent sessions and propose increases or quality improvements.\n`;
-      aiText += `- Use math: compare volume (weight × reps), top-set loads, and total sets vs recent sessions; call out regressions and prescribe stepwise progressions.\n`;
+      aiText += `- Ensure the user is never stagnating: verify load/rep/volume progression against recent sessions you already have in this conversation and propose increases or quality improvements.\n`;
+      aiText += `- Use math: compare volume (weight × reps), top-set loads, and total sets vs those prior sessions; call out regressions and prescribe stepwise progressions.\n`;
       aiText += `- If progression is unsafe, suggest form cues or rep/tempo quality gains to keep advancing.\n\n`;
     }
 
