@@ -9,11 +9,11 @@ const WT_KEYS = {
   schema: 'wt_schemaVersion',
   prefSessionTime: 'wt_pref_sessionTimeAlways',
   goals: 'wt_goals',
-  recovery: 'wt_recoverySnapshot',
   constraints: 'wt_constraints',
   archive: 'wt_sessionArchive',
   dayType: 'wt_dayType',
   dayCompare: 'wt_dayCompareWindow',
+  progressionGuard: 'wt_progressionGuard',
 };
 
 const WT_SCHEMA_VERSION = 3;
@@ -116,14 +116,8 @@ function normalizePayload(payload) {
   };
   const goals = sanitizeGoals(payload.goals);
   if (goals.length) normalized.goals = goals.map((g) => g.text);
-  const recovery = sanitizeRecoverySnapshot(
-    payload.recoverySnapshot || payload.recoverySnapshotRaw,
-  );
-  if (hasMeaningfulRecovery(recovery)) normalized.recoverySnapshot = recovery;
   const constraints = sanitizeConstraints(payload.constraints);
   if (hasConstraints(constraints)) normalized.constraints = constraints;
-  const consistency = sanitizeConsistency(payload.consistency);
-  if (consistency) normalized.consistency = consistency;
   const highlights = sanitizeExerciseHighlights(payload.exerciseHighlights);
   if (highlights.length) normalized.exerciseHighlights = highlights;
   return normalized;
@@ -132,48 +126,6 @@ function normalizePayload(payload) {
 const MAX_GOALS = 10;
 const MAX_NOTES = 6;
 const MAX_NOTE_LENGTH = 160;
-const RECOVERY_METRICS = {
-  sleepQuality: ['great', 'ok', 'rough'],
-  energy: ['high', 'steady', 'low'],
-  soreness: ['fresh', 'moderate', 'beat'],
-  nutrition: ['dialed', 'decent', 'off'],
-};
-const RECOVERY_METRIC_LABELS = {
-  sleepQuality: 'Sleep',
-  energy: 'Energy',
-  soreness: 'Soreness',
-  nutrition: 'Nutrition',
-};
-const RECOVERY_VALUE_LABELS = {
-  sleepQuality: {
-    great: 'Great (well rested)',
-    ok: 'Okay',
-    rough: 'Rough night',
-  },
-  energy: {
-    high: 'High',
-    steady: 'Steady',
-    low: 'Low',
-  },
-  soreness: {
-    fresh: 'Fresh',
-    moderate: 'Moderate',
-    beat: 'Beat up',
-  },
-  nutrition: {
-    dialed: 'Dialed in',
-    decent: 'Decent',
-    off: 'Off plan',
-  },
-};
-const DEFAULT_RECOVERY_SNAPSHOT = {
-  sleepQuality: null,
-  energy: null,
-  soreness: null,
-  nutrition: null,
-  notes: [],
-  updatedAt: null,
-};
 const DEFAULT_CONSTRAINTS = {
   scheduleNotes: [],
   avoidAreas: [],
@@ -227,31 +179,6 @@ function sanitizeGoals(value) {
     }
   });
   return Array.from(seen.values()).slice(0, MAX_GOALS);
-}
-
-function sanitizeRecoverySnapshot(value) {
-  if (!value || typeof value !== 'object') return { ...DEFAULT_RECOVERY_SNAPSHOT };
-  const out = { ...DEFAULT_RECOVERY_SNAPSHOT };
-  Object.keys(RECOVERY_METRICS).forEach((metric) => {
-    const val = value[metric];
-    if (RECOVERY_METRICS[metric].includes(val)) out[metric] = val;
-  });
-  if (Array.isArray(value.notes)) {
-    out.notes = dedupeStrings(value.notes, MAX_NOTES, MAX_NOTE_LENGTH);
-  } else if (typeof value.notes === 'string') {
-    const trimmed = trimString(value.notes, MAX_NOTE_LENGTH);
-    out.notes = trimmed ? [trimmed] : [];
-  }
-  if (value.updatedAt) out.updatedAt = trimString(value.updatedAt, 32);
-  return out;
-}
-
-function hasMeaningfulRecovery(snapshot) {
-  if (!snapshot) return false;
-  return (
-    snapshot.notes.length > 0 ||
-    Object.keys(RECOVERY_METRICS).some((metric) => !!snapshot[metric])
-  );
 }
 
 function sanitizeConstraints(value) {
@@ -371,28 +298,6 @@ function formatDistanceMiles(value) {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return null;
   return `${num.toFixed(2)} mi`;
-}
-
-function describeRecoverySnapshotLines(snapshot) {
-  if (!snapshot) return [];
-  const lines = [];
-  Object.keys(RECOVERY_METRIC_LABELS).forEach((metric) => {
-    const value = snapshot[metric];
-    if (!value) return;
-    const label = RECOVERY_VALUE_LABELS[metric]
-      ? RECOVERY_VALUE_LABELS[metric][value]
-      : null;
-    if (label) {
-      lines.push(`${RECOVERY_METRIC_LABELS[metric]}: ${label}`);
-    }
-  });
-  if (Array.isArray(snapshot.notes) && snapshot.notes.length) {
-    snapshot.notes.forEach((note) => {
-      const text = trimString(note, MAX_NOTE_LENGTH);
-      if (text) lines.push(`Note: ${text}`);
-    });
-  }
-  return lines;
 }
 
 function describeConstraintsLines(constraints) {
@@ -813,9 +718,6 @@ let currentExercise = null;
 let needsRecover = false;
 let needsSaveAfterNormalize = false;
 let goals = sanitizeGoals(wtStorage.get(WT_KEYS.goals, []));
-let recoverySnapshot = sanitizeRecoverySnapshot(
-  wtStorage.get(WT_KEYS.recovery, DEFAULT_RECOVERY_SNAPSHOT),
-);
 let constraints = sanitizeConstraints(wtStorage.get(WT_KEYS.constraints, DEFAULT_CONSTRAINTS));
 let archivedSessions = wtStorage.get(WT_KEYS.archive, {});
 if (!archivedSessions || typeof archivedSessions !== 'object' || Array.isArray(archivedSessions)) {
@@ -823,6 +725,7 @@ if (!archivedSessions || typeof archivedSessions !== 'object' || Array.isArray(a
 }
 let dayType = wtStorage.get(WT_KEYS.dayType, '');
 let dayCompare = wtStorage.get(WT_KEYS.dayCompare, 'none');
+let progressionGuard = !!wtStorage.get(WT_KEYS.progressionGuard, false);
 if (typeof localStorage !== "undefined") {
   const s = wtStorage.get(WT_KEYS.session, null);
   const c = wtStorage.get(WT_KEYS.current, null);
@@ -915,10 +818,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const addConstraintBtn = document.getElementById("addConstraintBtn");
   const constraintsList = document.getElementById("constraintsList");
   const constraintsEmpty = document.getElementById("constraintsEmpty");
-  const recoveryNotes = document.getElementById("recoveryNotes");
-  const recoveryFields = Array.from(
-    document.querySelectorAll("#recoverySection .chip-field"),
-  );
   const avoidAreaButtons = Array.from(
     document.querySelectorAll('[data-constraint-group="avoidAreas"] .chip-option'),
   );
@@ -932,6 +831,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const addDayTypeCustomBtn = document.getElementById('addDayTypeCustomBtn');
   const exportHint = document.getElementById('exportHint');
   const resetContextBtn = document.getElementById('resetContextBtn');
+  const progressionGuardToggle = document.getElementById('progressionGuardToggle');
 
   // --- Import UI ---
   function createConfirmModal(doc) {
@@ -1295,67 +1195,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     renderAvoidAreas();
   }
 
-  function persistRecoverySnapshot() {
-    recoverySnapshot.updatedAt = new Date().toISOString();
-    recoverySnapshot = sanitizeRecoverySnapshot(recoverySnapshot);
-    wtStorage.set(WT_KEYS.recovery, recoverySnapshot);
-  }
-
-  function renderRecovery() {
-    if (recoveryFields.length) {
-      recoveryFields.forEach((field) => {
-        const metric = field.dataset.metric;
-        if (!metric) return;
-        const value = recoverySnapshot[metric];
-        const buttons = field.querySelectorAll(".chip-option");
-        buttons.forEach((btn) => {
-          const isActive = value && btn.dataset.value === value;
-          btn.classList.toggle("active", !!isActive);
-          btn.setAttribute("aria-pressed", isActive ? "true" : "false");
-        });
-      });
-    }
-    if (recoveryNotes) {
-      const text = (recoverySnapshot.notes || []).join("\n");
-      if (recoveryNotes.value !== text) recoveryNotes.value = text;
-    }
-  }
-
-  if (recoveryFields.length) {
-    recoveryFields.forEach((field) => {
-      const metric = field.dataset.metric;
-      if (!metric) return;
-      const buttons = field.querySelectorAll(".chip-option");
-      buttons.forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const value = trimString(btn.dataset.value, 20);
-          if (!value) return;
-          if (recoverySnapshot[metric] === value) {
-            recoverySnapshot[metric] = null;
-          } else {
-            recoverySnapshot[metric] = value;
-          }
-          persistRecoverySnapshot();
-          renderRecovery();
-        });
-      });
-    });
-  }
-
-  if (recoveryNotes) {
-    const handleRecoveryNotesInput = debounce(() => {
-      const lines = recoveryNotes.value
-        .split(/\r?\n/)
-        .map((line) => trimString(line, MAX_NOTE_LENGTH))
-        .filter(Boolean)
-        .slice(0, MAX_NOTES);
-      recoverySnapshot.notes = lines;
-      persistRecoverySnapshot();
-    }, 250);
-    recoveryNotes.addEventListener("input", handleRecoveryNotesInput);
-  }
-
-  renderRecovery();
 
   /* ------------------ DAY TYPE ------------------ */
   function renderDayType() {
@@ -1425,9 +1264,19 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     else if (dayCompare === 'all') win = 'Compare: All';
     const goalCount = goals.filter((g) => g.active).length;
     const goalText = goalCount ? `Goals: ${goalCount}` : 'Goals: None';
-    exportHint.textContent = `${day} • ${win} • ${goalText}`;
+    const progText = progressionGuard ? 'Progression Guard: ON' : 'Progression Guard: OFF';
+    exportHint.textContent = `${day} • ${win} • ${goalText} • ${progText}`;
   }
   updateExportHint();
+
+  if (progressionGuardToggle) {
+    progressionGuardToggle.checked = progressionGuard;
+    progressionGuardToggle.addEventListener('change', () => {
+      progressionGuard = progressionGuardToggle.checked;
+      wtStorage.set(WT_KEYS.progressionGuard, progressionGuard);
+      updateExportHint();
+    });
+  }
 
   if (addDayTypeCustomBtn && dayTypeCustomInput) {
     const updateBtn = () => {
@@ -1455,22 +1304,21 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   if (resetContextBtn) {
     resetContextBtn.addEventListener('click', async () => {
-      const ok = await confirmModal('Reset Goals, Recovery, Constraints, Day Type & Compare?', { yesText: 'Reset', noText: 'Cancel', title: 'Reset Context' });
+      const ok = await confirmModal('Reset Goals, Constraints, Day Type, Compare, and Progression Guard?', { yesText: 'Reset', noText: 'Cancel', title: 'Reset Context' });
       if (!ok) return;
       goals = [];
-      recoverySnapshot = { ...DEFAULT_RECOVERY_SNAPSHOT };
       constraints = { ...DEFAULT_CONSTRAINTS };
       dayType = '';
       dayCompare = 'none';
+      progressionGuard = false;
       wtStorage.set(WT_KEYS.goals, goals);
-      wtStorage.set(WT_KEYS.recovery, recoverySnapshot);
       wtStorage.set(WT_KEYS.constraints, constraints);
       wtStorage.set(WT_KEYS.dayType, dayType);
       wtStorage.set(WT_KEYS.dayCompare, dayCompare);
+      wtStorage.set(WT_KEYS.progressionGuard, progressionGuard);
       renderGoals();
       renderConstraintsList();
       renderAvoidAreas();
-      renderRecovery();
       renderDayType();
       updateExportHint();
       showToast('Context reset.');
@@ -2859,7 +2707,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const goalsForExport = sanitizeGoals(goals)
       .filter((g) => g.active)
       .map((g) => g.text);
-    const recoveryForExport = sanitizeRecoverySnapshot(recoverySnapshot);
     const constraintsForExport = sanitizeConstraints(constraints);
 
     const normalized = normalizePayload({
@@ -2867,7 +2714,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       timestamp: new Date().toISOString(),
       exercises: exportExercises,
       goals: goalsForExport,
-      recoverySnapshot: recoveryForExport,
       constraints: constraintsForExport,
     });
 
@@ -2994,14 +2840,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (highlights.length) {
       payload.exerciseHighlights = sanitizeExerciseHighlights(highlights);
     }
-    const consistency = computeConsistencyMetricsFromStats(
-      [currentStats, ...previousStats],
-      payload.date,
-    );
-    if (consistency) {
-      payload.consistency = sanitizeConsistency(consistency);
-    }
-
     const jsonStr = JSON.stringify(payload, null, 2);
     triggerDownload(
       new Blob([jsonStr], { type: "application/json" }),
@@ -3048,14 +2886,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       });
     }
 
-    const consistencyLines = payload.consistency
-      ? [
-          `Past 7 days: ${payload.consistency.past7?.daysTrained ?? 0} training day(s), ${payload.consistency.past7?.totalSets ?? 0} sets`,
-          `Past 30 days: ${payload.consistency.past30?.daysTrained ?? 0} training day(s), ${payload.consistency.past30?.totalSets ?? 0} sets`,
-          `Current streak: ${payload.consistency.streakDays ?? 0} day(s)`,
-        ]
-      : [];
-    const recoveryLines = describeRecoverySnapshotLines(payload.recoverySnapshot);
     const constraintLines = describeConstraintsLines(payload.constraints);
 
     let aiText = `WORKOUT DATA - ${payload.date}\n\n`;
@@ -3070,16 +2900,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     aiText += `\n`;
 
-    aiText += `CONSISTENCY\n`;
-    if (consistencyLines.length) {
-      consistencyLines.forEach((line) => {
-        aiText += `- ${line}\n`;
-      });
-    } else {
-      aiText += `- No historical data available yet.\n`;
-    }
-    aiText += `\n`;
-
     aiText += `GOALS & FOCUS\n`;
     if (goalsForExport.length) {
       goalsForExport.forEach((goal) => {
@@ -3087,16 +2907,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       });
     } else {
       aiText += `- None specified.\n`;
-    }
-    aiText += `\n`;
-
-    aiText += `RECOVERY SNAPSHOT\n`;
-    if (recoveryLines.length) {
-      recoveryLines.forEach((line) => {
-        aiText += `- ${line}\n`;
-      });
-    } else {
-      aiText += `- No recovery notes today.\n`;
     }
     aiText += `\n`;
 
@@ -3109,6 +2919,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       aiText += `- No upcoming constraints reported.\n`;
     }
     aiText += `\n`;
+
+    if (progressionGuard) {
+      aiText += `PROGRESSION GUARD (MANDATORY IF INCLUDED)\n`;
+      aiText += `- Ensure the user is never stagnating: verify load/rep/volume progression against recent sessions and propose increases or quality improvements.\n`;
+      aiText += `- Use math: compare volume (weight × reps), top-set loads, and total sets vs recent sessions; call out regressions and prescribe stepwise progressions.\n`;
+      aiText += `- If progression is unsafe, suggest form cues or rep/tempo quality gains to keep advancing.\n\n`;
+    }
 
     aiText += `EXERCISE HIGHLIGHTS\n`;
     if (payload.exerciseHighlights && payload.exerciseHighlights.length) {
@@ -3175,7 +2992,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     aiText += `NEXT STEPS REQUEST\n`;
     aiText += `Please analyze the session and consistency metrics, flag regressions or PRs, and craft the next workout. Prioritize:\n`;
     aiText += `1. Insight: Note strength/cardio trends, weak points, or fatigue signals.\n`;
-    aiText += `2. Next workout: Provide a detailed plan aligned with goals, respecting constraints and recovery data.\n`;
+    aiText += `2. Next workout: Provide a detailed plan aligned with goals and constraints.\n`;
     aiText += `3. Progression: Suggest load/rep adjustments and technique cues to keep momentum.\n`;
 
     if (navigator.clipboard) {

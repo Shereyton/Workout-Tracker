@@ -132,43 +132,12 @@
           </div>
           <div id="goalsEmpty" class="empty-hint muted-text">No goals yet. Add a focus to tailor AI feedback.</div>
           <div id="goalsChips" class="chip-list" aria-live="polite"></div>
-        </section>
-
-        <section id="recoverySection" class="context-card">
-          <h3>Recovery Snapshot</h3>
-          <div class="chip-field" data-metric="sleepQuality">
-            <span class="chip-label">Sleep</span>
-            <div class="chip-options" role="group" aria-label="Sleep quality">
-              <button class="chip-option" data-value="great">Great</button>
-              <button class="chip-option" data-value="ok">Okay</button>
-              <button class="chip-option" data-value="rough">Rough Night</button>
-            </div>
+          <div class="inline-row inline-row--tight">
+            <label class="inline-label" for="progressionGuardToggle">
+              <input type="checkbox" id="progressionGuardToggle">
+              Require AI to drive progression (no stagnation)
+            </label>
           </div>
-          <div class="chip-field" data-metric="energy">
-            <span class="chip-label">Energy</span>
-            <div class="chip-options" role="group" aria-label="Energy level">
-              <button class="chip-option" data-value="high">High</button>
-              <button class="chip-option" data-value="steady">Steady</button>
-              <button class="chip-option" data-value="low">Low</button>
-            </div>
-          </div>
-          <div class="chip-field" data-metric="soreness">
-            <span class="chip-label">Soreness</span>
-            <div class="chip-options" role="group" aria-label="Soreness">
-              <button class="chip-option" data-value="fresh">Fresh</button>
-              <button class="chip-option" data-value="moderate">Moderate</button>
-              <button class="chip-option" data-value="beat">Beat Up</button>
-            </div>
-          </div>
-          <div class="chip-field" data-metric="nutrition">
-            <span class="chip-label">Nutrition</span>
-            <div class="chip-options" role="group" aria-label="Nutrition consistency">
-              <button class="chip-option" data-value="dialed">Dialed In</button>
-              <button class="chip-option" data-value="decent">Decent</button>
-              <button class="chip-option" data-value="off">Off Today</button>
-            </div>
-          </div>
-          <textarea id="recoveryNotes" class="field field--compact" placeholder="Optional: add quick notes (e.g., slept 6h, sore hamstrings)"></textarea>
         </section>
 
         <section id="constraintsSection" class="context-card">

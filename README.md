@@ -2,8 +2,6 @@
 
 This is a lightweight web-based workout tracker. Log sets with any weight (including zero for bodyweight exercises) and export data as JSON, CSV, or AI-ready text. Finished sessions are saved locally so you can export even after closing the workout.
 
-**Note:** Charts are temporarily removed. You can export JSON/CSV and view history via the calendar and session summary.
-
 ## Data Integrity Guarantees
 
 To keep logs accurate and exports clean, the app enforces the following at input, edit, and export time:
@@ -20,19 +18,18 @@ These guardrails apply when logging, editing, merging current exercise into sess
 
 - JSON: `workout_YYYY-MM-DD.json` includes the normalized session plus context fields:
   - Core fields: `date`, `timestamp`, `totalExercises`, `totalSets`, `exercises[]`, `schema` (currently `3`).
-  - Optional extras saved when provided: `session{ sessionStart, sessionEnd, sessionDurationSec }`, `workoutNotes[]`, `goals[]`, `recoverySnapshot`, `constraints`, `consistency`, and `exerciseHighlights`.
+  - Optional extras saved when provided: `session{ sessionStart, sessionEnd, sessionDurationSec }`, `workoutNotes[]`, `goals[]`, `constraints`, and `exerciseHighlights`.
 - CSV: header `Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)`. If session time is included, metadata rows are prepended.
-- AI Text: structured summary with session snapshot, consistency metrics, goals, recovery/constraint context, exercise highlights (including PR flags/trends), optional freeform notes, and a tailored prompt for AI coaching.
+- AI Text: structured summary with session snapshot, goals, constraints, exercise highlights (including PR flags/trends), optional freeform notes, and an optional “Progression Guard” directive to prevent stagnation.
 
 ## Context Panels
 
 Right under the workout summary you can capture extra context so exports tell AI exactly what you need:
 
-- **Goals & Focus** – add or remove short-term goals, then tap a goal chip to mark it “active” for today. Only active goals flow into the export so you can tailor each workout (or export with none).
-- **Recovery Snapshot** – one-tap chips for sleep, energy, soreness, nutrition plus optional notes so AI knows how you feel going in.
+- **Goals & Focus** – add or remove short-term goals, then tap a goal chip to mark it “active” for today. Only active goals flow into the export so you can tailor each workout (or export with none). Toggle “Require AI to drive progression” to add a mandatory anti-stagnation directive to the AI prompt.
 - **Schedule & Constraints** – log upcoming conflicts and areas to de-emphasize; they’re surfaced in the AI prompt so smart plans respect your calendar/body.
 
-The export dialog now uses this context along with recent session history to compute consistency metrics, highlight trends/PRs, and expand the AI request so you get richer feedback automatically.
+The export dialog uses this context along with recent session history to highlight trends/PRs and expand the AI request so you get richer feedback automatically.
 
 ## History
 
