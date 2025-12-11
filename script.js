@@ -294,6 +294,20 @@ function formatVolumeNumber(value) {
   return Math.round(num).toLocaleString();
 }
 
+function formatTopSet(ts) {
+  if (!ts || typeof ts.weight !== 'number' || typeof ts.reps !== 'number') return '-';
+  return `${ts.weight}×${ts.reps}`;
+}
+
+function formatPercentChange(newVal, oldVal) {
+  const a = Number(newVal);
+  const b = Number(oldVal);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b === 0) return 'N/A';
+  const pct = ((a - b) / b) * 100;
+  const rounded = pct.toFixed(1);
+  return `${pct >= 0 ? '+' : ''}${rounded}%`;
+}
+
 function formatDistanceMiles(value) {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return null;
@@ -2840,6 +2854,31 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (highlights.length) {
       payload.exerciseHighlights = sanitizeExerciseHighlights(highlights);
     }
+    const prevByName = new Map();
+    previousStats.forEach((sess) => {
+      (sess.exercises || []).forEach((ex) => {
+        if (!ex || !ex.name) return;
+        if (!prevByName.has(ex.name)) prevByName.set(ex.name, ex);
+      });
+    });
+    const progressionLines = [];
+    (currentStats.exercises || []).forEach((ex) => {
+      const prev = prevByName.get(ex.name);
+      if (!prev) return;
+      const volChange = formatPercentChange(ex.totalVolume, prev.totalVolume);
+      const topChange = formatPercentChange(
+        ex.topSet?.weight ?? null,
+        prev.topSet?.weight ?? null,
+      );
+      const prevTop = formatTopSet(prev.topSet);
+      const currTop = formatTopSet(ex.topSet);
+      const prevVol = formatVolumeNumber(prev.totalVolume);
+      const currVol = formatVolumeNumber(ex.totalVolume);
+      progressionLines.push(
+        `${ex.name} – Volume: ${prevVol} → ${currVol} (${volChange}); Top set: ${prevTop} → ${currTop} (${topChange})`,
+      );
+    });
+
     const jsonStr = JSON.stringify(payload, null, 2);
     triggerDownload(
       new Blob([jsonStr], { type: "application/json" }),
@@ -2921,6 +2960,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     aiText += `\n`;
 
     if (progressionGuard) {
+      aiText += `PROGRESSION METRICS (from recent sessions in this chat)\n`;
+      if (progressionLines.length) {
+        progressionLines.forEach((line) => {
+          aiText += `- ${line}\n`;
+        });
+      } else {
+        aiText += `- Not enough past data to compute progression deltas.\n`;
+      }
+      aiText += `\n`;
+
       aiText += `PROGRESSION GUARD (MANDATORY IF INCLUDED)\n`;
       aiText += `- Ensure the user is never stagnating: verify load/rep/volume progression against recent sessions you already have in this conversation and propose increases or quality improvements.\n`;
       aiText += `- Use math: compare volume (weight × reps), top-set loads, and total sets vs those prior sessions; call out regressions and prescribe stepwise progressions.\n`;
