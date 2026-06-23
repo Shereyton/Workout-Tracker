@@ -3,6 +3,29 @@ function parseDateLocal(str){
   return new Date(y, m-1, d);
 }
 
+function parseCsvRow(row){
+  const cols = [];
+  let current = '';
+  let inQuotes = false;
+  for(let i = 0; i < row.length; i += 1){
+    const char = row[i];
+    const next = row[i + 1];
+    if(char === '"' && inQuotes && next === '"'){
+      current += '"';
+      i += 1;
+    } else if(char === '"'){
+      inQuotes = !inQuotes;
+    } else if(char === ',' && !inQuotes){
+      cols.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  cols.push(current);
+  return cols;
+}
+
 // Parse AI formatted text or exported AI text into history object
 function parseAiText(text, selectedDate){
   const lines = text.split(/\r?\n/);
@@ -38,10 +61,11 @@ function parseAiText(text, selectedDate){
 function parseCsv(text, selectedDate){
   if(!/Exercise\s*,\s*Set\s*,\s*Weight\s*,\s*Reps/i.test(text)) return null;
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  lines.shift();
+  const headerIndex = lines.findIndex(line => /Exercise\s*,\s*Set\s*,\s*Weight\s*,\s*Reps/i.test(line));
+  if(headerIndex === -1) return null;
   const out = [];
-  lines.forEach(l=>{
-    const cols = l.split(',');
+  lines.slice(headerIndex + 1).forEach(l=>{
+    const cols = parseCsvRow(l);
     if(cols.length >=4){
       out.push(`${cols[0].trim()}: ${cols[2].trim()} lbs × ${cols[3].trim()} reps`);
     }
@@ -75,7 +99,70 @@ if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
     if(!document.getElementById('calendar')) return;
     const STORAGE_KEY = 'wt_history';
-    let history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+    const TITLE_KEY = 'wt_history_titles';
+    let storageErrorShown = false;
+
+    function extractJsonFromText(text){
+      let cleaned = text.replace(/^\uFEFF/, '');
+      cleaned = cleaned.replace(/```(?:json)?|```/gi,'');
+      cleaned = cleaned.replace(/[“”]/g,'"').replace(/[‘’]/g,"'");
+      const match = cleaned.match(/({[\s\S]*}|\[[\s\S]*\])/);
+      if(match){
+        return match[0].replace(/,\s*([}\]])/g,'$1');
+      }
+      return null;
+    }
+
+    function safeParseJson(text){
+      try{ return JSON.parse(text); }catch(e){}
+      const extracted = extractJsonFromText(text);
+      if(!extracted) return null;
+      try{ return JSON.parse(extracted); }catch(e){}
+      return null;
+    }
+
+    function loadStoredHistory(){
+      try{
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if(!raw) return {};
+        const parsed = safeParseJson(raw);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      }catch(err){
+        console.warn('Failed to read workout history from storage', err);
+        return {};
+      }
+    }
+
+    function loadStoredTitles(){
+      try{
+        const raw = localStorage.getItem(TITLE_KEY);
+        if(!raw) return {};
+        const parsed = safeParseJson(raw);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      }catch(err){
+        console.warn('Failed to read history titles from storage', err);
+        return {};
+      }
+    }
+
+    function saveTitles(){
+      try{
+        const filtered = {};
+        Object.keys(titles).forEach(date => {
+          const label = titles[date];
+          if(typeof label === 'string' && label.trim()){
+            filtered[date] = label.trim();
+          }
+        });
+        titles = filtered;
+        localStorage.setItem(TITLE_KEY, JSON.stringify(filtered));
+      }catch(err){
+        console.error('Failed to save history titles', err);
+      }
+    }
+
+    let history = loadStoredHistory();
+    let titles = loadStoredTitles();
     let current = new Date();
     current.setDate(1);
     let selectedDate = formatDate(new Date());
@@ -97,7 +184,52 @@ if (typeof document !== 'undefined') {
     const calGo = document.getElementById('calGo');
     const pasteJson = document.getElementById('pasteJson');
     const importFromPaste = document.getElementById('importFromPaste');
-      const resetDayBtn = document.getElementById('resetDay');
+    const resetDayBtn = document.getElementById('resetDay');
+    const dayLabelInput = document.getElementById('dayLabelInput');
+    const saveDayLabelBtn = document.getElementById('saveDayLabel');
+    const clearDayLabelBtn = document.getElementById('clearDayLabel');
+    const titleExportSelect = document.getElementById('titleExportSelect');
+    const exportTitleHistoryBtn = document.getElementById('exportTitleHistory');
+
+    const confirmModal =
+      (typeof window !== 'undefined' && typeof window.wtConfirmModal === 'function')
+        ? window.wtConfirmModal
+        : (message, options = {}) => {
+            const title = options.title ? `${options.title}\n\n` : '';
+            const result = window.confirm(`${title}${message}`);
+            return Promise.resolve(!!result);
+          };
+
+    function getDayLabel(date){
+      const label = titles[date];
+      return typeof label === 'string' ? label : '';
+    }
+
+    function updateTitleSelect(){
+      if(!titleExportSelect) return;
+      const previous = titleExportSelect.value;
+      titleExportSelect.innerHTML = '';
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Export by title…';
+      titleExportSelect.appendChild(placeholder);
+      const unique = new Set();
+      Object.values(titles).forEach(label => {
+        if(typeof label === 'string' && label.trim()){
+          unique.add(label.trim());
+        }
+      });
+      const sorted = Array.from(unique).sort((a,b) => a.localeCompare(b));
+      sorted.forEach(label => {
+        const option = document.createElement('option');
+        option.value = label;
+        option.textContent = label;
+        titleExportSelect.appendChild(option);
+      });
+      if(previous && sorted.includes(previous)) {
+        titleExportSelect.value = previous;
+      }
+    }
 
     function updateDateInput(){
       calGoto.value = selectedDate;
@@ -110,17 +242,40 @@ if (typeof document !== 'undefined') {
     }
 
     function save(){
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      try{
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      }catch(err){
+        console.error('Failed to save workout history', err);
+        if(!storageErrorShown){
+          alert('Unable to save workout history. Storage may be full or disabled.');
+          storageErrorShown = true;
+        }
+      }
     }
 
-    function mergeHistory(obj){
+    function mergeHistory(raw){
+      const incomingHistory = raw && typeof raw === 'object' && !Array.isArray(raw) && raw.history && typeof raw.history === 'object'
+        ? raw.history
+        : raw;
+      const incomingTitles = raw && typeof raw === 'object' && !Array.isArray(raw) && raw.titles && typeof raw.titles === 'object'
+        ? raw.titles
+        : null;
       const dates = new Set();
       let added = 0;
       let skipped = 0;
-      Object.keys(obj).forEach(date => {
-        if(Array.isArray(obj[date])){
+      if(incomingHistory && typeof incomingHistory === 'object'){
+        Object.keys(incomingHistory).forEach(date => {
+          const payload = incomingHistory[date];
+          let entries = [];
+          let label = '';
+          if(Array.isArray(payload)){
+            entries = payload;
+          } else if(payload && typeof payload === 'object'){
+            if(Array.isArray(payload.entries)) entries = payload.entries;
+            if(typeof payload.title === 'string') label = payload.title.trim();
+          }
           if(!history[date]) history[date] = [];
-          obj[date].forEach(line => {
+          entries.forEach(line => {
             if(!history[date].includes(line)){
               history[date].push(line);
               added++; dates.add(date);
@@ -128,8 +283,25 @@ if (typeof document !== 'undefined') {
               skipped++;
             }
           });
-        }
-      });
+          if(label){
+            titles[date] = label;
+          }
+        });
+      }
+
+      if(incomingTitles){
+        Object.keys(incomingTitles).forEach(date => {
+          const label = incomingTitles[date];
+          if(typeof label === 'string' && label.trim()){
+            titles[date] = label.trim();
+          } else if(!label){
+            delete titles[date];
+          }
+        });
+      }
+
+      saveTitles();
+      updateTitleSelect();
       return {dates:[...dates], added, skipped};
     }
 
@@ -173,6 +345,11 @@ if (typeof document !== 'undefined') {
         if(history[dateStr] && history[dateStr].length){
           cell.classList.add('has-data');
         }
+        const label = getDayLabel(dateStr);
+        if(label){
+          cell.classList.add('has-label');
+          cell.setAttribute('title', `${dateStr} • ${label}`);
+        }
         if(dateStr === selectedDate) cell.classList.add('selected');
         cell.addEventListener('click', () => {
           selectedDate = dateStr;
@@ -186,7 +363,14 @@ if (typeof document !== 'undefined') {
 
     function renderDay(){
       const dateObj = parseDateLocal(selectedDate);
-      dayTitle.textContent = dateObj.toDateString();
+      const label = getDayLabel(selectedDate);
+      dayTitle.textContent = label ? `${dateObj.toDateString()} • ${label}` : dateObj.toDateString();
+      if(dayLabelInput){
+        dayLabelInput.value = label;
+      }
+      if(clearDayLabelBtn){
+        clearDayLabelBtn.disabled = !label;
+      }
       entriesEl.innerHTML = '';
       const list = history[selectedDate] || [];
       list.forEach((text, idx) => {
@@ -204,29 +388,67 @@ if (typeof document !== 'undefined') {
         editBtn.textContent = 'Edit';
         editBtn.className = 'btn-mini edit';
         editBtn.addEventListener('click', () => {
-          const updated = prompt('Edit entry', text);
-          if(updated !== null){
-            history[selectedDate][idx] = updated.trim();
-            if(!history[selectedDate][idx]) history[selectedDate].splice(idx,1);
-            if(history[selectedDate].length === 0) delete history[selectedDate];
-            save();
-            renderDay();
-            renderCalendar();
-          }
+          if (li.querySelector('.edit-form')) return;
+          const form = document.createElement('div');
+          form.className = 'edit-form';
+          const row = document.createElement('div');
+          row.className = 'row';
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'editEntryInput';
+          input.value = text;
+          row.appendChild(input);
+          const actionsRow = document.createElement('div');
+          actionsRow.className = 'row2';
+          const saveBtn = document.createElement('button');
+          saveBtn.type = 'button';
+          saveBtn.className = 'btn-mini edit';
+          saveBtn.dataset.action = 'save';
+          saveBtn.textContent = 'Save';
+          const cancelBtn = document.createElement('button');
+          cancelBtn.type = 'button';
+          cancelBtn.className = 'btn-mini del';
+          cancelBtn.dataset.action = 'cancel';
+          cancelBtn.textContent = 'Cancel';
+          actionsRow.appendChild(saveBtn);
+          actionsRow.appendChild(cancelBtn);
+          form.appendChild(row);
+          form.appendChild(actionsRow);
+          li.appendChild(form);
+          input.focus();
+          form.addEventListener('click', ev => {
+            const action = ev.target.getAttribute('data-action');
+            if (action === 'save') {
+              const updated = input.value.trim();
+              if (updated) {
+                history[selectedDate][idx] = updated;
+              } else {
+                history[selectedDate].splice(idx,1);
+                if (history[selectedDate].length === 0) delete history[selectedDate];
+              }
+              save();
+              renderDay();
+              renderCalendar();
+            }
+            if (action === 'cancel') {
+              form.remove();
+              editBtn.focus();
+            }
+          });
         });
         actions.appendChild(editBtn);
 
         const delBtn = document.createElement('button');
         delBtn.textContent = 'Del';
         delBtn.className = 'btn-mini del';
-        delBtn.addEventListener('click', () => {
-          if(confirm('Delete entry?')){
-            history[selectedDate].splice(idx,1);
-            if(history[selectedDate].length === 0) delete history[selectedDate];
-            save();
-            renderDay();
-            renderCalendar();
-          }
+        delBtn.addEventListener('click', async () => {
+          const ok = await confirmModal('Delete entry?', { yesText: 'Delete', noText: 'Cancel', title: 'Delete Entry' });
+          if(!ok) return;
+          history[selectedDate].splice(idx,1);
+          if(history[selectedDate].length === 0) delete history[selectedDate];
+          save();
+          renderDay();
+          renderCalendar();
         });
         actions.appendChild(delBtn);
 
@@ -234,7 +456,7 @@ if (typeof document !== 'undefined') {
         entriesEl.appendChild(li);
       });
       if(resetDayBtn){
-        resetDayBtn.disabled = list.length === 0;
+        resetDayBtn.disabled = list.length === 0 && !getDayLabel(selectedDate);
       }
       updateDateInput();
     }
@@ -247,28 +469,134 @@ if (typeof document !== 'undefined') {
       save();
       renderDay();
       renderCalendar();
+      updateTitleSelect();
     });
 
     if(resetDayBtn){
-      resetDayBtn.addEventListener('click', () => {
-        if(confirm('Clear all entries for this day?')){
-          delete history[selectedDate];
-          save();
-          renderDay();
-          renderCalendar();
+      resetDayBtn.addEventListener('click', async () => {
+        const ok = await confirmModal('Clear all entries for this day?', { yesText: 'Clear', noText: 'Cancel', title: 'Clear Day' });
+        if(!ok) return;
+        delete history[selectedDate];
+        delete titles[selectedDate];
+        save();
+        saveTitles();
+        renderDay();
+        renderCalendar();
+        updateTitleSelect();
+      });
+    }
+
+    function buildHistoryExportPayload(){
+      const payload = { history: {}, titles: {} };
+      Object.keys(history).forEach(date => {
+        const list = history[date];
+        if(Array.isArray(list)){
+          payload.history[date] = [...list];
+        }
+      });
+      Object.keys(titles).forEach(date => {
+        const label = titles[date];
+        if(typeof label === 'string' && label.trim()){
+          payload.titles[date] = label.trim();
+        }
+      });
+      if(Object.keys(payload.titles).length === 0) delete payload.titles;
+      return payload;
+    }
+
+    function triggerDownload(blob, filename){
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function slugifyLabel(label){
+      return label.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'labeled-days';
+    }
+
+    function buildTitleExport(label){
+      const dates = Object.keys(titles).filter(date => titles[date] === label);
+      const result = { label, dates: {} };
+      dates.forEach(date => {
+        result.dates[date] = {
+          title: label,
+          entries: Array.isArray(history[date]) ? [...history[date]] : []
+        };
+      });
+      return result;
+    }
+
+    if(saveDayLabelBtn){
+      saveDayLabelBtn.addEventListener('click', () => {
+        if(!dayLabelInput) return;
+        const value = dayLabelInput.value.trim();
+        if(value){
+          titles[selectedDate] = value;
+        } else {
+          delete titles[selectedDate];
+        }
+        saveTitles();
+        updateTitleSelect();
+        renderCalendar();
+        renderDay();
+      });
+    }
+
+    if(clearDayLabelBtn){
+      clearDayLabelBtn.addEventListener('click', () => {
+        delete titles[selectedDate];
+        saveTitles();
+        if(dayLabelInput) dayLabelInput.value = '';
+        updateTitleSelect();
+        renderCalendar();
+        renderDay();
+      });
+    }
+
+    if(dayLabelInput){
+      dayLabelInput.addEventListener('keydown', (e) => {
+        if(e.key === 'Enter'){
+          e.preventDefault();
+          if(saveDayLabelBtn) saveDayLabelBtn.click();
+        }
+      });
+    }
+
+    if(exportTitleHistoryBtn){
+      exportTitleHistoryBtn.addEventListener('click', () => {
+        if(!titleExportSelect) return;
+        const label = titleExportSelect.value;
+        if(!label){
+          alert('Select a title to export.');
+          return;
+        }
+        const payload = buildTitleExport(label);
+        if(!Object.keys(payload.dates).length){
+          alert(`No days found with title "${label}".`);
+          return;
+        }
+        const data = JSON.stringify(payload, null, 2);
+        const blob = new Blob([data], {type:'application/json'});
+        const filename = `workout_history_${slugifyLabel(label)}.json`;
+        triggerDownload(blob, filename);
+        if(navigator.clipboard){
+          navigator.clipboard.writeText(data).then(()=>{
+            alert(`History for "${label}" exported and copied to clipboard ✅`);
+          }).catch(()=> alert(`History for "${label}" exported (clipboard copy failed)`));
+        } else {
+          alert(`History for "${label}" exported. Copy manually:\n\n${data}`);
         }
       });
     }
 
     exportBtn.addEventListener('click', () => {
-      const data = JSON.stringify(history, null, 2);
+      const payload = buildHistoryExportPayload();
+      const data = JSON.stringify(payload, null, 2);
       const blob = new Blob([data], {type:'application/json'});
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = 'workout_history.json';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      triggerDownload(blob, 'workout_history.json');
       if(navigator.clipboard){
         navigator.clipboard.writeText(data).then(()=>{
           alert('History exported and copied to clipboard ✅');
@@ -291,6 +619,7 @@ if (typeof document !== 'undefined') {
           save();
           renderCalendar();
           renderDay();
+          updateTitleSelect();
           alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         } else {
           alert('Invalid file');
@@ -311,7 +640,7 @@ if (typeof document !== 'undefined') {
       if(jsonObj && typeof jsonObj === 'object'){
         const res = mergeHistory(jsonObj);
         if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay();
+        save(); renderCalendar(); renderDay(); updateTitleSelect();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
       }
@@ -319,7 +648,7 @@ if (typeof document !== 'undefined') {
       if(ai){
         const res = mergeHistory(ai);
         if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay();
+        save(); renderCalendar(); renderDay(); updateTitleSelect();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
       }
@@ -327,31 +656,12 @@ if (typeof document !== 'undefined') {
       if(csv){
         const res = mergeHistory(csv);
         if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay();
+        save(); renderCalendar(); renderDay(); updateTitleSelect();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
       }
       alert('Could not parse input. Supported: JSON, AI text, CSV. Input: '+text.slice(0,120));
       return false;
-    }
-
-    function safeParseJson(text){
-      try{ return JSON.parse(text); }catch(e){}
-      const extracted = extractJsonFromText(text);
-      if(!extracted) return null;
-      try{ return JSON.parse(extracted); }catch(e){}
-      return null;
-    }
-
-    function extractJsonFromText(text){
-      let cleaned = text.replace(/^\uFEFF/, '');
-      cleaned = cleaned.replace(/```(?:json)?|```/gi,'');
-      cleaned = cleaned.replace(/[“”]/g,'"').replace(/[‘’]/g,"'");
-      const match = cleaned.match(/({[\s\S]*}|\[[\s\S]*\])/);
-      if(match){
-        return match[0].replace(/,\s*([}\]])/g,'$1');
-      }
-      return null;
     }
 
     calPrev.addEventListener('click', () => {
@@ -390,30 +700,37 @@ if (typeof document !== 'undefined') {
     });
 
     saveTodayBtn.addEventListener('click', () => {
-      if (typeof window.getSessionSnapshot !== 'function') {
-        alert('Session not available');
-        return;
-      }
-      const snapshot = window.getSessionSnapshot();
-      if (!snapshot.length) {
-        alert('No session data to save');
-        return;
-      }
-      const lines = snapshotToLines(snapshot);
-      const res = mergeHistory({[selectedDate]: lines});
-      save();
-      renderDay();
-      renderCalendar();
-      alert(`Saved ${res.added} lines, ${res.skipped} duplicates`);
+      // Wait for session to be available
+      const waitForSession = () => {
+        if (typeof window.getSessionSnapshot !== 'function') {
+          setTimeout(waitForSession, 100);
+          return;
+        }
+        const snapshot = window.getSessionSnapshot();
+        if (!snapshot.length) {
+          alert('No session data to save');
+          return;
+        }
+        const lines = snapshotToLines(snapshot);
+        const res = mergeHistory({[selectedDate]: lines});
+        save();
+        renderDay();
+        renderCalendar();
+        updateTitleSelect();
+        alert(`Saved ${res.added} lines, ${res.skipped} duplicates`);
+      };
+      waitForSession();
     });
 
     window.addEventListener('wt-history-updated', () => {
       renderCalendar();
       renderDay();
+      updateTitleSelect();
     });
 
     renderCalendar();
     renderDay();
+    updateTitleSelect();
   });
 }
 if (typeof module !== 'undefined') {

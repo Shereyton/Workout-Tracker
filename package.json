@@ -1,13 +1,15 @@
 {
   "name": "workout-tracker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "scripts": {
     "setup": "npm install",
     "test": "jest",
-    "test:watch": "jest --watchAll"
+    "test:watch": "jest --watchAll",
+    "playground": "lite-server --baseDir=."
   },
   "devDependencies": {
     "jest": "^29.6.1",
-    "jest-environment-jsdom": "^30.0.5"
+    "jest-environment-jsdom": "^30.0.5",
+    "lite-server": "^2.6.1"
   }
 }
