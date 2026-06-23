@@ -3,6 +3,29 @@ function parseDateLocal(str){
   return new Date(y, m-1, d);
 }
 
+function parseCsvRow(row){
+  const cols = [];
+  let current = '';
+  let inQuotes = false;
+  for(let i = 0; i < row.length; i += 1){
+    const char = row[i];
+    const next = row[i + 1];
+    if(char === '"' && inQuotes && next === '"'){
+      current += '"';
+      i += 1;
+    } else if(char === '"'){
+      inQuotes = !inQuotes;
+    } else if(char === ',' && !inQuotes){
+      cols.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  cols.push(current);
+  return cols;
+}
+
 // Parse AI formatted text or exported AI text into history object
 function parseAiText(text, selectedDate){
   const lines = text.split(/\r?\n/);
@@ -42,7 +65,7 @@ function parseCsv(text, selectedDate){
   if(headerIndex === -1) return null;
   const out = [];
   lines.slice(headerIndex + 1).forEach(l=>{
-    const cols = l.split(',');
+    const cols = parseCsvRow(l);
     if(cols.length >=4){
       out.push(`${cols[0].trim()}: ${cols[2].trim()} lbs × ${cols[3].trim()} reps`);
     }
@@ -368,17 +391,30 @@ if (typeof document !== 'undefined') {
           if (li.querySelector('.edit-form')) return;
           const form = document.createElement('div');
           form.className = 'edit-form';
-          form.innerHTML = `
-            <div class="row">
-              <input type="text" class="editEntryInput" value="${text}">
-            </div>
-            <div class="row2">
-              <button type="button" class="btn-mini edit" data-action="save">Save</button>
-              <button type="button" class="btn-mini del" data-action="cancel">Cancel</button>
-            </div>
-          `;
+          const row = document.createElement('div');
+          row.className = 'row';
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'editEntryInput';
+          input.value = text;
+          row.appendChild(input);
+          const actionsRow = document.createElement('div');
+          actionsRow.className = 'row2';
+          const saveBtn = document.createElement('button');
+          saveBtn.type = 'button';
+          saveBtn.className = 'btn-mini edit';
+          saveBtn.dataset.action = 'save';
+          saveBtn.textContent = 'Save';
+          const cancelBtn = document.createElement('button');
+          cancelBtn.type = 'button';
+          cancelBtn.className = 'btn-mini del';
+          cancelBtn.dataset.action = 'cancel';
+          cancelBtn.textContent = 'Cancel';
+          actionsRow.appendChild(saveBtn);
+          actionsRow.appendChild(cancelBtn);
+          form.appendChild(row);
+          form.appendChild(actionsRow);
           li.appendChild(form);
-          const input = form.querySelector('.editEntryInput');
           input.focus();
           form.addEventListener('click', ev => {
             const action = ev.target.getAttribute('data-action');

@@ -34,6 +34,17 @@ test('parseCsv ignores metadata rows before header', () => {
   });
 });
 
+test('parseCsv handles quoted exercise names with commas', () => {
+  const csv = [
+    'Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)',
+    '"Curl, Barbell",1,75,10,,,08:15,,'
+  ].join('\n');
+  const res = parseCsv(csv, '2024-07-04');
+  expect(res).toEqual({
+    '2024-07-04': ['Curl, Barbell: 75 lbs × 10 reps']
+  });
+});
+
 test('snapshotToLines retains duplicate sets with numbering', () => {
   const snapshot = [
     {

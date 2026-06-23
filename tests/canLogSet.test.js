@@ -1,4 +1,11 @@
-const { canLogSet, canLogCardio, normalizeSet, normalizePayload } = require('../script');
+const {
+  canLogSet,
+  canLogCardio,
+  normalizeSet,
+  normalizePayload,
+  appendUniqueHistoryLines,
+  csvRow,
+} = require('../script');
 
 describe('canLogSet', () => {
   it('allows zero weight with positive reps', () => {
@@ -46,5 +53,26 @@ describe('data normalization', () => {
     expect(norm.exercises[0].sets[0].weight).toBe(20);
     expect(norm.exercises[0].sets[0].reps).toBe(1);
     expect(norm.schema).toBe(3);
+  });
+});
+
+describe('history and CSV helpers', () => {
+  it('keeps distinct numbered sets while skipping exact duplicates', () => {
+    const merged = appendUniqueHistoryLines(
+      ['Bench Press: Set 1 - 185 lbs × 5 reps'],
+      [
+        'Bench Press: Set 1 - 185 lbs × 5 reps',
+        'Bench Press: Set 2 - 185 lbs × 5 reps',
+      ],
+    );
+    expect(merged).toEqual([
+      'Bench Press: Set 1 - 185 lbs × 5 reps',
+      'Bench Press: Set 2 - 185 lbs × 5 reps',
+    ]);
+  });
+
+  it('quotes CSV fields that contain commas or quotes', () => {
+    expect(csvRow(['Curl, Barbell', 1, 75, 10])).toBe('"Curl, Barbell",1,75,10');
+    expect(csvRow(['He said "press"', 1])).toBe('"He said ""press""",1');
   });
 });

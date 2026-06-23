@@ -625,6 +625,23 @@ function deepClone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+function appendUniqueHistoryLines(existing, incoming) {
+  const merged = Array.isArray(existing) ? [...existing] : [];
+  incoming.forEach((line) => {
+    if (!merged.includes(line)) merged.push(line);
+  });
+  return merged;
+}
+
+function csvCell(value) {
+  const str = value == null ? "" : String(value);
+  return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+function csvRow(values) {
+  return values.map(csvCell).join(",");
+}
+
 // Merge imported exercises into wt_history lines (for charts and history)
 function mergeIntoHistory(payload) {
   const hist = wtStorage.get(WT_KEYS.history, {});
@@ -633,10 +650,11 @@ function mergeIntoHistory(payload) {
 
   for (const ex of payload.exercises) {
     if (ex.isSuperset) {
-      for (const s of ex.sets) {
+      for (const [setIdx, s] of ex.sets.entries()) {
+        const setNumber = s.set || setIdx + 1;
         for (const sub of s.exercises || []) {
           lines.push(
-            `${sub.name}: ${coercePositiveNumber(sub.weight)} lbs × ${Math.max(
+            `${sub.name}: Set ${setNumber} - ${coercePositiveNumber(sub.weight)} lbs × ${Math.max(
               1,
               Math.floor(coercePositiveNumber(sub.reps)),
             )} reps`,
@@ -644,9 +662,10 @@ function mergeIntoHistory(payload) {
         }
       }
     } else if (!ex.isCardio) {
-      for (const s of ex.sets) {
+      for (const [setIdx, s] of ex.sets.entries()) {
+        const setNumber = s.set || setIdx + 1;
         lines.push(
-          `${ex.name}: ${coercePositiveNumber(s.weight)} lbs × ${Math.max(
+          `${ex.name}: Set ${setNumber} - ${coercePositiveNumber(s.weight)} lbs × ${Math.max(
             1,
             Math.floor(coercePositiveNumber(s.reps)),
           )} reps`,
@@ -655,8 +674,7 @@ function mergeIntoHistory(payload) {
     }
   }
   const curr = Array.isArray(hist[day]) ? hist[day] : [];
-  const merged = Array.from(new Set([...curr, ...lines]));
-  hist[day] = merged;
+  hist[day] = appendUniqueHistoryLines(curr, lines);
   wtStorage.set(WT_KEYS.history, hist);
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event('wt-history-updated'));
@@ -2000,7 +2018,22 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     arr.forEach((name, i) => {
       const row = document.createElement("div");
       row.className = "inline-row";
-      row.innerHTML = `<input type="number" id="weight${i}" class="field superset-field" placeholder="${name} weight" min="0" step="0.5"><input type="number" id="reps${i}" class="field superset-field" placeholder="${name} reps" min="1" step="1">`;
+      const weightField = document.createElement("input");
+      weightField.type = "number";
+      weightField.id = `weight${i}`;
+      weightField.className = "field superset-field";
+      weightField.placeholder = `${name} weight`;
+      weightField.min = "0";
+      weightField.step = "0.5";
+      const repsField = document.createElement("input");
+      repsField.type = "number";
+      repsField.id = `reps${i}`;
+      repsField.className = "field superset-field";
+      repsField.placeholder = `${name} reps`;
+      repsField.min = "1";
+      repsField.step = "1";
+      row.appendChild(weightField);
+      row.appendChild(repsField);
       supersetInputs.appendChild(row);
     });
   }
@@ -2179,16 +2212,34 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       meta = `${setObj.weight} lbs × ${setObj.reps} reps`;
     }
 
-    item.innerHTML = `
-    <div style="flex:1;min-width:150px;">
-      <div class="set-label">${currentExercise.name} – Set ${setObj.set}</div>
-      <div class="set-meta">${meta}${restInfo}</div>
-    </div>
-    <div class="set-actions">
-      <button class="btn-mini edit" data-action="edit">Edit</button>
-      <button class="btn-mini del"  data-action="del">Del</button>
-    </div>
-  `;
+    const content = document.createElement("div");
+    content.style.flex = "1";
+    content.style.minWidth = "150px";
+    const label = document.createElement("div");
+    label.className = "set-label";
+    label.textContent = `${currentExercise.name} – Set ${setObj.set}`;
+    const metaEl = document.createElement("div");
+    metaEl.className = "set-meta";
+    metaEl.textContent = `${meta}${restInfo}`;
+    content.appendChild(label);
+    content.appendChild(metaEl);
+
+    const actions = document.createElement("div");
+    actions.className = "set-actions";
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.className = "btn-mini edit";
+    editButton.dataset.action = "edit";
+    editButton.textContent = "Edit";
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "btn-mini del";
+    deleteButton.dataset.action = "del";
+    deleteButton.textContent = "Del";
+    actions.appendChild(editButton);
+    actions.appendChild(deleteButton);
+    item.appendChild(content);
+    item.appendChild(actions);
     const editBtn = item.querySelector('button[data-action="edit"]');
     editBtn.setAttribute(
       "aria-label",
@@ -2263,11 +2314,45 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const form = document.createElement("div");
     form.className = "edit-form";
     if (currentExercise.isSuperset) {
-      let rows = "";
       s.exercises.forEach((ex, i) => {
-        rows += `<div class="row"><span style=\"font-size:12px;flex-basis:100%;\">${ex.name}</span><input type=\"number\" class=\"editW${i}\" value=\"${ex.weight}\" min=\"0\" step=\"0.5\"><input type=\"number\" class=\"editR${i}\" value=\"${ex.reps}\" min=\"1\" step=\"1\"></div>`;
+        const row = document.createElement("div");
+        row.className = "row";
+        const label = document.createElement("span");
+        label.style.fontSize = "12px";
+        label.style.flexBasis = "100%";
+        label.textContent = ex.name;
+        const weightField = document.createElement("input");
+        weightField.type = "number";
+        weightField.className = `editW${i}`;
+        weightField.value = ex.weight;
+        weightField.min = "0";
+        weightField.step = "0.5";
+        const repsField = document.createElement("input");
+        repsField.type = "number";
+        repsField.className = `editR${i}`;
+        repsField.value = ex.reps;
+        repsField.min = "1";
+        repsField.step = "1";
+        row.appendChild(label);
+        row.appendChild(weightField);
+        row.appendChild(repsField);
+        form.appendChild(row);
       });
-      form.innerHTML = `${rows}<div class="row2"><button type="button" class="btn-mini edit" data-edit-save>Save</button><button type="button" class="btn-mini del" data-edit-cancel>Cancel</button></div>`;
+      const actionsRow = document.createElement("div");
+      actionsRow.className = "row2";
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.className = "btn-mini edit";
+      saveBtn.setAttribute("data-edit-save", "");
+      saveBtn.textContent = "Save";
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "btn-mini del";
+      cancelBtn.setAttribute("data-edit-cancel", "");
+      cancelBtn.textContent = "Cancel";
+      actionsRow.appendChild(saveBtn);
+      actionsRow.appendChild(cancelBtn);
+      form.appendChild(actionsRow);
     } else if (currentExercise.isCardio) {
       if (
         currentExercise.name === "Jump Rope" ||
@@ -2544,21 +2629,23 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const lines = [];
     snapshot.forEach(ex => {
       if(ex.isSuperset){
-        ex.sets.forEach(set => {
+        ex.sets.forEach((set, setIdx) => {
           set.exercises.forEach(sub => {
-            lines.push(`${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`);
+            const setNumber = set.set || setIdx + 1;
+            lines.push(`${sub.name}: Set ${setNumber} - ${sub.weight} lbs × ${sub.reps} reps`);
           });
         });
       } else if(!ex.isCardio){
-        ex.sets.forEach(set => {
-          lines.push(`${ex.name}: ${set.weight} lbs × ${set.reps} reps`);
+        ex.sets.forEach((set, setIdx) => {
+          const setNumber = set.set || setIdx + 1;
+          lines.push(`${ex.name}: Set ${setNumber} - ${set.weight} lbs × ${set.reps} reps`);
         });
       }
     });
     const d = new Date();
     const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     const history = wtStorage.get(WT_KEYS.history, {});
-    history[dateStr] = Array.from(new Set([...(history[dateStr]||[]), ...lines]));
+    history[dateStr] = appendUniqueHistoryLines(history[dateStr], lines);
     wtStorage.set(WT_KEYS.history, history);
     window.dispatchEvent(new Event('wt-history-updated'));
   }
@@ -2643,24 +2730,37 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   /* ------------------ SUMMARY ------------------ */
   function updateSummary() {
     let totalSets = 0;
-    const lines = [];
+    summaryText.innerHTML = "";
     session.exercises.forEach((ex, i) => {
       totalSets += ex.sets.length;
-      lines.push(
-        `<div class="summary-item">${ex.name}: ${ex.sets.length} sets <button class="btn-mini edit" data-summary-edit="${i}">Edit</button></div>`,
+      const item = document.createElement("div");
+      item.className = "summary-item";
+      item.appendChild(
+        document.createTextNode(`${ex.name}: ${ex.sets.length} sets `),
       );
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "btn-mini edit";
+      editBtn.dataset.summaryEdit = String(i);
+      editBtn.textContent = "Edit";
+      item.appendChild(editBtn);
+      summaryText.appendChild(item);
     });
     if (currentExercise && currentExercise.sets.length) {
       totalSets += currentExercise.sets.length;
-      lines.push(
-        `<div class="summary-item">${currentExercise.name}: ${currentExercise.sets.length} sets (in progress)</div>`,
-      );
+      const item = document.createElement("div");
+      item.className = "summary-item";
+      item.textContent = `${currentExercise.name}: ${currentExercise.sets.length} sets (in progress)`;
+      summaryText.appendChild(item);
     }
 
     if (totalSets === 0) {
       summaryText.textContent = "Start your first exercise to begin tracking.";
     } else {
-      summaryText.innerHTML = `<strong>Total Sets: ${totalSets}</strong><br>${lines.join("")}`;
+      const total = document.createElement("strong");
+      total.textContent = `Total Sets: ${totalSets}`;
+      summaryText.prepend(document.createElement("br"));
+      summaryText.prepend(total);
     }
   }
 
@@ -2923,12 +3023,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       ex.sets.forEach((s) => {
         if (ex.isSuperset) {
           s.exercises.forEach((sub) => {
-            csv += `${sub.name},${s.set},${sub.weight},${sub.reps},,,${s.time},${s.restPlanned ?? ""},${s.restActual ?? ""}\n`;
+            csv += `${csvRow([sub.name, s.set, sub.weight, sub.reps, "", "", s.time, s.restPlanned ?? "", s.restActual ?? ""])}\n`;
           });
         } else if (ex.isCardio) {
-          csv += `${ex.name},${s.set},,,${s.distance ?? ""},${s.duration ?? ""},${s.time},${s.restPlanned ?? ""},${s.restActual ?? ""}\n`;
+          csv += `${csvRow([ex.name, s.set, "", "", s.distance ?? "", s.duration ?? "", s.time, s.restPlanned ?? "", s.restActual ?? ""])}\n`;
         } else {
-          csv += `${ex.name},${s.set},${s.weight},${s.reps},,,${s.time},${s.restPlanned ?? ""},${s.restActual ?? ""}\n`;
+          csv += `${csvRow([ex.name, s.set, s.weight, s.reps, "", "", s.time, s.restPlanned ?? "", s.restActual ?? ""])}\n`;
         }
       });
     });
@@ -3214,5 +3314,7 @@ module.exports = {
   computeSessionStats,
   buildExerciseHighlightsForExport,
   computeConsistencyMetricsFromStats,
+  appendUniqueHistoryLines,
+  csvRow,
 };
 }
