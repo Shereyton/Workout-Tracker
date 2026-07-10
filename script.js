@@ -6,6 +6,7 @@ const WT_KEYS = {
   history: 'wt_history',
   custom: 'wt_customExercises',
   theme: 'wt_theme',
+  themePack: 'wt_themePack',
   schema: 'wt_schemaVersion',
   prefSessionTime: 'wt_pref_sessionTimeAlways',
   goals: 'wt_goals',
@@ -15,6 +16,19 @@ const WT_KEYS = {
   dayCompare: 'wt_dayCompareWindow',
   progressionGuard: 'wt_progressionGuard',
 };
+
+const THEME_PACKS = Object.freeze({
+  aurora: Object.freeze({ id: 'aurora', label: 'Aurora', mode: 'light', lightColor: '#eef0fb', darkColor: '#0c1020' }),
+  midnight: Object.freeze({ id: 'midnight', label: 'Midnight', mode: 'dark', lightColor: '#11162a', darkColor: '#070a14' }),
+  inferno: Object.freeze({ id: 'inferno', label: 'Inferno', mode: 'dark', lightColor: '#2b1215', darkColor: '#12090b' }),
+  ice: Object.freeze({ id: 'ice', label: 'Ice', mode: 'light', lightColor: '#e8f7ff', darkColor: '#071724' }),
+  volt: Object.freeze({ id: 'volt', label: 'Volt', mode: 'dark', lightColor: '#152217', darkColor: '#071008' }),
+  chrome: Object.freeze({ id: 'chrome', label: 'Chrome', mode: 'light', lightColor: '#edf0f5', darkColor: '#101318' }),
+});
+
+function getThemePack(value) {
+  return THEME_PACKS[value] || THEME_PACKS.aurora;
+}
 
 const WT_SCHEMA_VERSION = 3;
 
@@ -897,6 +911,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exportHint = document.getElementById('exportHint');
   const resetContextBtn = document.getElementById('resetContextBtn');
   const progressionGuardToggle = document.getElementById('progressionGuardToggle');
+  const exerciseStage = document.getElementById('exerciseStage');
+  const exerciseStageType = document.getElementById('exerciseStageType');
+  const themePackButton = document.getElementById('themePackButton');
+  const themePackLabel = document.getElementById('themePackLabel');
+  const themePackSheet = document.getElementById('themePackSheet');
+  const themePackBackdrop = document.getElementById('themePackBackdrop');
+  const themePackClose = document.getElementById('themePackClose');
+  const themePackOptions = Array.from(document.querySelectorAll('.theme-pack-option'));
+  const themeTransition = document.getElementById('themeTransition');
 
   // --- Import UI ---
   function createConfirmModal(doc) {
@@ -1938,13 +1961,73 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     themeIcon.textContent = "☀️";
     themeLabel.textContent = "Light";
   }
+
   function syncThemeColor() {
     const themeMeta = document.querySelector('meta[name="theme-color"]');
     if (themeMeta) {
-      themeMeta.content = document.body.classList.contains("dark") ? "#0c1020" : "#182139";
+      const pack = getThemePack(document.body.dataset.themePack);
+      themeMeta.content = document.body.classList.contains("dark")
+        ? pack.darkColor
+        : pack.lightColor;
     }
   }
+
+  function playThemeTransition() {
+    if (!themeTransition || prefersReducedMotion) return;
+    themeTransition.classList.remove('is-active');
+    void themeTransition.offsetWidth;
+    themeTransition.classList.add('is-active');
+    window.setTimeout(() => themeTransition.classList.remove('is-active'), 720);
+  }
+
+  function applyThemePack(value, { persist = true, syncMode = false, animate = false } = {}) {
+    const pack = getThemePack(value);
+    if (animate) playThemeTransition();
+    document.body.dataset.themePack = pack.id;
+    if (themePackLabel) themePackLabel.textContent = pack.label;
+    themePackOptions.forEach((option) => {
+      const selected = option.dataset.themePack === pack.id;
+      option.classList.toggle('is-selected', selected);
+      option.setAttribute('aria-pressed', String(selected));
+    });
+    if (syncMode) {
+      const dark = pack.mode === 'dark';
+      document.body.classList.toggle('dark', dark);
+      themeIcon.textContent = dark ? '☀️' : '🌙';
+      themeLabel.textContent = dark ? 'Light' : 'Dark';
+      lsSetRaw(WT_KEYS.theme, dark ? 'dark' : 'light');
+    }
+    if (persist) lsSetRaw(WT_KEYS.themePack, pack.id);
+    syncThemeColor();
+    return pack;
+  }
+
+  let themeSheetPreviousFocus = null;
+  function openThemeSheet() {
+    themeSheetPreviousFocus = document.activeElement;
+    themePackSheet.classList.add('is-open');
+    themePackBackdrop.classList.add('is-open');
+    themePackSheet.setAttribute('aria-hidden', 'false');
+    themePackBackdrop.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('theme-sheet-open');
+    const selected = themePackSheet.querySelector('.theme-pack-option.is-selected');
+    window.setTimeout(() => (selected || themePackClose).focus(), 80);
+  }
+
+  function closeThemeSheet() {
+    if (!themePackSheet.classList.contains('is-open')) return;
+    themePackSheet.classList.remove('is-open');
+    themePackBackdrop.classList.remove('is-open');
+    themePackSheet.setAttribute('aria-hidden', 'true');
+    themePackBackdrop.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('theme-sheet-open');
+    if (themeSheetPreviousFocus?.focus) themeSheetPreviousFocus.focus();
+  }
+
+  const storedPack = wtStorage.getRaw(WT_KEYS.themePack);
+  applyThemePack(storedPack || 'aurora', { persist: false });
   syncThemeColor();
+
   darkToggle.addEventListener("click", () => {
     document.body.classList.toggle("dark");
     const dark = document.body.classList.contains("dark");
@@ -1952,6 +2035,41 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     themeLabel.textContent = dark ? "Light" : "Dark";
     lsSetRaw(WT_KEYS.theme, dark ? "dark" : "light");
     syncThemeColor();
+  });
+
+  themePackButton.addEventListener('click', openThemeSheet);
+  themePackClose.addEventListener('click', closeThemeSheet);
+  themePackBackdrop.addEventListener('click', closeThemeSheet);
+  themePackOptions.forEach((option) => {
+    option.addEventListener('click', () => {
+      const pack = applyThemePack(option.dataset.themePack, {
+        persist: true,
+        syncMode: true,
+        animate: true,
+      });
+      announce(`${pack.label} theme applied`);
+      showToast(`${pack.label} atmosphere activated`, { duration: 2400 });
+      window.setTimeout(closeThemeSheet, 180);
+    });
+  });
+
+  themePackSheet.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeThemeSheet();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(themePackSheet.querySelectorAll('button:not(:disabled)'));
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   });
 
   /* ------------------ IMMERSIVE UI ------------------ */
@@ -2189,10 +2307,37 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     });
   }
 
+  function getStagePresentation(exercise) {
+    if (exercise.isSuperset) return { label: 'Superset', tone: 'superset' };
+    if (exercise.isCardio) return { label: 'Cardio', tone: 'cardio' };
+    const meta = allExercises.find((item) => item.name === exercise.name);
+    const category = String(meta?.category || 'Strength');
+    const normalized = category.toLowerCase();
+    const tone = ['chest', 'back', 'legs', 'shoulders', 'arms', 'core'].find((value) =>
+      normalized.includes(value),
+    ) || 'strength';
+    return { label: category === 'Strength' ? 'Strength' : `${category} · Strength`, tone };
+  }
+
+  function pulseExerciseStage() {
+    if (!exerciseStage) return;
+    exerciseStage.classList.remove('set-celebrate');
+    void exerciseStage.offsetWidth;
+    exerciseStage.classList.add('set-celebrate');
+    window.setTimeout(() => exerciseStage.classList.remove('set-celebrate'), 760);
+  }
+
   function showInterface() {
     interfaceBox.classList.remove("hidden");
+    interfaceBox.classList.remove('interface-enter');
+    void interfaceBox.offsetWidth;
+    interfaceBox.classList.add('interface-enter');
     document.body.classList.add("workout-active");
     exerciseNameEl.textContent = currentExercise.name;
+    const presentation = getStagePresentation(currentExercise);
+    exerciseStage.dataset.stageTone = presentation.tone;
+    exerciseStageType.textContent = presentation.label;
+    exerciseStage.style.setProperty('--set-energy', String(Math.min(1, .2 + ((currentExercise.nextSet || 1) - 1) * .16)));
   }
 
   /* ------------------ LOG SET ------------------ */
@@ -2224,6 +2369,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       );
       currentExercise.nextSet++;
       updateSetCounter();
+      pulseExerciseStage();
 
       currentExercise.exercises.forEach((_, i) => {
         document.getElementById(`weight${i}`).value = "";
@@ -2272,6 +2418,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       );
       currentExercise.nextSet++;
       updateSetCounter();
+      pulseExerciseStage();
       distanceInput.value = "";
       durationMinInput.value = "";
       durationSecInput.value = "";
@@ -2318,6 +2465,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     );
     currentExercise.nextSet++;
     updateSetCounter();
+    pulseExerciseStage();
 
     weightInput.focus();
     weightInput.select();
@@ -2666,6 +2814,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (!currentExercise) return;
     setCounterEl.textContent = currentExercise.nextSet;
     exerciseNameEl.textContent = currentExercise.name;
+    if (exerciseStage) {
+      exerciseStage.style.setProperty('--set-energy', String(Math.min(1, .2 + ((currentExercise.nextSet || 1) - 1) * .16)));
+    }
   }
 
   /* ------------------ NEXT EXERCISE ------------------ */
@@ -3492,6 +3643,8 @@ if (typeof window !== "undefined") {
 
 if (typeof module !== "undefined") {
 module.exports = {
+  THEME_PACKS,
+  getThemePack,
   canLogSet,
   canLogCardio,
   normalizeSet,
