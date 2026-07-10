@@ -46,4 +46,4 @@ Run tests with `npm test`.
 
 ## Playground Preview
 
-Run `npm run playground` to spin up a lightweight dev server (via `lite-server`) at `http://localhost:3000`. The page auto-reloads whenever you save changes to files in this repo, giving you a quick way to try updates in the browser without deploying.
+Run `npm start` (or `npm run playground`) to start the dependency-free local preview at `http://127.0.0.1:3000`. Refresh the page after saving changes to try updates without deploying.

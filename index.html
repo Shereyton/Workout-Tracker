@@ -4,12 +4,17 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1.0" />
 <title>Workout Tracker Pro</title>
-<meta name="description" content="Lightweight mobile workout tracker with export + AI summary">
+<meta name="description" content="Track strength and cardio workouts, review progress, and export clean workout summaries.">
+<meta name="theme-color" content="#29364a">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="container">
+  <main class="container">
     <div class="header">
+      <div class="header-kicker">Train • Track • Progress</div>
       <h1>Workout Tracker Pro</h1>
       <div id="today" class="date"></div>
     </div>
@@ -18,26 +23,30 @@
 
       <!-- Add Custom Exercise -->
       <div class="inline-row inline-row--tight">
+        <label class="sr-only" for="customExercise">Custom exercise name</label>
         <input type="text" id="customExercise" placeholder="Add Custom Exercise" class="field">
         <button id="addExercise" class="btn btn-secondary flex-fixed-120">Add</button>
       </div>
       <button id="startSuperset" class="btn btn-secondary">Start Superset</button>
       <div id="supersetBuilder" class="superset-builder hidden">
         <div class="inline-row inline-row--tight">
-          <select id="supersetSelect1"></select>
-          <select id="supersetSelect2"></select>
+          <select id="supersetSelect1" aria-label="First superset exercise"></select>
+          <select id="supersetSelect2" aria-label="Second superset exercise"></select>
         </div>
         <button id="beginSuperset" class="btn btn-primary">Begin Superset</button>
       </div>
 
       <!-- Exercise search & filters -->
+      <label class="sr-only" for="exerciseSearch">Search exercises</label>
       <input type="text" id="exerciseSearch" list="exerciseList" placeholder="Search exercises" class="field field--compact">
       <datalist id="exerciseList"></datalist>
+      <label class="sr-only" for="muscleFilter">Filter by category</label>
       <select id="muscleFilter" class="field field--compact">
         <option value="">All Categories</option>
       </select>
 
       <!-- Choose Exercise -->
+      <label class="sr-only" for="exerciseSelect">Choose an exercise</label>
       <select id="exerciseSelect">
         <option value="">Select Exercise</option>
       </select>
@@ -54,7 +63,8 @@
           <label class="inline-label">
             <input type="checkbox" id="useTimer" checked> Use rest timer
           </label>
-          <input type="number" id="restSecsInput" class="field" placeholder="Rest (sec)" value="90" min="5">
+          <label class="sr-only" for="restSecsInput">Rest time in seconds</label>
+          <input type="number" id="restSecsInput" class="field" placeholder="Rest (sec)" value="90" min="5" max="3600" inputmode="numeric">
         </div>
 
         <div id="restBox" class="rest-timer hidden">
@@ -64,13 +74,18 @@
         </div>
 
         <div class="inline-row" id="standardInputs">
-          <input type="number" id="weight" min="0" step="0.5" class="field" placeholder="Weight (lbs)">
-          <input type="number" id="reps"   min="1" step="1" class="field" placeholder="Reps">
+          <label class="sr-only" for="weight">Weight in pounds</label>
+          <input type="number" id="weight" min="0" max="9999" step="0.5" class="field" placeholder="Weight (lbs)" inputmode="decimal">
+          <label class="sr-only" for="reps">Repetitions</label>
+          <input type="number" id="reps" min="1" max="999" step="1" class="field" placeholder="Reps" inputmode="numeric">
         </div>
         <div class="inline-row hidden" id="cardioInputs">
-          <input type="number" id="distance" min="0" step="0.01" class="field" placeholder="Distance (mi)">
-          <input type="number" id="durationMin" min="0" step="1" class="field" placeholder="Min">
-          <input type="number" id="durationSec" min="0" step="1" class="field" placeholder="Sec">
+          <label class="sr-only" for="distance">Distance in miles</label>
+          <input type="number" id="distance" min="0" step="0.01" class="field" placeholder="Distance (mi)" inputmode="decimal">
+          <label class="sr-only" for="durationMin">Duration minutes</label>
+          <input type="number" id="durationMin" min="0" step="1" class="field" placeholder="Min" inputmode="numeric">
+          <label class="sr-only" for="durationSec">Duration seconds</label>
+          <input type="number" id="durationSec" min="0" max="59" step="1" class="field" placeholder="Sec" inputmode="numeric">
         </div>
         <div id="supersetInputs" class="superset-inputs hidden"></div>
 
@@ -161,8 +176,8 @@
         </section>
       </div>
 
-      <div id="calendarSection">
-        <h3>Workout History</h3>
+      <div id="calendarSection" aria-labelledby="historyTitle">
+        <h3 id="historyTitle">Workout History</h3>
         <div class="calendar-nav">
           <button id="calPrev" class="btn btn-secondary">Prev</button>
           <div id="calTitle"></div>
@@ -170,10 +185,10 @@
         </div>
         <div class="calendar-controls">
           <button id="calToday" class="btn btn-secondary">Today</button>
-          <input type="date" id="calGoto" class="field">
+          <input type="date" id="calGoto" class="field" aria-label="Go to workout date">
           <button id="calGo" class="btn btn-secondary" disabled>Go</button>
         </div>
-        <div id="calendar"></div>
+        <div id="calendar" role="grid" aria-label="Workout history calendar"></div>
       <div id="dayDetails" class="day-details">
         <h4 id="dayTitle"></h4>
         <div class="inline-row mt-6 day-label-row">
@@ -213,7 +228,7 @@
       <button id="toggleSessionPrefBtn" class="btn btn-secondary mt-8">Auto-include session time in export: OFF</button>
 
     </div>
-  </div>
+  </main>
   <div class="footer-space"></div>
 
   <!-- Floating Theme Toggle -->

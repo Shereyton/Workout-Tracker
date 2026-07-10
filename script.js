@@ -255,8 +255,16 @@ function parseYMD(dateStr) {
   ) {
     return null;
   }
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   const dt = new Date(Date.UTC(year, month - 1, day));
   if (Number.isNaN(dt.getTime())) return null;
+  if (
+    dt.getUTCFullYear() !== year ||
+    dt.getUTCMonth() !== month - 1 ||
+    dt.getUTCDate() !== day
+  ) {
+    return null;
+  }
   return dt;
 }
 
@@ -271,7 +279,11 @@ function formatYMD(date) {
 function formatShortDate(dateStr) {
   const parsed = parseYMD(dateStr);
   if (!parsed) return String(dateStr || '');
-  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return parsed.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
 }
 
 function formatSecondsHuman(seconds) {
@@ -642,6 +654,17 @@ function csvRow(values) {
   return values.map(csvCell).join(",");
 }
 
+function formatCardioHistoryLine(name, set, fallbackSetNumber = 1) {
+  const setNumber = set && set.set ? set.set : fallbackSetNumber;
+  const distanceValue = Number(set && set.distance);
+  const distance =
+    set && set.distance !== null && set.distance !== undefined && Number.isFinite(distanceValue)
+      ? `${distanceValue} mi in `
+      : '';
+  const duration = formatSecondsHuman(set && set.duration);
+  return `${name}: Set ${setNumber} - ${distance}${duration}`;
+}
+
 // Merge imported exercises into wt_history lines (for charts and history)
 function mergeIntoHistory(payload) {
   const hist = wtStorage.get(WT_KEYS.history, {});
@@ -661,7 +684,11 @@ function mergeIntoHistory(payload) {
           );
         }
       }
-    } else if (!ex.isCardio) {
+    } else if (ex.isCardio) {
+      for (const [setIdx, s] of ex.sets.entries()) {
+        lines.push(formatCardioHistoryLine(ex.name, s, setIdx + 1));
+      }
+    } else {
       for (const [setIdx, s] of ex.sets.entries()) {
         const setNumber = s.set || setIdx + 1;
         lines.push(
@@ -876,12 +903,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     return (message, options = {}) => {
       const { title = 'Confirm', yesText = 'OK', noText = 'Cancel' } = options;
       return new Promise((resolve) => {
+        const previousFocus = doc.activeElement;
         const modal = doc.createElement('div');
         modal.style.cssText = `
           position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000;
           display: flex; align-items: center; justify-content: center; padding: 12px;
         `;
         const dialog = doc.createElement('div');
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-label', title);
         dialog.style.cssText = `
           background: #fff; color: #000; padding: 16px 20px; border-radius: 8px; width: 100%;
           max-width: 420px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
@@ -897,10 +928,22 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         modal.appendChild(dialog);
         doc.body.appendChild(modal);
         const cleanup = () => {
+          doc.removeEventListener('keydown', handleKeydown);
           if (modal.parentNode) {
             modal.parentNode.removeChild(modal);
           }
+          if (previousFocus && typeof previousFocus.focus === 'function') {
+            previousFocus.focus();
+          }
         };
+        const handleKeydown = (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            cleanup();
+            resolve(false);
+          }
+        };
+        doc.addEventListener('keydown', handleKeydown);
         modal.addEventListener('click', (e) => {
           if (e.target === modal) {
             cleanup();
@@ -915,6 +958,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           cleanup();
           resolve(true);
         });
+        dialog.querySelector('#cmCancel').focus();
       });
     };
   }
@@ -1585,15 +1629,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   resetBtn.setAttribute("aria-label", "Reset workout");
 
   const sessionTimerEl = document.createElement("span");
-  sessionTimerEl.style.fontSize = "0.9em";
-  sessionTimerEl.style.color = "#666";
+  sessionTimerEl.className = "header-metric";
   sessionTimerEl.style.display = "none";
   todayEl.after(sessionTimerEl);
 
   const setsTodayEl = document.createElement("span");
-  setsTodayEl.style.fontSize = "0.9em";
-  setsTodayEl.style.color = "#666";
-  setsTodayEl.style.marginLeft = "8px";
+  setsTodayEl.className = "header-metric";
   sessionTimerEl.after(setsTodayEl);
 
   let sessionTimerInterval = null;
@@ -1693,6 +1734,17 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const w = parseFloat(weightInput.value);
     const r = parseInt(repsInput.value, 10);
     logBtn.disabled = !canLogSet(w, r);
+  }
+
+  function getPlannedRestSeconds() {
+    if (!useTimerEl.checked) return null;
+    const parsed = Number.parseInt(restSecsInput.value, 10);
+    const seconds = Number.isFinite(parsed) ? parsed : 90;
+    const clamped = Math.min(3600, Math.max(5, seconds));
+    if (String(clamped) !== restSecsInput.value) {
+      restSecsInput.value = String(clamped);
+    }
+    return clamped;
   }
 
   function debounce(fn, delay = 100) {
@@ -2023,6 +2075,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       weightField.id = `weight${i}`;
       weightField.className = "field superset-field";
       weightField.placeholder = `${name} weight`;
+      weightField.setAttribute("aria-label", `${name} weight in pounds`);
       weightField.min = "0";
       weightField.step = "0.5";
       const repsField = document.createElement("input");
@@ -2030,6 +2083,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       repsField.id = `reps${i}`;
       repsField.className = "field superset-field";
       repsField.placeholder = `${name} reps`;
+      repsField.setAttribute("aria-label", `${name} repetitions`);
       repsField.min = "1";
       repsField.step = "1";
       row.appendChild(weightField);
@@ -2055,8 +2109,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         showToast("Enter weight & reps for all exercises");
         return;
       }
-      const useTimer = useTimerEl.checked;
-      const planned = useTimer ? parseInt(restSecsInput.value, 10) || 0 : null;
+      const planned = getPlannedRestSeconds();
       // Normalize inner exercises and wrap in normalized set object
       const supersetSet = normalizeSet({
         set: currentExercise.nextSet,
@@ -2078,7 +2131,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         document.getElementById(`weight${i}`).value = "";
         document.getElementById(`reps${i}`).value = "";
       });
-      if (useTimer && planned != null) {
+      if (planned != null) {
         startRest(planned, currentExercise.sets.length - 1);
       }
       updateSummary();
@@ -2104,8 +2157,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         );
         return;
       }
-      const useTimer = useTimerEl.checked;
-      const planned = useTimer ? parseInt(restSecsInput.value, 10) || 0 : null;
+      const planned = getPlannedRestSeconds();
       const cardioSet = normalizeSet({
         set: currentExercise.nextSet,
         distance: d,
@@ -2125,7 +2177,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       distanceInput.value = "";
       durationMinInput.value = "";
       durationSecInput.value = "";
-      if (useTimer && planned != null) {
+      if (planned != null) {
         startRest(planned, currentExercise.sets.length - 1);
       }
       updateSummary();
@@ -2149,8 +2201,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       return;
     }
 
-    const useTimer = useTimerEl.checked;
-    const planned = useTimer ? parseInt(restSecsInput.value, 10) || 0 : null;
+    const planned = getPlannedRestSeconds();
 
     const strengthSet = normalizeSet({
       set: currentExercise.nextSet,
@@ -2174,7 +2225,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     weightInput.select();
     repsInput.value = "";
 
-    if (useTimer && planned != null) {
+    if (planned != null) {
       startRest(planned, currentExercise.sets.length - 1);
     }
 
@@ -2635,7 +2686,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
             lines.push(`${sub.name}: Set ${setNumber} - ${sub.weight} lbs × ${sub.reps} reps`);
           });
         });
-      } else if(!ex.isCardio){
+      } else if(ex.isCardio){
+        ex.sets.forEach((set, setIdx) => {
+          lines.push(formatCardioHistoryLine(ex.name, set, setIdx + 1));
+        });
+      } else {
         ex.sets.forEach((set, setIdx) => {
           const setNumber = set.set || setIdx + 1;
           lines.push(`${ex.name}: Set ${setNumber} - ${set.weight} lbs × ${set.reps} reps`);
@@ -2680,15 +2735,38 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     return exportExercises;
   }
 
-  function endWorkout() {
+  function endWorkout({ persistCompleted = true } = {}) {
     const snapshot = buildExportExercises();
-    if (snapshot.length) {
+    if (persistCompleted && snapshot.length) {
       wtStorage.set(WT_KEYS.last, snapshot);
-    } else {
-      wtStorage.clear(WT_KEYS.last);
+      saveSessionLinesToHistory();
+      const date = getLocalDateString();
+      const completed = normalizePayload({
+        date,
+        timestamp: new Date().toISOString(),
+        exercises: snapshot,
+      });
+      if (session.startedAt) {
+        const startMs = new Date(session.startedAt).getTime();
+        const endMs = Date.now();
+        if (Number.isFinite(startMs) && endMs >= startMs) {
+          completed.session = {
+            sessionStart: new Date(startMs).toISOString(),
+            sessionEnd: new Date(endMs).toISOString(),
+            sessionDurationSec: Math.round((endMs - startMs) / 1000),
+          };
+        }
+      }
+      archivedSessions[date] = completed;
+      archivedSessions = pruneArchive(archivedSessions, 120);
+      wtStorage.set(WT_KEYS.archive, archivedSessions);
     }
-    saveSessionLinesToHistory();
     stopRest();
+    restSetIndex = null;
+    restSecondsRemaining = 0;
+    restStartMs = 0;
+    restBox.classList.add("hidden");
+    restDisplay.textContent = "00:00";
     stopSessionTimer();
     session = { exercises: [], startedAt: null };
     currentExercise = null;
@@ -2697,6 +2775,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     setsList.innerHTML = "";
     weightInput.value = "";
     repsInput.value = "";
+    distanceInput.value = "";
+    durationMinInput.value = "";
+    durationSecInput.value = "";
     updateSummary();
     updateSetsToday();
     saveState();
@@ -2710,7 +2791,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const prevSession = deepClone(session);
     const prevCurrent = deepClone(currentExercise);
     pushUndo({ type: "reset", payload: { prevSession, prevCurrent } });
-    endWorkout();
+    endWorkout({ persistCompleted: false });
     announce("Workout reset");
     showToast("Workout reset", { actionLabel: "Undo", onAction: performUndo });
   });
@@ -2722,7 +2803,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const prevSession = deepClone(session);
     const prevCurrent = deepClone(currentExercise);
     pushUndo({ type: "finish", payload: { prevSession, prevCurrent } });
-    endWorkout();
+    endWorkout({ persistCompleted: true });
     announce("Workout finished");
     showToast("Workout finished", { actionLabel: "Undo", onAction: performUndo });
   });
@@ -3191,11 +3272,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function triggerDownload(blob, filename) {
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    link.href = url;
     link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   /* ------------------ SAVE / LOAD ------------------ */
@@ -3316,5 +3399,8 @@ module.exports = {
   computeConsistencyMetricsFromStats,
   appendUniqueHistoryLines,
   csvRow,
+  formatCardioHistoryLine,
+  parseYMD,
+  formatShortDate,
 };
 }

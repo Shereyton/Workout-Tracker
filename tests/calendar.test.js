@@ -12,10 +12,20 @@ test('parseAiText parses exported AI text format', () => {
   const res = parseAiText(sample, '2024-07-04');
   expect(res).toEqual({
     '2024-07-04': [
-      'Bench Press: 185 lbs × 5 reps',
-      'Bench Press: 185 lbs × 5 reps',
-      'Squat: 225 lbs × 5 reps'
+      'Bench Press: Set 1 - 185 lbs × 5 reps',
+      'Bench Press: Set 2 - 185 lbs × 5 reps',
+      'Squat: Set 1 - 225 lbs × 5 reps'
     ]
+  });
+});
+
+test('parseAiText retains cardio distance and duration', () => {
+  const sample = `WORKOUT DATA - 2024-07-04\n\nSESSION SNAPSHOT\n- Session duration: 45s\n\nRunning:\n  Set 1: 2.5 mi in 20m 30s\n\nPlank:\n  Set 1: 45s`;
+  expect(parseAiText(sample, '2024-07-04')).toEqual({
+    '2024-07-04': [
+      'Running: Set 1 - 2.5 mi in 20m 30s',
+      'Plank: Set 1 - 45s',
+    ],
   });
 });
 
@@ -30,7 +40,7 @@ test('parseCsv ignores metadata rows before header', () => {
   ].join('\n');
   const res = parseCsv(csv, '2024-07-04');
   expect(res).toEqual({
-    '2024-07-04': ['Bench Press: 185 lbs × 5 reps']
+    '2024-07-04': ['Bench Press: Set 1 - 185 lbs × 5 reps']
   });
 });
 
@@ -41,7 +51,17 @@ test('parseCsv handles quoted exercise names with commas', () => {
   ].join('\n');
   const res = parseCsv(csv, '2024-07-04');
   expect(res).toEqual({
-    '2024-07-04': ['Curl, Barbell: 75 lbs × 10 reps']
+    '2024-07-04': ['Curl, Barbell: Set 1 - 75 lbs × 10 reps']
+  });
+});
+
+test('parseCsv preserves cardio rows', () => {
+  const csv = [
+    'Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)',
+    'Running,2,,,3.1,1500,08:15,,',
+  ].join('\n');
+  expect(parseCsv(csv, '2024-07-04')).toEqual({
+    '2024-07-04': ['Running: Set 2 - 3.1 mi in 25m 0s'],
   });
 });
 
@@ -61,5 +81,16 @@ test('snapshotToLines retains duplicate sets with numbering', () => {
   expect(lines).toEqual([
     'Bench Press: Set 1 - 185 lbs × 5 reps',
     'Bench Press: Set 2 - 185 lbs × 5 reps'
+  ]);
+});
+
+test('snapshotToLines formats cardio sessions without undefined values', () => {
+  const snapshot = [{
+    name: 'Jump Rope',
+    isCardio: true,
+    sets: [{ set: 1, distance: null, duration: 75 }],
+  }];
+  expect(snapshotToLines(snapshot)).toEqual([
+    'Jump Rope: Set 1 - 1m 15s',
   ]);
 });

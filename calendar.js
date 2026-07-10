@@ -26,6 +26,32 @@ function parseCsvRow(row){
   return cols;
 }
 
+function formatDuration(seconds){
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if(hours) return `${hours}h ${minutes}m`;
+  if(minutes) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
+
+function parseDurationText(value){
+  const text = String(value || '').toLowerCase();
+  const hours = Number((text.match(/(\d+)\s*h/) || [])[1] || 0);
+  const minutes = Number((text.match(/(\d+)\s*m/) || [])[1] || 0);
+  const seconds = Number((text.match(/(\d+)\s*s/) || [])[1] || 0);
+  return (hours * 3600) + (minutes * 60) + seconds;
+}
+
+function cardioHistoryLine(name, setNumber, distance, duration){
+  const distanceNumber = Number(distance);
+  const distanceText = distance !== '' && distance !== null && distance !== undefined && Number.isFinite(distanceNumber)
+    ? `${distanceNumber} mi in `
+    : '';
+  return `${name}: Set ${setNumber} - ${distanceText}${formatDuration(duration)}`;
+}
+
 // Parse AI formatted text or exported AI text into history object
 function parseAiText(text, selectedDate){
   const lines = text.split(/\r?\n/);
@@ -42,12 +68,22 @@ function parseAiText(text, selectedDate){
       currentExercise = exHeader[1].trim();
       return;
     }
-    const setMatch = trimmed.match(/^(?:Set\s+\d+\s*[-–:]?\s*)?(.*?):\s*(\d+(?:\.\d+)?)\s*(?:lbs|kg)\s*[×xX]\s*(\d+)\s*reps/i);
+    const cardioMatch = trimmed.match(/^(?:Set\s+(\d+)\s*[-–:]?\s*)?(?:([^:]+):\s*)?(?:(\d+(?:\.\d+)?)\s*mi(?:\s+in)?\s*)?((?:\d+\s*h(?:\s+\d+\s*m)?)|(?:\d+\s*m(?:\s+\d+\s*s)?)|(?:\d+\s*s))/i);
+    if(cardioMatch && cardioMatch[1]){
+      const name = (cardioMatch[2] || currentExercise || '').trim();
+      if(name){
+        const setNumber = Number(cardioMatch[1]) || out.length + 1;
+        out.push(cardioHistoryLine(name, setNumber, cardioMatch[3] ?? null, parseDurationText(cardioMatch[4])));
+        return;
+      }
+    }
+    const setMatch = trimmed.match(/^(?:Set\s+(\d+)\s*[-–:]?\s*)?(?:([^:]+):\s*)?(\d+(?:\.\d+)?)\s*(lbs|kg)\s*[×xX]\s*(\d+)\s*reps/i);
     if(setMatch){
-      let name = setMatch[1].trim();
+      let name = String(setMatch[2] || '').trim();
       if(!name && currentExercise) name = currentExercise;
       if(name){
-        out.push(`${name}: ${setMatch[2]} lbs × ${setMatch[3]} reps`);
+        const setNumber = Number(setMatch[1]) || out.length + 1;
+        out.push(`${name}: Set ${setNumber} - ${setMatch[3]} ${setMatch[4].toLowerCase()} × ${setMatch[5]} reps`);
       }
     }
   });
@@ -63,11 +99,28 @@ function parseCsv(text, selectedDate){
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
   const headerIndex = lines.findIndex(line => /Exercise\s*,\s*Set\s*,\s*Weight\s*,\s*Reps/i.test(line));
   if(headerIndex === -1) return null;
+  const headers = parseCsvRow(lines[headerIndex]).map(value => value.trim().toLowerCase());
+  const indexOf = name => headers.indexOf(name.toLowerCase());
+  const exerciseIndex = indexOf('Exercise');
+  const setIndex = indexOf('Set');
+  const weightIndex = indexOf('Weight');
+  const repsIndex = indexOf('Reps');
+  const distanceIndex = indexOf('Distance');
+  const durationIndex = indexOf('Duration');
   const out = [];
   lines.slice(headerIndex + 1).forEach(l=>{
     const cols = parseCsvRow(l);
-    if(cols.length >=4){
-      out.push(`${cols[0].trim()}: ${cols[2].trim()} lbs × ${cols[3].trim()} reps`);
+    const name = String(cols[exerciseIndex] || '').trim();
+    if(!name) return;
+    const setNumber = Number(cols[setIndex]) || out.length + 1;
+    const weight = weightIndex >= 0 ? String(cols[weightIndex] || '').trim() : '';
+    const reps = repsIndex >= 0 ? String(cols[repsIndex] || '').trim() : '';
+    const distance = distanceIndex >= 0 ? String(cols[distanceIndex] || '').trim() : '';
+    const duration = durationIndex >= 0 ? String(cols[durationIndex] || '').trim() : '';
+    if(weight !== '' && reps !== ''){
+      out.push(`${name}: Set ${setNumber} - ${weight} lbs × ${reps} reps`);
+    } else if(duration !== ''){
+      out.push(cardioHistoryLine(name, setNumber, distance, Number(duration)));
     }
   });
   if(out.length){
@@ -85,6 +138,10 @@ function snapshotToLines(snapshot){
         set.exercises.forEach(sub => {
           lines.push(`${sub.name}: Set ${setIdx+1} - ${sub.weight} lbs × ${sub.reps} reps`);
         });
+      });
+    } else if(ex.isCardio){
+      ex.sets.forEach((set, setIdx) => {
+        lines.push(cardioHistoryLine(ex.name, set.set || setIdx + 1, set.distance, set.duration));
       });
     } else {
       ex.sets.forEach((set, setIdx) => {
@@ -316,6 +373,7 @@ if (typeof document !== 'undefined') {
         const head = document.createElement('div');
         head.textContent = d;
         head.className = 'cal-header';
+        head.setAttribute('role', 'columnheader');
         calendarEl.appendChild(head);
       });
 
@@ -325,8 +383,10 @@ if (typeof document !== 'undefined') {
       const prevDays = new Date(year, month, 0).getDate();
       const totalCells = 42;
       for(let i=0;i<totalCells;i++){
-        const cell = document.createElement('div');
+        const cell = document.createElement('button');
+        cell.type = 'button';
         cell.className = 'calendar-day';
+        cell.setAttribute('role', 'gridcell');
         let dayNum; let dateObj;
         if(i < start){
           dayNum = prevDays - start + 1 + i;
@@ -342,7 +402,8 @@ if (typeof document !== 'undefined') {
         }
         const dateStr = formatDate(dateObj);
         cell.textContent = dayNum;
-        if(history[dateStr] && history[dateStr].length){
+        const hasWorkout = !!(history[dateStr] && history[dateStr].length);
+        if(hasWorkout){
           cell.classList.add('has-data');
         }
         const label = getDayLabel(dateStr);
@@ -350,7 +411,13 @@ if (typeof document !== 'undefined') {
           cell.classList.add('has-label');
           cell.setAttribute('title', `${dateStr} • ${label}`);
         }
-        if(dateStr === selectedDate) cell.classList.add('selected');
+        const isSelected = dateStr === selectedDate;
+        if(isSelected) cell.classList.add('selected');
+        cell.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        cell.setAttribute(
+          'aria-label',
+          `${dateObj.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })}${label ? `, ${label}` : ''}, ${hasWorkout ? 'workout logged' : 'no workout logged'}`,
+        );
         cell.addEventListener('click', () => {
           selectedDate = dateStr;
           current = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1);
@@ -506,11 +573,13 @@ if (typeof document !== 'undefined') {
 
     function triggerDownload(blob, filename){
       const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(blob);
+      link.href = url;
       link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 0);
     }
 
     function slugifyLabel(label){
@@ -723,6 +792,8 @@ if (typeof document !== 'undefined') {
     });
 
     window.addEventListener('wt-history-updated', () => {
+      history = loadStoredHistory();
+      titles = loadStoredTitles();
       renderCalendar();
       renderDay();
       updateTitleSelect();
@@ -734,5 +805,5 @@ if (typeof document !== 'undefined') {
   });
 }
 if (typeof module !== 'undefined') {
-  module.exports = { parseDateLocal, parseAiText, parseCsv, snapshotToLines };
+  module.exports = { parseDateLocal, parseAiText, parseCsv, snapshotToLines, formatDuration, cardioHistoryLine };
 }
