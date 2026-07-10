@@ -1610,6 +1610,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     wtStorage.set(WT_KEYS.last, normalized.exercises);
     mergeIntoHistory(normalized);
     interfaceBox.classList.add('hidden');
+    document.body.classList.remove('workout-active', 'resting');
     setsList.innerHTML = '';
     updateSummary();
     updateSetsToday();
@@ -1631,11 +1632,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const sessionTimerEl = document.createElement("span");
   sessionTimerEl.className = "header-metric";
   sessionTimerEl.style.display = "none";
-  todayEl.after(sessionTimerEl);
-
   const setsTodayEl = document.createElement("span");
   setsTodayEl.className = "header-metric";
-  sessionTimerEl.after(setsTodayEl);
+  const sessionMetricsEl = document.getElementById("sessionMetrics");
+  const sessionPulseEl = document.getElementById("sessionPulse");
+  const heroSetCountEl = document.getElementById("heroSetCount");
+  if (sessionMetricsEl) {
+    sessionMetricsEl.append(sessionTimerEl, setsTodayEl);
+  } else {
+    todayEl.after(sessionTimerEl, setsTodayEl);
+  }
 
   let sessionTimerInterval = null;
 
@@ -1654,7 +1660,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       sessionTimerEl.textContent = `Session: ${formatHMS(secs)}`;
     };
     tick();
-    sessionTimerEl.style.display = "inline";
+    sessionTimerEl.style.display = "inline-flex";
     clearInterval(sessionTimerInterval);
     sessionTimerInterval = setInterval(tick, 1000);
   }
@@ -1675,7 +1681,18 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   function updateSetsToday() {
-    setsTodayEl.textContent = `• Sets today: ${computeTotalSets()}`;
+    const total = computeTotalSets();
+    setsTodayEl.textContent = `${total} set${total === 1 ? '' : 's'} today`;
+    if (heroSetCountEl) heroSetCountEl.textContent = String(total);
+    if (sessionPulseEl) {
+      const degrees = Math.min(total / 12, 1) * 360;
+      sessionPulseEl.style.setProperty('--set-progress', `${degrees}deg`);
+      sessionPulseEl.classList.toggle('is-active', total > 0);
+      sessionPulseEl.setAttribute(
+        'aria-label',
+        `${total} set${total === 1 ? '' : 's'} completed this session`,
+      );
+    }
   }
 
   let allExercises = [];
@@ -1921,13 +1938,93 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     themeIcon.textContent = "☀️";
     themeLabel.textContent = "Light";
   }
+  function syncThemeColor() {
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta) {
+      themeMeta.content = document.body.classList.contains("dark") ? "#0c1020" : "#182139";
+    }
+  }
+  syncThemeColor();
   darkToggle.addEventListener("click", () => {
     document.body.classList.toggle("dark");
     const dark = document.body.classList.contains("dark");
     themeIcon.textContent = dark ? "☀️" : "🌙";
     themeLabel.textContent = dark ? "Light" : "Dark";
     lsSetRaw(WT_KEYS.theme, dark ? "dark" : "light");
+    syncThemeColor();
   });
+
+  /* ------------------ IMMERSIVE UI ------------------ */
+  const scrollProgressBar = document.getElementById('scrollProgressBar');
+  const dockActions = Array.from(document.querySelectorAll('.dock-action[data-scroll-target]'));
+  const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+  function updateScrollProgress() {
+    if (!scrollProgressBar) return;
+    const maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+    const progress = Math.min(1, Math.max(0, window.scrollY / maxScroll));
+    scrollProgressBar.style.transform = `scaleX(${progress})`;
+  }
+
+  let scrollFrame = null;
+  window.addEventListener('scroll', () => {
+    if (scrollFrame !== null) return;
+    scrollFrame = window.requestAnimationFrame(() => {
+      updateScrollProgress();
+      scrollFrame = null;
+    });
+  }, { passive: true });
+  updateScrollProgress();
+
+  function setActiveDock(targetId) {
+    dockActions.forEach((button) => {
+      const active = button.dataset.scrollTarget === targetId;
+      button.classList.toggle('is-active', active);
+      if (active) button.setAttribute('aria-current', 'location');
+      else button.removeAttribute('aria-current');
+    });
+  }
+
+  dockActions.forEach((button) => {
+    button.addEventListener('click', () => {
+      const targetId = button.dataset.scrollTarget;
+      const target = document.getElementById(targetId);
+      if (!target) return;
+      setActiveDock(targetId);
+      target.scrollIntoView({
+        behavior: prefersReducedMotion ? 'auto' : 'smooth',
+        block: 'start',
+      });
+    });
+  });
+
+  const revealTargets = Array.from(document.querySelectorAll('[data-reveal]'));
+  document.body.classList.add('app-ready');
+  if (prefersReducedMotion || typeof IntersectionObserver === 'undefined') {
+    revealTargets.forEach((target) => target.classList.add('in-view'));
+  } else {
+    const revealObserver = new IntersectionObserver((entries, observer) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add('in-view');
+        observer.unobserve(entry.target);
+      });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+    revealTargets.forEach((target) => revealObserver.observe(target));
+  }
+
+  const dockSections = dockActions
+    .map((button) => document.getElementById(button.dataset.scrollTarget))
+    .filter(Boolean);
+  if (typeof IntersectionObserver !== 'undefined') {
+    const dockObserver = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (visible) setActiveDock(visible.target.id);
+    }, { rootMargin: '-28% 0px -58% 0px', threshold: [0.01, 0.25, 0.5] });
+    dockSections.forEach((section) => dockObserver.observe(section));
+  }
 
   /* ------------------ CUSTOM EXERCISE ------------------ */
   addExerciseBtn.addEventListener("click", () => {
@@ -2094,6 +2191,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function showInterface() {
     interfaceBox.classList.remove("hidden");
+    document.body.classList.add("workout-active");
     exerciseNameEl.textContent = currentExercise.name;
   }
 
@@ -2240,7 +2338,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const hint = setsList.querySelector(".empty-hint");
     if (hint) hint.remove();
     const item = document.createElement("div");
-    item.className = "set-item";
+    item.className = "set-item set-pop";
     item.dataset.index = index;
 
     const restInfo =
@@ -2579,6 +2677,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     currentExercise = null;
     exerciseSelect.value = "";
     interfaceBox.classList.add("hidden");
+    document.body.classList.remove("workout-active", "resting");
     weightInput.value = "";
     repsInput.value = "";
     distanceInput.value = "";
@@ -2619,6 +2718,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   /* ------------------ REST TIMER ------------------ */
   function startRest(seconds, setIndex) {
     stopRest();
+    document.body.classList.add("resting");
     restSecondsRemaining = seconds;
     restStartMs = Date.now();
     restSetIndex = setIndex;
@@ -2644,6 +2744,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       clearInterval(restTimer);
       restTimer = null;
     }
+    document.body.classList.remove("resting");
   }
 
   function finishRest() {
@@ -2772,6 +2873,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     currentExercise = null;
     exerciseSelect.value = "";
     interfaceBox.classList.add("hidden");
+    document.body.classList.remove("workout-active", "resting");
     setsList.innerHTML = "";
     weightInput.value = "";
     repsInput.value = "";
