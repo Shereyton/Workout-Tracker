@@ -3,6 +3,9 @@ const {
   computeSessionStats,
   buildExerciseHighlightsForExport,
   computeConsistencyMetricsFromStats,
+  formatCardioHistoryLine,
+  parseYMD,
+  formatShortDate,
 } = require('../script');
 
 describe('export summary helpers', () => {
@@ -65,5 +68,21 @@ describe('export summary helpers', () => {
     expect(consistency.past7.totalSets).toBe(2);
     expect(consistency.past30.daysTrained).toBe(3);
     expect(consistency.streakDays).toBe(1);
+  });
+});
+
+describe('date and cardio formatting', () => {
+  it('formats calendar dates without shifting to the prior local day', () => {
+    expect(formatShortDate('2025-01-07')).toBe('Jan 7');
+  });
+
+  it('rejects impossible calendar dates', () => {
+    expect(parseYMD('2025-02-31')).toBeNull();
+  });
+
+  it('creates useful cardio history lines', () => {
+    expect(formatCardioHistoryLine('Running', { set: 2, distance: 3.1, duration: 1500 })).toBe(
+      'Running: Set 2 - 3.1 mi in 25m 0s',
+    );
   });
 });
