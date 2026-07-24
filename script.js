@@ -16,6 +16,7 @@ const WT_KEYS = {
   dayCompare: 'wt_dayCompareWindow',
   progressionGuard: 'wt_progressionGuard',
   exerciseGoals: 'wt_exerciseGoals',
+  prefExerciseGoalProgress: 'wt_pref_exerciseGoalProgressExport',
 };
 
 const THEME_PACKS = Object.freeze({
@@ -160,6 +161,49 @@ function attachExerciseGoalSnapshots(exercises, goalsByExercise, datePerformed =
       return { ...normalized, exerciseGoals: snapshots };
     }
     return { ...normalized, goal: snapshots[0] };
+  });
+}
+
+function exerciseGoalForExport(goal, includeProgress = false) {
+  const normalized = normalizeExerciseGoal(goal, goal && goal.exerciseName);
+  if (!normalized) return null;
+  const exported = {
+    exerciseName: normalized.exerciseName,
+    goalType: normalized.goalType,
+    goalValue: normalized.goalValue,
+    ...(normalized.goalType === 'weight'
+      ? { goalWeight: normalized.goalWeight }
+      : {}),
+    unit: normalized.unit,
+    dateCreated: normalized.dateCreated,
+    lastUpdated: normalized.lastUpdated,
+    ...(normalized.datePerformed
+      ? { datePerformed: normalized.datePerformed }
+      : {}),
+  };
+  if (includeProgress) {
+    exported.currentBestPerformance = normalized.currentBestPerformance;
+    exported.progressPercentage = normalized.progressPercentage;
+    exported.remainingDistanceToGoal = normalized.remainingDistanceToGoal;
+  }
+  return exported;
+}
+
+function prepareExerciseGoalsForExport(exercises, includeProgress = false) {
+  if (!Array.isArray(exercises)) return [];
+  return exercises.map((exercise) => {
+    const exported = { ...exercise };
+    if (exercise.goal) {
+      exported.goal = exerciseGoalForExport(exercise.goal, includeProgress);
+    }
+    if (Array.isArray(exercise.exerciseGoals)) {
+      const goals = exercise.exerciseGoals
+        .map((goal) => exerciseGoalForExport(goal, includeProgress))
+        .filter(Boolean);
+      if (goals.length) exported.exerciseGoals = goals;
+      else delete exported.exerciseGoals;
+    }
+    return exported;
   });
 }
 
@@ -1225,6 +1269,25 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       wtStorage.set(WT_KEYS.prefSessionTime, !on);
       updateSessionPrefButton();
       showToast(`Always include session time ${!on ? 'enabled' : 'disabled'}.`);
+    });
+  }
+
+  const toggleGoalProgressPrefBtn = document.getElementById('toggleGoalProgressPrefBtn');
+  function updateGoalProgressPrefButton() {
+    if (!toggleGoalProgressPrefBtn) return;
+    const on = !!wtStorage.get(WT_KEYS.prefExerciseGoalProgress, false);
+    toggleGoalProgressPrefBtn.textContent =
+      `Include app-estimated goal progress in export: ${on ? 'ON' : 'OFF'}`;
+  }
+  if (toggleGoalProgressPrefBtn) {
+    updateGoalProgressPrefButton();
+    toggleGoalProgressPrefBtn.addEventListener('click', () => {
+      const on = !!wtStorage.get(WT_KEYS.prefExerciseGoalProgress, false);
+      wtStorage.set(WT_KEYS.prefExerciseGoalProgress, !on);
+      updateGoalProgressPrefButton();
+      showToast(
+        `App-estimated goal progress export ${!on ? 'enabled' : 'disabled'}.`,
+      );
     });
   }
 
@@ -3554,6 +3617,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   
   function performExport(exportExercises, includeNotes, includeSessionTime) {
     const currentDate = getLocalDateString();
+    const includeExerciseGoalProgress = !!wtStorage.get(
+      WT_KEYS.prefExerciseGoalProgress,
+      false,
+    );
     const goalsForExport = sanitizeGoals(goals)
       .filter((g) => g.active)
       .map((g) => g.text);
@@ -3571,12 +3638,18 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       constraints: constraintsForExport,
     });
 
-    const payload = { ...normalized };
     const performedGoalSnapshots = [];
-    payload.exercises.forEach((exercise) => {
+    normalized.exercises.forEach((exercise) => {
       if (exercise.goal) performedGoalSnapshots.push(exercise.goal);
       (exercise.exerciseGoals || []).forEach((goal) => performedGoalSnapshots.push(goal));
     });
+    const payload = {
+      ...normalized,
+      exercises: prepareExerciseGoalsForExport(
+        normalized.exercises,
+        includeExerciseGoalProgress,
+      ),
+    };
 
     let workoutNotes = [];
     if (includeNotes) {
@@ -3754,8 +3827,29 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       `workout_${payload.date}.json`,
     );
 
-    const csvHeader =
-      "Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec),GoalType,GoalValue,GoalUnit,CurrentBest,GoalRemaining,ProgressPercent\n";
+    const csvColumns = [
+      "Exercise", "Set", "Weight", "Reps", "Distance", "Duration", "Time",
+      "RestPlanned(sec)", "RestActual(sec)", "GoalType", "GoalValue", "GoalUnit",
+    ];
+    if (includeExerciseGoalProgress) {
+      csvColumns.push("CurrentBest", "GoalRemaining", "ProgressPercent");
+    }
+    const csvHeader = `${csvColumns.join(",")}\n`;
+    const goalCsvCells = (goal) => {
+      const cells = [
+        goal?.goalType ?? "",
+        goal?.goalValue ?? "",
+        goal?.unit ?? "",
+      ];
+      if (includeExerciseGoalProgress) {
+        cells.push(
+          goal?.currentBestPerformance ?? "",
+          goal?.remainingDistanceToGoal ?? "",
+          goal?.progressPercentage ?? "",
+        );
+      }
+      return cells;
+    };
     let csv = csvHeader;
     if (includeSessionTime && sessionMeta) {
       const meta = [
@@ -3776,9 +3870,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
             csv += `${csvRow([
               sub.name, s.set, sub.weight, sub.reps, "", "", s.time,
               s.restPlanned ?? "", s.restActual ?? "",
-              goal?.goalType ?? "", goal?.goalValue ?? "", goal?.unit ?? "",
-              goal?.currentBestPerformance ?? "", goal?.remainingDistanceToGoal ?? "",
-              goal?.progressPercentage ?? "",
+              ...goalCsvCells(goal),
             ])}\n`;
           });
         } else if (ex.isCardio) {
@@ -3786,18 +3878,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           csv += `${csvRow([
             ex.name, s.set, "", "", s.distance ?? "", s.duration ?? "", s.time,
             s.restPlanned ?? "", s.restActual ?? "",
-            goal?.goalType ?? "", goal?.goalValue ?? "", goal?.unit ?? "",
-            goal?.currentBestPerformance ?? "", goal?.remainingDistanceToGoal ?? "",
-            goal?.progressPercentage ?? "",
+            ...goalCsvCells(goal),
           ])}\n`;
         } else {
           const goal = ex.goal;
           csv += `${csvRow([
             ex.name, s.set, s.weight, s.reps, "", "", s.time,
             s.restPlanned ?? "", s.restActual ?? "",
-            goal?.goalType ?? "", goal?.goalValue ?? "", goal?.unit ?? "",
-            goal?.currentBestPerformance ?? "", goal?.remainingDistanceToGoal ?? "",
-            goal?.progressPercentage ?? "",
+            ...goalCsvCells(goal),
           ])}\n`;
         }
       });
@@ -3846,13 +3934,18 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       performedGoalSnapshots.forEach((goal) => {
         aiText += `${goal.exerciseName}:\n`;
         aiText += `  Goal: ${formatGoalNumber(goal.goalValue)} ${goal.unit} (${goal.goalType})\n`;
-        aiText += `  Current best: ${formatGoalNumber(goal.currentBestPerformance)} ${goal.unit}\n`;
-        aiText += `  Remaining: ${formatGoalNumber(goal.remainingDistanceToGoal)} ${goal.unit}\n`;
-        aiText += `  Progress: ${formatGoalNumber(goal.progressPercentage)}%\n`;
-        aiText += `  Guidance: ${buildGoalInsight(goal)}\n`;
+        if (includeExerciseGoalProgress) {
+          aiText += `  App-estimated current best: ${formatGoalNumber(goal.currentBestPerformance)} ${goal.unit}\n`;
+          aiText += `  App-estimated remaining: ${formatGoalNumber(goal.remainingDistanceToGoal)} ${goal.unit}\n`;
+          aiText += `  App-estimated progress: ${formatGoalNumber(goal.progressPercentage)}%\n`;
+          aiText += `  Guidance: ${buildGoalInsight(goal)}\n`;
+        }
       });
     } else {
       aiText += `- No performed exercise had a saved personal goal.\n`;
+    }
+    if (!includeExerciseGoalProgress && performedGoalSnapshots.length) {
+      aiText += `- App-estimated current best and progress were intentionally omitted. Calculate them from the detailed workout records available to you.\n`;
     }
     aiText += `- Treat these as long-term targets. Keep the existing automatic progression recommendations, use workout history and recovery context, and never force an unsafe jump to reach a goal faster.\n\n`;
 
@@ -3925,7 +4018,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         aiText += `${ex.name}:\n`;
         const detailedGoals = ex.goal ? [ex.goal] : (ex.exerciseGoals || []);
         detailedGoals.forEach((goal) => {
-          aiText += `  Personal goal: ${formatGoalNumber(goal.goalValue)} ${goal.unit}; current best ${formatGoalNumber(goal.currentBestPerformance)}; ${formatGoalNumber(goal.remainingDistanceToGoal)} remaining (${formatGoalNumber(goal.progressPercentage)}%)\n`;
+          aiText += `  Personal goal: ${formatGoalNumber(goal.goalValue)} ${goal.unit}`;
+          if (includeExerciseGoalProgress) {
+            aiText += `; app-estimated current best ${formatGoalNumber(goal.currentBestPerformance)}; ${formatGoalNumber(goal.remainingDistanceToGoal)} remaining (${formatGoalNumber(goal.progressPercentage)}%)`;
+          }
+          aiText += `\n`;
         });
         ex.sets.forEach((s) => {
           const rp =
@@ -4120,6 +4217,8 @@ module.exports = {
   updateExerciseGoalProgress,
   buildExerciseGoalSnapshots,
   attachExerciseGoalSnapshots,
+  exerciseGoalForExport,
+  prepareExerciseGoalsForExport,
   buildGoalInsight,
 };
 }
