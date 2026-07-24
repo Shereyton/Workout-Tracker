@@ -15,6 +15,7 @@ const WT_KEYS = {
   dayType: 'wt_dayType',
   dayCompare: 'wt_dayCompareWindow',
   progressionGuard: 'wt_progressionGuard',
+  exerciseGoals: 'wt_exerciseGoals',
 };
 
 const THEME_PACKS = Object.freeze({
@@ -30,7 +31,162 @@ function getThemePack(value) {
   return THEME_PACKS[value] || THEME_PACKS.aurora;
 }
 
-const WT_SCHEMA_VERSION = 3;
+const WT_SCHEMA_VERSION = 4;
+
+const EXERCISE_GOAL_TYPES = Object.freeze({
+  weight: Object.freeze({ label: 'Weight', unit: 'lbs', step: 0.5 }),
+  reps: Object.freeze({ label: 'Repetitions', unit: 'reps', step: 1 }),
+  distance: Object.freeze({ label: 'Distance', unit: 'miles', step: 0.01 }),
+  duration: Object.freeze({ label: 'Duration', unit: 'minutes', step: 0.5 }),
+  performance: Object.freeze({ label: 'Performance', unit: 'points', step: 0.1 }),
+});
+
+function exerciseGoalKey(name) {
+  return trimString(name, 80).toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeExerciseGoal(value, exerciseName = '', nowIso = new Date().toISOString()) {
+  if (!value || typeof value !== 'object') return null;
+  const name = trimString(value.exerciseName || exerciseName, 80);
+  const goalType = EXERCISE_GOAL_TYPES[value.goalType]
+    ? value.goalType
+    : 'weight';
+  const goalValue = Number(value.goalValue ?? value.goalWeight);
+  if (!name || !Number.isFinite(goalValue) || goalValue <= 0) return null;
+  const createdAt = trimString(value.dateCreated || value.createdAt || nowIso, 40);
+  const updatedAt = trimString(value.lastUpdated || value.updatedAt || nowIso, 40);
+  const best = Number(value.currentBestPerformance);
+  const currentBestPerformance = Number.isFinite(best) && best >= 0 ? best : 0;
+  const progressPercentage = Math.min(
+    100,
+    Math.max(0, (currentBestPerformance / goalValue) * 100),
+  );
+  const remainingDistanceToGoal = Math.max(0, goalValue - currentBestPerformance);
+  const meta = EXERCISE_GOAL_TYPES[goalType];
+  const normalized = {
+    exerciseName: name,
+    goalType,
+    goalValue,
+    ...(goalType === 'weight' ? { goalWeight: goalValue } : {}),
+    unit: trimString(value.unit || meta.unit, 20),
+    dateCreated: createdAt || nowIso,
+    lastUpdated: updatedAt || nowIso,
+    currentBestPerformance,
+    progressPercentage: Number(progressPercentage.toFixed(1)),
+    remainingDistanceToGoal: Number(remainingDistanceToGoal.toFixed(2)),
+  };
+  const datePerformed = trimString(value.datePerformed, 20);
+  if (datePerformed) normalized.datePerformed = datePerformed;
+  return normalized;
+}
+
+function sanitizeExerciseGoals(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  Object.entries(value).forEach(([key, goal]) => {
+    const normalized = normalizeExerciseGoal(goal, goal && goal.exerciseName ? goal.exerciseName : key);
+    if (!normalized) return;
+    out[exerciseGoalKey(normalized.exerciseName)] = normalized;
+  });
+  return out;
+}
+
+function getGoalPerformanceFromExercise(exercise, goalType, exerciseName = '') {
+  if (!exercise || !Array.isArray(exercise.sets)) return 0;
+  const values = [];
+  const record = (set) => {
+    if (!set) return;
+    let value = null;
+    if (goalType === 'weight') value = Number(set.weight);
+    else if (goalType === 'reps') value = Number(set.reps);
+    else if (goalType === 'distance') value = Number(set.distance);
+    else if (goalType === 'duration') value = Number(set.duration) / 60;
+    else if (goalType === 'performance') value = Number(set.performance);
+    if (Number.isFinite(value) && value >= 0) values.push(value);
+  };
+  if (exercise.isSuperset) {
+    exercise.sets.forEach((set) => {
+      (set.exercises || []).forEach((inner) => {
+        if (exerciseGoalKey(inner.name) === exerciseGoalKey(exerciseName)) record(inner);
+      });
+    });
+  } else {
+    exercise.sets.forEach(record);
+  }
+  return values.length ? Math.max(...values) : 0;
+}
+
+function updateExerciseGoalProgress(goal, performance, updatedAt = new Date().toISOString()) {
+  const normalized = normalizeExerciseGoal(goal, goal && goal.exerciseName, updatedAt);
+  if (!normalized) return null;
+  const candidate = Number(performance);
+  const best = Number.isFinite(candidate) && candidate >= 0
+    ? Math.max(normalized.currentBestPerformance, candidate)
+    : normalized.currentBestPerformance;
+  return normalizeExerciseGoal(
+    {
+      ...normalized,
+      currentBestPerformance: best,
+      lastUpdated: best > normalized.currentBestPerformance
+        ? updatedAt
+        : normalized.lastUpdated,
+    },
+    normalized.exerciseName,
+    updatedAt,
+  );
+}
+
+function buildExerciseGoalSnapshots(exercise, goalsByExercise) {
+  const safeGoals = sanitizeExerciseGoals(goalsByExercise);
+  const names = exercise && exercise.isSuperset
+    ? (exercise.exercises || [])
+    : [exercise && exercise.name];
+  return names.filter(Boolean).map((name) => {
+    const goal = safeGoals[exerciseGoalKey(name)];
+    if (!goal) return null;
+    const performance = getGoalPerformanceFromExercise(exercise, goal.goalType, name);
+    return updateExerciseGoalProgress(goal, performance);
+  }).filter(Boolean);
+}
+
+function attachExerciseGoalSnapshots(exercises, goalsByExercise, datePerformed = '') {
+  if (!Array.isArray(exercises)) return [];
+  return exercises.map((exercise) => {
+    const normalized = normalizeExercise(exercise);
+    const snapshots = buildExerciseGoalSnapshots(normalized, goalsByExercise)
+      .map((goal) => normalizeExerciseGoal({ ...goal, datePerformed }, goal.exerciseName));
+    if (!snapshots.length) return normalized;
+    if (normalized.isSuperset) {
+      return { ...normalized, exerciseGoals: snapshots };
+    }
+    return { ...normalized, goal: snapshots[0] };
+  });
+}
+
+function formatGoalNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '0';
+  return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(2)));
+}
+
+function buildGoalInsight(goal) {
+  const normalized = normalizeExerciseGoal(goal, goal && goal.exerciseName);
+  if (!normalized) return '';
+  const best = normalized.currentBestPerformance;
+  const remaining = normalized.remainingDistanceToGoal;
+  if (remaining <= 0) {
+    return `Goal reached at ${formatGoalNumber(best)} ${normalized.unit}. Maintain it with controlled, high-quality work before setting the next target.`;
+  }
+  if (best <= 0) {
+    return `Log a baseline set so guidance can measure the path to ${formatGoalNumber(normalized.goalValue)} ${normalized.unit}.`;
+  }
+  let next = best;
+  if (normalized.goalType === 'weight') next = roundToStep(best * 1.025, 0.5);
+  else if (normalized.goalType === 'reps') next = best + 1;
+  else next = best * 1.05;
+  next = Math.min(normalized.goalValue, next);
+  return `You are ${formatGoalNumber(remaining)} ${normalized.unit} away. Your next sustainable target is ${formatGoalNumber(next)} ${normalized.unit}; keep using gradual progression rather than forcing a jump.`;
+}
 
 // ----- Data Health Utilities -----
 function coercePositiveNumber(n) {
@@ -76,6 +232,9 @@ function normalizeSet(s) {
 function normalizeExercise(e) {
   const isSuperset = !!e.isSuperset;
   const isCardio = !!e.isCardio;
+  const sets = Array.isArray(e.sets)
+    ? e.sets.map((set, index) => normalizeSet({ ...set, set: index + 1 }))
+    : [];
   const base = {
     name: String(e.name || 'Unknown'),
     isSuperset,
@@ -85,8 +244,17 @@ function normalizeExercise(e) {
         ? e.exercises.slice(0, 10)
         : []
       : undefined,
-    sets: Array.isArray(e.sets) ? e.sets.map(normalizeSet) : [],
+    sets,
+    nextSet: sets.length + 1,
   };
+  const goal = normalizeExerciseGoal(e.goal, e.name);
+  if (goal) base.goal = goal;
+  if (Array.isArray(e.exerciseGoals)) {
+    const exerciseGoals = e.exerciseGoals
+      .map((item) => normalizeExerciseGoal(item, item && item.exerciseName))
+      .filter(Boolean);
+    if (exerciseGoals.length) base.exerciseGoals = exerciseGoals;
+  }
   return base;
 }
 
@@ -805,6 +973,7 @@ if (!archivedSessions || typeof archivedSessions !== 'object' || Array.isArray(a
 let dayType = wtStorage.get(WT_KEYS.dayType, '');
 let dayCompare = wtStorage.get(WT_KEYS.dayCompare, 'none');
 let progressionGuard = !!wtStorage.get(WT_KEYS.progressionGuard, false);
+let exerciseGoals = sanitizeExerciseGoals(wtStorage.get(WT_KEYS.exerciseGoals, {}));
 if (typeof localStorage !== "undefined") {
   const s = wtStorage.get(WT_KEYS.session, null);
   const c = wtStorage.get(WT_KEYS.current, null);
@@ -913,6 +1082,24 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const progressionGuardToggle = document.getElementById('progressionGuardToggle');
   const exerciseStage = document.getElementById('exerciseStage');
   const exerciseStageType = document.getElementById('exerciseStageType');
+  const exerciseGoalPanel = document.getElementById('exerciseGoalPanel');
+  const exerciseGoalToggle = document.getElementById('exerciseGoalToggle');
+  const exerciseGoalHeading = document.getElementById('exerciseGoalHeading');
+  const exerciseGoalAction = document.getElementById('exerciseGoalAction');
+  const exerciseGoalStatus = document.getElementById('exerciseGoalStatus');
+  const exerciseGoalBest = document.getElementById('exerciseGoalBest');
+  const exerciseGoalTarget = document.getElementById('exerciseGoalTarget');
+  const exerciseGoalRemaining = document.getElementById('exerciseGoalRemaining');
+  const exerciseGoalProgressBar = document.getElementById('exerciseGoalProgressBar');
+  const exerciseGoalInsight = document.getElementById('exerciseGoalInsight');
+  const exerciseGoalForm = document.getElementById('exerciseGoalForm');
+  const exerciseGoalExercise = document.getElementById('exerciseGoalExercise');
+  const exerciseGoalExerciseLabel = document.getElementById('exerciseGoalExerciseLabel');
+  const exerciseGoalType = document.getElementById('exerciseGoalType');
+  const exerciseGoalValue = document.getElementById('exerciseGoalValue');
+  const exerciseGoalValueLabel = document.getElementById('exerciseGoalValueLabel');
+  const saveExerciseGoal = document.getElementById('saveExerciseGoal');
+  const removeExerciseGoal = document.getElementById('removeExerciseGoal');
   const themePackButton = document.getElementById('themePackButton');
   const themePackLabel = document.getElementById('themePackLabel');
   const themePackSheet = document.getElementById('themePackSheet');
@@ -2198,6 +2385,201 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     startSuperset([n1, n2]);
   });
 
+  /* ------------------ EXERCISE GOALS ------------------ */
+  function persistExerciseGoals() {
+    exerciseGoals = sanitizeExerciseGoals(exerciseGoals);
+    wtStorage.set(WT_KEYS.exerciseGoals, exerciseGoals);
+  }
+
+  function getExerciseGoalTargetNames() {
+    if (!currentExercise) return [];
+    return currentExercise.isSuperset
+      ? (currentExercise.exercises || []).filter(Boolean)
+      : [currentExercise.name];
+  }
+
+  function getSelectedExerciseGoalName() {
+    const names = getExerciseGoalTargetNames();
+    if (!names.length) return '';
+    if (currentExercise && currentExercise.isSuperset && exerciseGoalExercise.value) {
+      return exerciseGoalExercise.value;
+    }
+    return names[0];
+  }
+
+  function updateExerciseGoalValueField() {
+    const type = EXERCISE_GOAL_TYPES[exerciseGoalType.value]
+      ? exerciseGoalType.value
+      : 'weight';
+    const meta = EXERCISE_GOAL_TYPES[type];
+    exerciseGoalValueLabel.textContent = `Goal ${meta.label.toLowerCase()} (${meta.unit})`;
+    exerciseGoalValue.step = String(meta.step);
+    const examples = {
+      weight: 'e.g. 225',
+      reps: 'e.g. 20',
+      distance: 'e.g. 3.1',
+      duration: 'e.g. 30',
+    };
+    exerciseGoalValue.placeholder = examples[type] || 'Enter target';
+  }
+
+  function refreshExerciseGoalProgress(exercise = currentExercise) {
+    if (!exercise) return;
+    const snapshots = buildExerciseGoalSnapshots(exercise, exerciseGoals);
+    let changed = false;
+    snapshots.forEach((snapshot) => {
+      const key = exerciseGoalKey(snapshot.exerciseName);
+      const previous = exerciseGoals[key];
+      if (!previous || JSON.stringify(previous) !== JSON.stringify(snapshot)) {
+        exerciseGoals[key] = snapshot;
+        changed = true;
+      }
+    });
+    if (changed) persistExerciseGoals();
+  }
+
+  function getBestHistoricalGoalPerformance(exerciseName, goalType) {
+    let best = 0;
+    const inspectExercises = (exercises) => {
+      (exercises || []).forEach((exercise) => {
+        if (!exercise) return;
+        if (
+          exercise.isSuperset ||
+          exerciseGoalKey(exercise.name) === exerciseGoalKey(exerciseName)
+        ) {
+          best = Math.max(
+            best,
+            getGoalPerformanceFromExercise(exercise, goalType, exerciseName),
+          );
+        }
+      });
+    };
+    Object.values(archivedSessions || {}).forEach((workout) => {
+      inspectExercises(workout && workout.exercises);
+    });
+    inspectExercises(wtStorage.get(WT_KEYS.last, []));
+    inspectExercises(session.exercises);
+    return best;
+  }
+
+  function renderExerciseGoalPanel() {
+    if (!exerciseGoalPanel || !currentExercise) return;
+    const names = getExerciseGoalTargetNames();
+    const previousSelection = exerciseGoalExercise.value;
+    exerciseGoalExercise.innerHTML = '';
+    names.forEach((name) => {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      exerciseGoalExercise.appendChild(option);
+    });
+    if (names.includes(previousSelection)) exerciseGoalExercise.value = previousSelection;
+    const isSuperset = currentExercise.isSuperset && names.length > 1;
+    exerciseGoalExercise.classList.toggle('hidden', !isSuperset);
+    exerciseGoalExerciseLabel.classList.toggle('hidden', !isSuperset);
+
+    refreshExerciseGoalProgress(currentExercise);
+    const name = getSelectedExerciseGoalName();
+    const goal = exerciseGoals[exerciseGoalKey(name)] || null;
+    exerciseGoalHeading.textContent = goal
+      ? `${name} goal`
+      : 'Set Goal (Optional)';
+    exerciseGoalAction.textContent = goal ? 'Edit' : 'Add';
+    exerciseGoalStatus.classList.toggle('hidden', !goal);
+    removeExerciseGoal.classList.toggle('hidden', !goal);
+
+    if (goal) {
+      const bestText = `${formatGoalNumber(goal.currentBestPerformance)} ${goal.unit}`;
+      const targetText = `${formatGoalNumber(goal.goalValue)} ${goal.unit}`;
+      const remainingText = `${formatGoalNumber(goal.remainingDistanceToGoal)} ${goal.unit}`;
+      exerciseGoalBest.textContent = bestText;
+      exerciseGoalTarget.textContent = targetText;
+      exerciseGoalRemaining.textContent = remainingText;
+      exerciseGoalProgressBar.style.width = `${goal.progressPercentage}%`;
+      const track = exerciseGoalProgressBar.parentElement;
+      track.setAttribute('aria-valuenow', String(Math.round(goal.progressPercentage)));
+      exerciseGoalInsight.textContent = buildGoalInsight(goal);
+      exerciseGoalType.value = goal.goalType;
+      exerciseGoalValue.value = formatGoalNumber(goal.goalValue);
+    } else {
+      exerciseGoalBest.textContent = '—';
+      exerciseGoalTarget.textContent = '—';
+      exerciseGoalRemaining.textContent = '—';
+      exerciseGoalProgressBar.style.width = '0%';
+      exerciseGoalType.value = currentExercise.isCardio ? 'distance' : 'weight';
+      exerciseGoalValue.value = '';
+    }
+    updateExerciseGoalValueField();
+  }
+
+  function setExerciseGoalFormOpen(open) {
+    exerciseGoalForm.classList.toggle('hidden', !open);
+    exerciseGoalToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      renderExerciseGoalPanel();
+      window.setTimeout(() => exerciseGoalValue.focus(), 0);
+    }
+  }
+
+  exerciseGoalToggle.addEventListener('click', () => {
+    setExerciseGoalFormOpen(exerciseGoalForm.classList.contains('hidden'));
+  });
+  exerciseGoalExercise.addEventListener('change', renderExerciseGoalPanel);
+  exerciseGoalType.addEventListener('change', updateExerciseGoalValueField);
+  exerciseGoalValue.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveExerciseGoal.click();
+    }
+  });
+  saveExerciseGoal.addEventListener('click', () => {
+    const exerciseName = getSelectedExerciseGoalName();
+    const goalType = exerciseGoalType.value;
+    const goalValue = Number(exerciseGoalValue.value);
+    if (!exerciseName || !EXERCISE_GOAL_TYPES[goalType] || !Number.isFinite(goalValue) || goalValue <= 0) {
+      showToast('Enter a valid goal value');
+      return;
+    }
+    const key = exerciseGoalKey(exerciseName);
+    const previous = exerciseGoals[key];
+    const now = new Date().toISOString();
+    const performance = getGoalPerformanceFromExercise(currentExercise, goalType, exerciseName);
+    const historicalBest = getBestHistoricalGoalPerformance(exerciseName, goalType);
+    exerciseGoals[key] = normalizeExerciseGoal({
+      exerciseName,
+      goalType,
+      goalValue,
+      unit: EXERCISE_GOAL_TYPES[goalType].unit,
+      dateCreated: previous ? previous.dateCreated : now,
+      lastUpdated: now,
+      currentBestPerformance: previous && previous.goalType === goalType
+        ? Math.max(previous.currentBestPerformance, performance, historicalBest)
+        : Math.max(performance, historicalBest),
+    }, exerciseName, now);
+    persistExerciseGoals();
+    setExerciseGoalFormOpen(false);
+    renderExerciseGoalPanel();
+    announce(`Saved ${exerciseName} goal`);
+    showToast(`Goal saved for ${exerciseName}`);
+  });
+  removeExerciseGoal.addEventListener('click', async () => {
+    const exerciseName = getSelectedExerciseGoalName();
+    const key = exerciseGoalKey(exerciseName);
+    if (!exerciseGoals[key]) return;
+    const ok = await confirmModal(`Remove the saved goal for ${exerciseName}?`, {
+      title: 'Remove Goal',
+      yesText: 'Remove',
+      noText: 'Cancel',
+    });
+    if (!ok) return;
+    delete exerciseGoals[key];
+    persistExerciseGoals();
+    setExerciseGoalFormOpen(false);
+    renderExerciseGoalPanel();
+    announce(`Removed ${exerciseName} goal`);
+    showToast(`Goal removed for ${exerciseName}`);
+  });
+
   /* ------------------ SELECT EXERCISE ------------------ */
   exerciseSelect.addEventListener("change", (e) => {
     const chosen = e.target.value;
@@ -2338,6 +2720,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     exerciseStage.dataset.stageTone = presentation.tone;
     exerciseStageType.textContent = presentation.label;
     exerciseStage.style.setProperty('--set-energy', String(Math.min(1, .2 + ((currentExercise.nextSet || 1) - 1) * .16)));
+    setExerciseGoalFormOpen(false);
+    renderExerciseGoalPanel();
   }
 
   /* ------------------ LOG SET ------------------ */
@@ -2380,6 +2764,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
       updateSummary();
       updateSetsToday();
+      refreshExerciseGoalProgress();
+      renderExerciseGoalPanel();
       saveState();
       updateLogButtonState();
       announce(`Logged set ${currentExercise.nextSet - 1} for ${currentExercise.name}`);
@@ -2427,6 +2813,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
       updateSummary();
       updateSetsToday();
+      refreshExerciseGoalProgress();
+      renderExerciseGoalPanel();
       saveState();
       updateLogButtonState();
       announce(`Logged set ${currentExercise.nextSet - 1} for ${currentExercise.name}`);
@@ -2477,6 +2865,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     updateSummary();
     updateSetsToday();
+    refreshExerciseGoalProgress();
+    renderExerciseGoalPanel();
     saveState();
     updateLogButtonState();
     announce(`Logged set ${currentExercise.nextSet - 1} for ${currentExercise.name}`);
@@ -2790,6 +3180,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         rebuildSetsList();
         updateSummary();
         updateSetsToday();
+        refreshExerciseGoalProgress();
+        renderExerciseGoalPanel();
         form.remove();
         const editBtn = setsList.querySelector(
           `.set-item[data-index="${idx}"] button[data-action="edit"]`,
@@ -2988,11 +3380,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   function endWorkout({ persistCompleted = true } = {}) {
-    const snapshot = buildExportExercises();
+    const date = getLocalDateString();
+    const snapshot = attachExerciseGoalSnapshots(
+      buildExportExercises(),
+      exerciseGoals,
+      date,
+    );
     if (persistCompleted && snapshot.length) {
       wtStorage.set(WT_KEYS.last, snapshot);
       saveSessionLinesToHistory();
-      const date = getLocalDateString();
       const completed = normalizePayload({
         date,
         timestamp: new Date().toISOString(),
@@ -3166,12 +3562,21 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const normalized = normalizePayload({
       date: currentDate,
       timestamp: new Date().toISOString(),
-      exercises: exportExercises,
+      exercises: attachExerciseGoalSnapshots(
+        exportExercises,
+        exerciseGoals,
+        currentDate,
+      ),
       goals: goalsForExport,
       constraints: constraintsForExport,
     });
 
     const payload = { ...normalized };
+    const performedGoalSnapshots = [];
+    payload.exercises.forEach((exercise) => {
+      if (exercise.goal) performedGoalSnapshots.push(exercise.goal);
+      (exercise.exerciseGoals || []).forEach((goal) => performedGoalSnapshots.push(goal));
+    });
 
     let workoutNotes = [];
     if (includeNotes) {
@@ -3324,7 +3729,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const currTopReps = ex.topSet?.reps;
       const currVolume = ex.totalVolume || 0;
       if (Number.isFinite(currTopWeight) && Number.isFinite(currTopReps)) {
-        const nextWeight = roundToStep(currTopWeight * 1.025, 0.5);
+        const weightGoal = performedGoalSnapshots.find(
+          (goal) =>
+            goal.goalType === 'weight' &&
+            exerciseGoalKey(goal.exerciseName) === exerciseGoalKey(ex.name),
+        );
+        const automaticNextWeight = roundToStep(currTopWeight * 1.025, 0.5);
+        const nextWeight = weightGoal && currTopWeight < weightGoal.goalValue
+          ? Math.min(weightGoal.goalValue, automaticNextWeight)
+          : automaticNextWeight;
         const targetTop = `${nextWeight}×${currTopReps} (~+2.5% load)`;
         const volBumpPct = 0.03;
         const nextVol = Math.max(0, Math.round(currVolume * (1 + volBumpPct)));
@@ -3342,7 +3755,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     );
 
     const csvHeader =
-      "Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)\n";
+      "Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec),GoalType,GoalValue,GoalUnit,CurrentBest,GoalRemaining,ProgressPercent\n";
     let csv = csvHeader;
     if (includeSessionTime && sessionMeta) {
       const meta = [
@@ -3357,12 +3770,35 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       ex.sets.forEach((s) => {
         if (ex.isSuperset) {
           s.exercises.forEach((sub) => {
-            csv += `${csvRow([sub.name, s.set, sub.weight, sub.reps, "", "", s.time, s.restPlanned ?? "", s.restActual ?? ""])}\n`;
+            const goal = (ex.exerciseGoals || []).find(
+              (item) => exerciseGoalKey(item.exerciseName) === exerciseGoalKey(sub.name),
+            );
+            csv += `${csvRow([
+              sub.name, s.set, sub.weight, sub.reps, "", "", s.time,
+              s.restPlanned ?? "", s.restActual ?? "",
+              goal?.goalType ?? "", goal?.goalValue ?? "", goal?.unit ?? "",
+              goal?.currentBestPerformance ?? "", goal?.remainingDistanceToGoal ?? "",
+              goal?.progressPercentage ?? "",
+            ])}\n`;
           });
         } else if (ex.isCardio) {
-          csv += `${csvRow([ex.name, s.set, "", "", s.distance ?? "", s.duration ?? "", s.time, s.restPlanned ?? "", s.restActual ?? ""])}\n`;
+          const goal = ex.goal;
+          csv += `${csvRow([
+            ex.name, s.set, "", "", s.distance ?? "", s.duration ?? "", s.time,
+            s.restPlanned ?? "", s.restActual ?? "",
+            goal?.goalType ?? "", goal?.goalValue ?? "", goal?.unit ?? "",
+            goal?.currentBestPerformance ?? "", goal?.remainingDistanceToGoal ?? "",
+            goal?.progressPercentage ?? "",
+          ])}\n`;
         } else {
-          csv += `${csvRow([ex.name, s.set, s.weight, s.reps, "", "", s.time, s.restPlanned ?? "", s.restActual ?? ""])}\n`;
+          const goal = ex.goal;
+          csv += `${csvRow([
+            ex.name, s.set, s.weight, s.reps, "", "", s.time,
+            s.restPlanned ?? "", s.restActual ?? "",
+            goal?.goalType ?? "", goal?.goalValue ?? "", goal?.unit ?? "",
+            goal?.currentBestPerformance ?? "", goal?.remainingDistanceToGoal ?? "",
+            goal?.progressPercentage ?? "",
+          ])}\n`;
         }
       });
     });
@@ -3395,7 +3831,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     aiText += `\n`;
 
-    aiText += `GOALS & FOCUS\n`;
+    aiText += `SESSION GOALS & FOCUS\n`;
     if (goalsForExport.length) {
       goalsForExport.forEach((goal) => {
         aiText += `- ${goal}\n`;
@@ -3404,6 +3840,21 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       aiText += `- None specified.\n`;
     }
     aiText += `\n`;
+
+    aiText += `PERSONAL EXERCISE GOALS (performed exercises only)\n`;
+    if (performedGoalSnapshots.length) {
+      performedGoalSnapshots.forEach((goal) => {
+        aiText += `${goal.exerciseName}:\n`;
+        aiText += `  Goal: ${formatGoalNumber(goal.goalValue)} ${goal.unit} (${goal.goalType})\n`;
+        aiText += `  Current best: ${formatGoalNumber(goal.currentBestPerformance)} ${goal.unit}\n`;
+        aiText += `  Remaining: ${formatGoalNumber(goal.remainingDistanceToGoal)} ${goal.unit}\n`;
+        aiText += `  Progress: ${formatGoalNumber(goal.progressPercentage)}%\n`;
+        aiText += `  Guidance: ${buildGoalInsight(goal)}\n`;
+      });
+    } else {
+      aiText += `- No performed exercise had a saved personal goal.\n`;
+    }
+    aiText += `- Treat these as long-term targets. Keep the existing automatic progression recommendations, use workout history and recovery context, and never force an unsafe jump to reach a goal faster.\n\n`;
 
     aiText += `SCHEDULE & CONSTRAINTS\n`;
     if (constraintLines.length) {
@@ -3472,6 +3923,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (payload.exercises.length) {
       payload.exercises.forEach((ex) => {
         aiText += `${ex.name}:\n`;
+        const detailedGoals = ex.goal ? [ex.goal] : (ex.exerciseGoals || []);
+        detailedGoals.forEach((goal) => {
+          aiText += `  Personal goal: ${formatGoalNumber(goal.goalValue)} ${goal.unit}; current best ${formatGoalNumber(goal.currentBestPerformance)}; ${formatGoalNumber(goal.remainingDistanceToGoal)} remaining (${formatGoalNumber(goal.progressPercentage)}%)\n`;
+        });
         ex.sets.forEach((s) => {
           const rp =
             s.restPlanned != null
@@ -3505,7 +3960,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     aiText += `Please analyze the session and consistency metrics, flag regressions or PRs, and craft the next workout. Prioritize:\n`;
     aiText += `1. Insight: Note strength/cardio trends, weak points, or fatigue signals.\n`;
     aiText += `2. Next workout: Provide a detailed plan aligned with goals and constraints.\n`;
-    aiText += `3. Progression: Suggest load/rep adjustments and technique cues to keep momentum.\n`;
+    aiText += `3. Progression: Suggest safe load/rep adjustments and technique cues that follow the existing progression system while moving toward performed-exercise goals.\n`;
 
     if (navigator.clipboard) {
       navigator.clipboard
@@ -3644,6 +4099,7 @@ if (typeof window !== "undefined") {
 if (typeof module !== "undefined") {
 module.exports = {
   THEME_PACKS,
+  EXERCISE_GOAL_TYPES,
   getThemePack,
   canLogSet,
   canLogCardio,
@@ -3657,5 +4113,13 @@ module.exports = {
   formatCardioHistoryLine,
   parseYMD,
   formatShortDate,
+  exerciseGoalKey,
+  normalizeExerciseGoal,
+  sanitizeExerciseGoals,
+  getGoalPerformanceFromExercise,
+  updateExerciseGoalProgress,
+  buildExerciseGoalSnapshots,
+  attachExerciseGoalSnapshots,
+  buildGoalInsight,
 };
 }
