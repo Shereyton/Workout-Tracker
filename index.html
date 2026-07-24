@@ -104,6 +104,45 @@
           </div>
         </div>
 
+        <section id="exerciseGoalPanel" class="exercise-goal-panel" aria-labelledby="exerciseGoalHeading">
+          <button type="button" id="exerciseGoalToggle" class="exercise-goal-toggle" aria-expanded="false" aria-controls="exerciseGoalForm">
+            <span>
+              <small id="exerciseGoalEyebrow">Long-term target</small>
+              <strong id="exerciseGoalHeading">Set Goal (Optional)</strong>
+            </span>
+            <span class="exercise-goal-toggle__action" id="exerciseGoalAction">Add</span>
+          </button>
+          <div id="exerciseGoalStatus" class="exercise-goal-status hidden" aria-live="polite">
+            <div class="exercise-goal-metrics">
+              <span><small>Current best</small><strong id="exerciseGoalBest">—</strong></span>
+              <span><small>Goal</small><strong id="exerciseGoalTarget">—</strong></span>
+              <span><small>Remaining</small><strong id="exerciseGoalRemaining">—</strong></span>
+            </div>
+            <div class="exercise-goal-track" role="progressbar" aria-label="Exercise goal progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span id="exerciseGoalProgressBar"></span>
+            </div>
+            <p id="exerciseGoalInsight" class="exercise-goal-insight"></p>
+          </div>
+          <div id="exerciseGoalForm" class="exercise-goal-form hidden">
+            <label id="exerciseGoalExerciseLabel" class="field-label hidden" for="exerciseGoalExercise">Exercise</label>
+            <select id="exerciseGoalExercise" class="field hidden" aria-labelledby="exerciseGoalExerciseLabel"></select>
+            <label class="field-label" for="exerciseGoalType">Goal type</label>
+            <select id="exerciseGoalType" class="field">
+              <option value="weight">Weight</option>
+              <option value="reps">Repetitions</option>
+              <option value="distance">Distance</option>
+              <option value="duration">Duration</option>
+            </select>
+            <label id="exerciseGoalValueLabel" class="field-label" for="exerciseGoalValue">Goal weight (lbs)</label>
+            <input type="number" id="exerciseGoalValue" class="field" min="0.01" max="99999" step="0.5" inputmode="decimal" placeholder="e.g. 225">
+            <div class="exercise-goal-form__actions">
+              <button type="button" id="saveExerciseGoal" class="btn btn-primary">Save Goal</button>
+              <button type="button" id="removeExerciseGoal" class="btn btn-reset hidden">Remove Goal</button>
+            </div>
+            <p class="exercise-goal-note">Your normal progression stays active. This goal guides the long-term path without forcing unsafe jumps.</p>
+          </div>
+        </section>
+
         <!-- timer controls -->
         <div class="inline-row mb-8">
           <label class="inline-label">
