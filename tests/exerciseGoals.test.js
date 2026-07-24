@@ -4,6 +4,7 @@ const {
   getGoalPerformanceFromExercise,
   updateExerciseGoalProgress,
   attachExerciseGoalSnapshots,
+  prepareExerciseGoalsForExport,
   buildGoalInsight,
 } = require('../script');
 
@@ -98,6 +99,56 @@ describe('custom exercise goals', () => {
     expect(output[1].goal.currentBestPerformance).toBe(190);
     expect(output[1].goal.remainingDistanceToGoal).toBe(35);
     expect(output[1].goal.datePerformed).toBe('2026-07-24');
+  });
+
+  it('exports saved goals without app-estimated progress by default', () => {
+    const goalAwareExercises = attachExerciseGoalSnapshots(
+      [
+        { name: 'Bench Press', sets: [{ weight: 225, reps: 5 }] },
+        { name: 'Squat', sets: [{ weight: 315, reps: 5 }] },
+      ],
+      sanitizeExerciseGoals({
+        bench: {
+          exerciseName: 'Bench Press',
+          goalType: 'weight',
+          goalValue: 315,
+          currentBestPerformance: 225,
+        },
+      }),
+      '2026-07-24',
+    );
+    const exported = prepareExerciseGoalsForExport(goalAwareExercises);
+
+    expect(exported[0].goal).toMatchObject({
+      exerciseName: 'Bench Press',
+      goalType: 'weight',
+      goalValue: 315,
+      goalWeight: 315,
+      unit: 'lbs',
+      datePerformed: '2026-07-24',
+    });
+    expect(exported[0].goal).not.toHaveProperty('currentBestPerformance');
+    expect(exported[0].goal).not.toHaveProperty('remainingDistanceToGoal');
+    expect(exported[0].goal).not.toHaveProperty('progressPercentage');
+    expect(exported[1]).not.toHaveProperty('goal');
+  });
+
+  it('includes app-estimated progress only when the export option is enabled', () => {
+    const goalAwareExercises = attachExerciseGoalSnapshots(
+      [{ name: 'Shoulder Press', sets: [{ weight: 190, reps: 4 }] }],
+      sanitizeExerciseGoals({
+        shoulder: {
+          exerciseName: 'Shoulder Press',
+          goalType: 'weight',
+          goalValue: 225,
+        },
+      }),
+    );
+    const exported = prepareExerciseGoalsForExport(goalAwareExercises, true);
+
+    expect(exported[0].goal.currentBestPerformance).toBe(190);
+    expect(exported[0].goal.remainingDistanceToGoal).toBe(35);
+    expect(exported[0].goal.progressPercentage).toBe(84.4);
   });
 
   it('produces sustainable guidance instead of jumping straight to the goal', () => {
