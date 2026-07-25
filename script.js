@@ -219,17 +219,15 @@ function buildGoalInsight(goal) {
   const best = normalized.currentBestPerformance;
   const remaining = normalized.remainingDistanceToGoal;
   if (remaining <= 0) {
-    return `Goal reached at ${formatGoalNumber(best)} ${normalized.unit}. Maintain it with controlled, high-quality work before setting the next target.`;
+    return `Goal reached with a logged best of ${formatGoalNumber(best)} ${normalized.unit}. Confirm it with controlled, high-quality work before setting the next target.`;
   }
   if (best <= 0) {
     return `Log a baseline set so guidance can measure the path to ${formatGoalNumber(normalized.goalValue)} ${normalized.unit}.`;
   }
-  let next = best;
-  if (normalized.goalType === 'weight') next = roundToStep(best * 1.025, 0.5);
-  else if (normalized.goalType === 'reps') next = best + 1;
-  else next = best * 1.05;
-  next = Math.min(normalized.goalValue, next);
-  return `You are ${formatGoalNumber(remaining)} ${normalized.unit} away. Your next sustainable target is ${formatGoalNumber(next)} ${normalized.unit}; keep using gradual progression rather than forcing a jump.`;
+  if (normalized.goalType === 'weight') {
+    return `Your logged best is ${formatGoalNumber(remaining)} ${normalized.unit} below the long-term goal. Add weight only after the current prescription is completed cleanly and repeatably; use the smallest available increment and progress one variable at a time.`;
+  }
+  return `Your logged best is ${formatGoalNumber(remaining)} ${normalized.unit} below the long-term goal. Improve it gradually after the current prescription is completed cleanly and repeatably.`;
 }
 
 // ----- Data Health Utilities -----
@@ -595,6 +593,7 @@ function computeSessionStats(payload) {
         topSet: null,
         bestDescription: null,
         longestDuration: 0,
+        strengthSets: [],
       });
     }
     return map.get(name);
@@ -603,6 +602,7 @@ function computeSessionStats(payload) {
   const recordStrengthSet = (name, weight, reps) => {
     const entry = ensureEntry(name, 'strength');
     entry.totalSets += 1;
+    entry.strengthSets.push({ weight, reps });
     const vol = weight * reps;
     entry.totalVolume += vol;
     totalVolume += vol;
@@ -676,6 +676,7 @@ function computeSessionStats(payload) {
     totalDistance: entry.totalDistance,
     topSet: entry.topSet,
     bestDescription: entry.bestDescription,
+    strengthSets: entry.strengthSets,
   }));
 
   return {
@@ -684,6 +685,94 @@ function computeSessionStats(payload) {
     totalVolume,
     totalCardioDuration,
     exercises: stats,
+  };
+}
+
+function buildStrengthDecisionSupport(current, previous = null, loadStep = 5) {
+  if (
+    !current ||
+    current.type !== 'strength' ||
+    !current.topSet ||
+    !Number.isFinite(Number(current.topSet.weight)) ||
+    !Number.isFinite(Number(current.topSet.reps))
+  ) {
+    return null;
+  }
+
+  const topWeight = Number(current.topSet.weight);
+  const topReps = Number(current.topSet.reps);
+  const step = Number.isFinite(Number(loadStep)) && Number(loadStep) > 0
+    ? Number(loadStep)
+    : 5;
+  const strengthSets = Array.isArray(current.strengthSets)
+    ? current.strengthSets
+    : [];
+  const repeatedTopSets = strengthSets.filter(
+    (set) => Number(set.weight) === topWeight,
+  );
+  const repeatedReps = repeatedTopSets
+    .map((set) => Number(set.reps))
+    .filter((reps) => Number.isFinite(reps) && reps > 0);
+  const peakRepeatedReps = repeatedReps.length
+    ? Math.max(...repeatedReps)
+    : topReps;
+  const finalRepeatedReps = repeatedReps.length
+    ? repeatedReps[repeatedReps.length - 1]
+    : topReps;
+  const repDropPercent = repeatedReps.length > 1 && peakRepeatedReps > 0
+    ? Math.max(
+      0,
+      ((peakRepeatedReps - finalRepeatedReps) / peakRepeatedReps) * 100,
+    )
+    : 0;
+  const hasLargeRepDrop = repeatedReps.length > 1 && repDropPercent >= 25;
+  const nextLoad = Number((topWeight + step).toFixed(2));
+  const loadIncreasePercent = topWeight > 0
+    ? ((nextLoad - topWeight) / topWeight) * 100
+    : 0;
+  const previousTopWeight = Number(previous?.topSet?.weight);
+  const previousTopReps = Number(previous?.topSet?.reps);
+  const hasComparablePrevious = Number.isFinite(previousTopWeight)
+    && Number.isFinite(previousTopReps);
+  const volumeRatio = hasComparablePrevious && Number(previous.totalVolume) > 0
+    ? Number(current.totalVolume) / Number(previous.totalVolume)
+    : null;
+
+  let decision = 'HOLD';
+  let reason = '';
+  if (hasLargeRepDrop) {
+    const repSequence = repeatedReps.join('→');
+    reason = `reps at ${formatGoalNumber(topWeight)} lbs fell ${repSequence} (${repDropPercent.toFixed(0)}% from best to final set). That is a large within-session drop, so adding load is not supported; review rest, pacing, technique, and the prescribed rep target.`;
+  } else if (!hasComparablePrevious) {
+    reason = `this is the first comparable session in the selected history. Repeat the load and establish another clean baseline before increasing it.`;
+  } else if (
+    topWeight < previousTopWeight ||
+    (volumeRatio !== null && volumeRatio < 0.9)
+  ) {
+    reason = `performance was below the previous comparable session. Keep the load stable or reduce it if needed to restore clean, repeatable work before progressing.`;
+  } else if (
+    topWeight === previousTopWeight &&
+    topReps > previousTopReps &&
+    (volumeRatio === null || volumeRatio >= 0.97)
+  ) {
+    decision = 'REVIEW';
+    const loadOption = loadIncreasePercent >= 2 && loadIncreasePercent <= 10
+      ? `${formatGoalNumber(nextLoad)} lbs is the smallest standard load option`
+      : `the next standard load step would be ${loadIncreasePercent.toFixed(1)}%, so add reps instead`;
+    reason = `reps improved at the same top load without a meaningful volume loss. ${loadOption}; increase load only if the prescribed reps were exceeded cleanly and readiness supports it, and do not increase volume at the same time.`;
+  } else {
+    reason = `there is not enough evidence to justify more weight. Match or improve clean reps at this load first, then progress one variable at a time.`;
+  }
+
+  return {
+    decision,
+    topWeight,
+    topReps,
+    repeatedReps,
+    repDropPercent: Number(repDropPercent.toFixed(1)),
+    nextLoad,
+    loadIncreasePercent: Number(loadIncreasePercent.toFixed(1)),
+    text: `${current.name} – ${decision} ${formatGoalNumber(topWeight)} lbs: ${reason}`,
   };
 }
 
@@ -1277,7 +1366,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (!toggleGoalProgressPrefBtn) return;
     const on = !!wtStorage.get(WT_KEYS.prefExerciseGoalProgress, false);
     toggleGoalProgressPrefBtn.textContent =
-      `Include app-estimated goal progress in export: ${on ? 'ON' : 'OFF'}`;
+      `Include logged goal progress in export: ${on ? 'ON' : 'OFF'}`;
   }
   if (toggleGoalProgressPrefBtn) {
     updateGoalProgressPrefButton();
@@ -1286,7 +1375,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       wtStorage.set(WT_KEYS.prefExerciseGoalProgress, !on);
       updateGoalProgressPrefButton();
       showToast(
-        `App-estimated goal progress export ${!on ? 'enabled' : 'disabled'}.`,
+        `Logged goal progress export ${!on ? 'enabled' : 'disabled'}.`,
       );
     });
   }
@@ -3798,27 +3887,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         );
       }
 
-      const currTopWeight = ex.topSet?.weight;
-      const currTopReps = ex.topSet?.reps;
-      const currVolume = ex.totalVolume || 0;
-      if (Number.isFinite(currTopWeight) && Number.isFinite(currTopReps)) {
-        const weightGoal = performedGoalSnapshots.find(
-          (goal) =>
-            goal.goalType === 'weight' &&
-            exerciseGoalKey(goal.exerciseName) === exerciseGoalKey(ex.name),
-        );
-        const automaticNextWeight = roundToStep(currTopWeight * 1.025, 0.5);
-        const nextWeight = weightGoal && currTopWeight < weightGoal.goalValue
-          ? Math.min(weightGoal.goalValue, automaticNextWeight)
-          : automaticNextWeight;
-        const targetTop = `${nextWeight}×${currTopReps} (~+2.5% load)`;
-        const volBumpPct = 0.03;
-        const nextVol = Math.max(0, Math.round(currVolume * (1 + volBumpPct)));
-        const volPctText = `${volBumpPct >= 0 ? '+' : ''}${(volBumpPct * 100).toFixed(1)}%`;
-        nextTargetLines.push(
-          `${ex.name} – Next top set target: ${targetTop}; Next volume target: ${formatVolumeNumber(currVolume)} → ${formatVolumeNumber(nextVol)} (${volPctText})`,
-        );
-      }
+      const decisionSupport = buildStrengthDecisionSupport(ex, prev);
+      if (decisionSupport) nextTargetLines.push(decisionSupport.text);
     });
 
     const jsonStr = JSON.stringify(payload, null, 2);
@@ -3909,8 +3979,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     let aiText = `WORKOUT DATA - ${payload.date}\n\n`;
     aiText += `SESSION SNAPSHOT\n`;
-    aiText += `- Total sets: ${payload.totalSets}\n`;
-    aiText += `- Volume load: ${formatVolumeNumber(currentStats.totalVolume)} (sum weight × reps)\n`;
+    aiText += `- Total logged sets: ${payload.totalSets} (includes warm-ups unless the user identifies them separately)\n`;
+    aiText += `- Mechanical volume load: ${formatVolumeNumber(currentStats.totalVolume)} (sum weight × reps; useful for comparison, not a direct measure of fatigue or training quality)\n`;
     if (currentStats.totalCardioDuration) {
       aiText += `- Cardio duration: ${formatSecondsHuman(currentStats.totalCardioDuration)}\n`;
     }
@@ -3935,9 +4005,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         aiText += `${goal.exerciseName}:\n`;
         aiText += `  Goal: ${formatGoalNumber(goal.goalValue)} ${goal.unit} (${goal.goalType})\n`;
         if (includeExerciseGoalProgress) {
-          aiText += `  App-estimated current best: ${formatGoalNumber(goal.currentBestPerformance)} ${goal.unit}\n`;
-          aiText += `  App-estimated remaining: ${formatGoalNumber(goal.remainingDistanceToGoal)} ${goal.unit}\n`;
-          aiText += `  App-estimated progress: ${formatGoalNumber(goal.progressPercentage)}%\n`;
+          aiText += `  App-tracked logged best: ${formatGoalNumber(goal.currentBestPerformance)} ${goal.unit}\n`;
+          aiText += `  Arithmetic distance from goal: ${formatGoalNumber(goal.remainingDistanceToGoal)} ${goal.unit}\n`;
+          aiText += `  Arithmetic goal ratio: ${formatGoalNumber(goal.progressPercentage)}%\n`;
           aiText += `  Guidance: ${buildGoalInsight(goal)}\n`;
         }
       });
@@ -3945,9 +4015,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       aiText += `- No performed exercise had a saved personal goal.\n`;
     }
     if (!includeExerciseGoalProgress && performedGoalSnapshots.length) {
-      aiText += `- App-estimated current best and progress were intentionally omitted. Calculate them from the detailed workout records available to you.\n`;
+      aiText += `- Logged best and arithmetic goal progress were intentionally omitted. Calculate any performance estimates from the detailed workout records available to you.\n`;
     }
-    aiText += `- Treat these as long-term targets. Keep the existing automatic progression recommendations, use workout history and recovery context, and never force an unsafe jump to reach a goal faster.\n\n`;
+    aiText += `- Treat these as long-term targets, not next-session prescriptions. Use workout history, execution quality, and recovery context; never force an unsafe jump to reach a goal faster.\n\n`;
+
+    aiText += `DATA INTERPRETATION LIMITS\n`;
+    aiText += `- A weight goal compares the goal with the heaviest load logged for that exercise; it is not an estimated or tested one-repetition maximum.\n`;
+    aiText += `- Set roles, repetitions in reserve (RIR), pain, technique quality, and equipment increments are not recorded unless the user states them in notes.\n`;
+    aiText += `- A rep drop across repeated-load sets is a fatigue/pacing signal, not a diagnosis. Do not infer readiness or prescribe a load increase from volume alone.\n\n`;
 
     aiText += `SCHEDULE & CONSTRAINTS\n`;
     if (constraintLines.length) {
@@ -3970,16 +4045,17 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       aiText += `\n`;
 
       aiText += `PROGRESSION GUARD (MANDATORY IF INCLUDED)\n`;
-      aiText += `- Ensure the user is never stagnating: verify load/rep/volume progression against recent sessions you already have in this conversation and propose increases or quality improvements.\n`;
-      aiText += `- Use math: compare volume (weight × reps), top-set loads, and total sets vs those prior sessions; call out regressions and prescribe stepwise progressions.\n`;
-      aiText += `- If progression is unsafe, suggest form cues or rep/tempo quality gains to keep advancing.\n\n`;
+      aiText += `- Prevent true stagnation without forcing load increases. Progress may be more load, more clean reps, better range of motion, improved technique, appropriate rest, or lower effort at the same work.\n`;
+      aiText += `- Compare volume, top-set load/reps, repeated-load rep drop, and recent sessions. A deliberate hold or deload is valid when fatigue, recovery, pain, or insufficient evidence makes an increase inappropriate.\n`;
+      aiText += `- Increase one primary variable at a time. Add load only after the prescribed work is completed cleanly and repeatably; round to equipment the user can actually load.\n\n`;
     }
 
     if (nextTargetLines.length) {
-      aiText += `NEXT TARGETS (auto)\n`;
+      aiText += `NEXT-SESSION DECISION SUPPORT (conservative auto-check)\n`;
       nextTargetLines.forEach((line) => {
         aiText += `- ${line}\n`;
       });
+      aiText += `- These are guardrails, not a complete program. Override them when reliable history, RIR/RPE, pain, technique, recovery, or coach instructions justify a different decision.\n`;
       aiText += `\n`;
     }
 
@@ -4020,7 +4096,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         detailedGoals.forEach((goal) => {
           aiText += `  Personal goal: ${formatGoalNumber(goal.goalValue)} ${goal.unit}`;
           if (includeExerciseGoalProgress) {
-            aiText += `; app-estimated current best ${formatGoalNumber(goal.currentBestPerformance)}; ${formatGoalNumber(goal.remainingDistanceToGoal)} remaining (${formatGoalNumber(goal.progressPercentage)}%)`;
+            aiText += `; app-tracked logged best ${formatGoalNumber(goal.currentBestPerformance)}; ${formatGoalNumber(goal.remainingDistanceToGoal)} arithmetic distance (${formatGoalNumber(goal.progressPercentage)}% ratio)`;
           }
           aiText += `\n`;
         });
@@ -4054,10 +4130,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
 
     aiText += `NEXT STEPS REQUEST\n`;
-    aiText += `Please analyze the session and consistency metrics, flag regressions or PRs, and craft the next workout. Prioritize:\n`;
-    aiText += `1. Insight: Note strength/cardio trends, weak points, or fatigue signals.\n`;
-    aiText += `2. Next workout: Provide a detailed plan aligned with goals and constraints.\n`;
-    aiText += `3. Progression: Suggest safe load/rep adjustments and technique cues that follow the existing progression system while moving toward performed-exercise goals.\n`;
+    aiText += `Analyze the session and consistency metrics, flag regressions or PRs, and produce a ready-to-follow next workout. The user should be able to follow it without making programming decisions mid-session.\n`;
+    aiText += `1. Insight: Distinguish evidence from inference. Note trends, weak points, and possible fatigue signals without treating mechanical volume or a single session as proof.\n`;
+    aiText += `2. Exact workout: List exercises in order. Separate warm-up/ramp sets from work sets and give exact sets × reps, load or load range, rest time, target RIR/RPE, and one concise technique cue.\n`;
+    aiText += `3. Progression: For every exercise, choose HOLD, ADD REPS, ADD LOAD, REDUCE, or TEST BASELINE and explain why. Do not automatically increase both load and volume. Use realistic equipment increments.\n`;
+    aiText += `4. Autoregulation: Include simple green/yellow/red rules for readiness and a stop/substitution rule for pain or technique breakdown. Ask only for truly missing information that would materially change safety or the plan.\n`;
 
     if (navigator.clipboard) {
       navigator.clipboard
@@ -4220,5 +4297,6 @@ module.exports = {
   exerciseGoalForExport,
   prepareExerciseGoalsForExport,
   buildGoalInsight,
+  buildStrengthDecisionSupport,
 };
 }

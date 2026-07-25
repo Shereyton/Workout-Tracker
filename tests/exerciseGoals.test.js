@@ -101,7 +101,7 @@ describe('custom exercise goals', () => {
     expect(output[1].goal.datePerformed).toBe('2026-07-24');
   });
 
-  it('exports saved goals without app-estimated progress by default', () => {
+  it('exports saved goals without logged progress by default', () => {
     const goalAwareExercises = attachExerciseGoalSnapshots(
       [
         { name: 'Bench Press', sets: [{ weight: 225, reps: 5 }] },
@@ -133,7 +133,7 @@ describe('custom exercise goals', () => {
     expect(exported[1]).not.toHaveProperty('goal');
   });
 
-  it('includes app-estimated progress only when the export option is enabled', () => {
+  it('includes logged progress only when the export option is enabled', () => {
     const goalAwareExercises = attachExerciseGoalSnapshots(
       [{ name: 'Shoulder Press', sets: [{ weight: 190, reps: 4 }] }],
       sanitizeExerciseGoals({
@@ -151,7 +151,7 @@ describe('custom exercise goals', () => {
     expect(exported[0].goal.progressPercentage).toBe(84.4);
   });
 
-  it('produces sustainable guidance instead of jumping straight to the goal', () => {
+  it('keeps goal guidance conservative instead of inventing a precise next load', () => {
     const goal = normalizeExerciseGoal({
       exerciseName: 'Shoulder Press',
       goalType: 'weight',
@@ -159,8 +159,9 @@ describe('custom exercise goals', () => {
       currentBestPerformance: 185,
     });
 
-    expect(buildGoalInsight(goal)).toMatch(/40 lbs away/);
-    expect(buildGoalInsight(goal)).toMatch(/189\.5 lbs/);
-    expect(buildGoalInsight(goal)).toMatch(/rather than forcing a jump/);
+    expect(buildGoalInsight(goal)).toMatch(/40 lbs below/);
+    expect(buildGoalInsight(goal)).toMatch(/smallest available increment/);
+    expect(buildGoalInsight(goal)).toMatch(/progress one variable at a time/);
+    expect(buildGoalInsight(goal)).not.toMatch(/189\.5/);
   });
 });
