@@ -57,6 +57,23 @@ describe('normalizePayload - mixed exercises', () => {
     expect(norm.totalSets).toBe(
       squat.sets.length + jog.sets.length + sup.sets.length
     );
-    expect(norm.schema).toBe(4);
+    expect(norm.schema).toBe(5);
+  });
+
+  it('preserves structured session planning context in exported payloads', () => {
+    const norm = normalizePayload({
+      date: '2026-07-30',
+      exercises: [],
+      sessionContext: {
+        status: 'time_limited',
+        nextWorkoutMinutes: 90,
+      },
+    });
+
+    expect(norm.sessionContext).toMatchObject({
+      status: 'time_limited',
+      isIncomplete: true,
+      nextWorkoutMinutes: 90,
+    });
   });
 });

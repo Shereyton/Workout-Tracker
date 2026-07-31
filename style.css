@@ -208,6 +208,9 @@ body.dark .summary{
 }
 body.dark .context-card{background:#20242a;border-color:#2d333c;}
 .context-card h3{font-size:16px;margin-bottom:2px;}
+.planning-context{display:grid;gap:6px;margin-top:4px;}
+.planning-context .field-label{color:var(--muted-fg);font-size:11px;font-weight:750;}
+.planning-context .field{margin-bottom:4px;}
 #constraintsSection{grid-column:1/-1;}
 .muted-text{color:var(--muted-fg);font-size:13px;}
 .empty-hint{font-size:13px;color:var(--muted-fg);}

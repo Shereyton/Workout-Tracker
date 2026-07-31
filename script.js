@@ -17,6 +17,8 @@ const WT_KEYS = {
   progressionGuard: 'wt_progressionGuard',
   exerciseGoals: 'wt_exerciseGoals',
   prefExerciseGoalProgress: 'wt_pref_exerciseGoalProgressExport',
+  sessionStatus: 'wt_sessionStatus',
+  nextWorkoutMinutes: 'wt_nextWorkoutMinutes',
 };
 
 const THEME_PACKS = Object.freeze({
@@ -32,7 +34,7 @@ function getThemePack(value) {
   return THEME_PACKS[value] || THEME_PACKS.aurora;
 }
 
-const WT_SCHEMA_VERSION = 4;
+const WT_SCHEMA_VERSION = 5;
 
 const EXERCISE_GOAL_TYPES = Object.freeze({
   weight: Object.freeze({ label: 'Weight', unit: 'lbs', step: 0.5 }),
@@ -344,6 +346,12 @@ function normalizePayload(payload) {
   if (hasConstraints(constraints)) normalized.constraints = constraints;
   const highlights = sanitizeExerciseHighlights(payload.exerciseHighlights);
   if (highlights.length) normalized.exerciseHighlights = highlights;
+  if (payload.sessionContext && typeof payload.sessionContext === 'object') {
+    normalized.sessionContext = buildSessionPlanningContext(
+      payload.sessionContext.status,
+      payload.sessionContext.nextWorkoutMinutes,
+    );
+  }
   return normalized;
 }
 
@@ -354,6 +362,48 @@ const DEFAULT_CONSTRAINTS = {
   scheduleNotes: [],
   avoidAreas: [],
 };
+
+const SESSION_STATUS_OPTIONS = Object.freeze({
+  complete: 'Completed as planned',
+  time_limited: 'Stopped because time ran out',
+  pain_limited: 'Stopped because of pain or discomfort',
+  recovery_limited: 'Reduced because recovery/readiness was poor',
+  other_incomplete: 'Incomplete for another reason',
+});
+
+function normalizeSessionStatus(value) {
+  return Object.prototype.hasOwnProperty.call(SESSION_STATUS_OPTIONS, value)
+    ? value
+    : 'complete';
+}
+
+function normalizeWorkoutMinutes(value) {
+  if (value === '' || value === null || value === undefined) return null;
+  const minutes = Math.round(Number(value));
+  return Number.isFinite(minutes) && minutes >= 15 && minutes <= 360
+    ? minutes
+    : null;
+}
+
+// Local date string in the same format calendar.js uses (YYYY-MM-DD, local time)
+function getLocalDateString(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function buildSessionPlanningContext(status, nextWorkoutMinutes) {
+  const normalizedStatus = normalizeSessionStatus(status);
+  const minutes = normalizeWorkoutMinutes(nextWorkoutMinutes);
+  return {
+    status: normalizedStatus,
+    statusLabel: SESSION_STATUS_OPTIONS[normalizedStatus],
+    isIncomplete: normalizedStatus !== 'complete',
+    nextWorkoutMinutes: minutes,
+  };
+}
 
 function trimString(input, maxLength = 200) {
   return String(input || '').trim().slice(0, maxLength);
@@ -725,7 +775,10 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = 5) {
       ((peakRepeatedReps - finalRepeatedReps) / peakRepeatedReps) * 100,
     )
     : 0;
-  const hasLargeRepDrop = repeatedReps.length > 1 && repDropPercent >= 25;
+  const repDropCount = Math.max(0, peakRepeatedReps - finalRepeatedReps);
+  const hasLargeRepDrop = repeatedReps.length > 1
+    && repDropCount >= 2
+    && repDropPercent >= 30;
   const nextLoad = Number((topWeight + step).toFixed(2));
   const loadIncreasePercent = topWeight > 0
     ? ((nextLoad - topWeight) / topWeight) * 100
@@ -783,8 +836,9 @@ function buildExerciseHighlightsForExport(currentStats, previousStats) {
     if (!session || !Array.isArray(session.exercises)) return;
     session.exercises.forEach((exercise) => {
       if (!exercise || !exercise.name) return;
-      if (!prevByName.has(exercise.name)) prevByName.set(exercise.name, []);
-      prevByName.get(exercise.name).push({
+      const key = exerciseGoalKey(exercise.name);
+      if (!prevByName.has(key)) prevByName.set(key, []);
+      prevByName.get(key).push({
         date: session.date,
         stats: exercise,
       });
@@ -794,7 +848,7 @@ function buildExerciseHighlightsForExport(currentStats, previousStats) {
   const highlights = [];
   currentStats.exercises.forEach((exercise) => {
     const name = exercise.name;
-    const prevEntries = prevByName.get(name) || [];
+    const prevEntries = prevByName.get(exerciseGoalKey(name)) || [];
     const recent = prevEntries.slice(0, 3);
     const highlight = {
       name,
@@ -1106,6 +1160,20 @@ if (!archivedSessions || typeof archivedSessions !== 'object' || Array.isArray(a
 let dayType = wtStorage.get(WT_KEYS.dayType, '');
 let dayCompare = wtStorage.get(WT_KEYS.dayCompare, 'none');
 let progressionGuard = !!wtStorage.get(WT_KEYS.progressionGuard, false);
+if (progressionGuard && dayCompare === 'none') {
+  dayCompare = '3';
+  wtStorage.set(WT_KEYS.dayCompare, dayCompare);
+}
+const storedSessionStatus = wtStorage.get(WT_KEYS.sessionStatus, null);
+let sessionStatus = normalizeSessionStatus(
+  storedSessionStatus
+    && storedSessionStatus.date === getLocalDateString()
+    ? storedSessionStatus.value
+    : 'complete',
+);
+let nextWorkoutMinutes = normalizeWorkoutMinutes(
+  wtStorage.get(WT_KEYS.nextWorkoutMinutes, null),
+);
 let exerciseGoals = sanitizeExerciseGoals(wtStorage.get(WT_KEYS.exerciseGoals, {}));
 if (typeof localStorage !== "undefined") {
   const s = wtStorage.get(WT_KEYS.session, null);
@@ -1213,6 +1281,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exportHint = document.getElementById('exportHint');
   const resetContextBtn = document.getElementById('resetContextBtn');
   const progressionGuardToggle = document.getElementById('progressionGuardToggle');
+  const sessionStatusSelect = document.getElementById('sessionStatus');
+  const nextWorkoutMinutesInput = document.getElementById('nextWorkoutMinutes');
   const exerciseStage = document.getElementById('exerciseStage');
   const exerciseStageType = document.getElementById('exerciseStageType');
   const exerciseGoalPanel = document.getElementById('exerciseGoalPanel');
@@ -1691,6 +1761,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       btn.addEventListener('click', () => {
         dayCompare = String(btn.dataset.value || '3');
         wtStorage.set(WT_KEYS.dayCompare, dayCompare);
+        if (dayCompare === 'none' && progressionGuard) {
+          progressionGuard = false;
+          wtStorage.set(WT_KEYS.progressionGuard, false);
+          if (progressionGuardToggle) progressionGuardToggle.checked = false;
+          showToast('Progression guard turned off because comparison is None.');
+        }
         renderDayType();
         updateExportHint();
       });
@@ -1709,7 +1785,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const goalCount = goals.filter((g) => g.active).length;
     const goalText = goalCount ? `Goals: ${goalCount}` : 'Goals: None';
     const progText = progressionGuard ? 'Progression Guard: ON' : 'Progression Guard: OFF';
-    exportHint.textContent = `${day} • ${win} • ${goalText} • ${progText}`;
+    const statusText = sessionStatus === 'complete'
+      ? 'Session: Complete'
+      : `Session: ${SESSION_STATUS_OPTIONS[sessionStatus]}`;
+    const timeText = nextWorkoutMinutes == null
+      ? 'Next time: —'
+      : `Next time: ${nextWorkoutMinutes}m`;
+    exportHint.textContent = `${day} • ${win} • ${goalText} • ${progText} • ${statusText} • ${timeText}`;
   }
   updateExportHint();
 
@@ -1717,8 +1799,58 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     progressionGuardToggle.checked = progressionGuard;
     progressionGuardToggle.addEventListener('change', () => {
       progressionGuard = progressionGuardToggle.checked;
+      if (progressionGuard && dayCompare === 'none') {
+        dayCompare = '3';
+        wtStorage.set(WT_KEYS.dayCompare, dayCompare);
+        renderDayType();
+        showToast('Progression guard will compare the last 3 sessions.');
+      }
       wtStorage.set(WT_KEYS.progressionGuard, progressionGuard);
       updateExportHint();
+    });
+  }
+
+  if (sessionStatusSelect) {
+    sessionStatusSelect.value = sessionStatus;
+    sessionStatusSelect.addEventListener('change', () => {
+      sessionStatus = normalizeSessionStatus(sessionStatusSelect.value);
+      wtStorage.set(WT_KEYS.sessionStatus, {
+        date: getLocalDateString(),
+        value: sessionStatus,
+      });
+      updateExportHint();
+      showToast(`Session status: ${SESSION_STATUS_OPTIONS[sessionStatus]}.`);
+    });
+  }
+
+  if (nextWorkoutMinutesInput) {
+    nextWorkoutMinutesInput.value = nextWorkoutMinutes == null
+      ? ''
+      : String(nextWorkoutMinutes);
+    const syncNextWorkoutMinutes = (finalize = false) => {
+      const rawMinutes = nextWorkoutMinutesInput.value.trim();
+      nextWorkoutMinutes = normalizeWorkoutMinutes(rawMinutes);
+      if (nextWorkoutMinutes == null) {
+        wtStorage.clear(WT_KEYS.nextWorkoutMinutes);
+        if (finalize && rawMinutes) {
+          nextWorkoutMinutesInput.value = '';
+          showToast('Enter 15–360 minutes, or leave it blank.');
+        }
+        updateExportHint();
+        return;
+      }
+      wtStorage.set(WT_KEYS.nextWorkoutMinutes, nextWorkoutMinutes);
+      updateExportHint();
+      if (finalize) {
+        nextWorkoutMinutesInput.value = String(nextWorkoutMinutes);
+        showToast(`Next workout time budget: ${nextWorkoutMinutes} minutes.`);
+      }
+    };
+    nextWorkoutMinutesInput.addEventListener('input', () => {
+      syncNextWorkoutMinutes(false);
+    });
+    nextWorkoutMinutesInput.addEventListener('change', () => {
+      syncNextWorkoutMinutes(true);
     });
   }
 
@@ -1748,18 +1880,25 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   if (resetContextBtn) {
     resetContextBtn.addEventListener('click', async () => {
-      const ok = await confirmModal('Reset Goals, Constraints, Day Type, Compare, and Progression Guard?', { yesText: 'Reset', noText: 'Cancel', title: 'Reset Context' });
+      const ok = await confirmModal('Reset goals, constraints, day type, comparison, progression guard, and planning context?', { yesText: 'Reset', noText: 'Cancel', title: 'Reset Context' });
       if (!ok) return;
       goals = [];
       constraints = { ...DEFAULT_CONSTRAINTS };
       dayType = '';
       dayCompare = 'none';
       progressionGuard = false;
+      sessionStatus = 'complete';
+      nextWorkoutMinutes = null;
       wtStorage.set(WT_KEYS.goals, goals);
       wtStorage.set(WT_KEYS.constraints, constraints);
       wtStorage.set(WT_KEYS.dayType, dayType);
       wtStorage.set(WT_KEYS.dayCompare, dayCompare);
       wtStorage.set(WT_KEYS.progressionGuard, progressionGuard);
+      wtStorage.clear(WT_KEYS.sessionStatus);
+      wtStorage.clear(WT_KEYS.nextWorkoutMinutes);
+      if (sessionStatusSelect) sessionStatusSelect.value = sessionStatus;
+      if (nextWorkoutMinutesInput) nextWorkoutMinutesInput.value = '';
+      if (progressionGuardToggle) progressionGuardToggle.checked = false;
       renderGoals();
       renderConstraintsList();
       renderAvoidAreas();
@@ -3738,6 +3877,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         normalized.exercises,
         includeExerciseGoalProgress,
       ),
+      sessionContext: buildSessionPlanningContext(
+        sessionStatus,
+        nextWorkoutMinutes,
+      ),
     };
 
     let workoutNotes = [];
@@ -3865,13 +4008,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     previousStats.forEach((sess) => {
       (sess.exercises || []).forEach((ex) => {
         if (!ex || !ex.name) return;
-        if (!prevByName.has(ex.name)) prevByName.set(ex.name, ex);
+        const key = exerciseGoalKey(ex.name);
+        if (!prevByName.has(key)) prevByName.set(key, ex);
       });
     });
     const progressionLines = [];
     const nextTargetLines = [];
     (currentStats.exercises || []).forEach((ex) => {
-      const prev = prevByName.get(ex.name);
+      const prev = prevByName.get(exerciseGoalKey(ex.name));
       if (prev) {
         const volChange = formatPercentChange(ex.totalVolume, prev.totalVolume);
         const topChange = formatPercentChange(
@@ -3989,6 +4133,24 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     aiText += `\n`;
 
+    aiText += `SESSION COMPLETION & NEXT-WORKOUT BUDGET\n`;
+    aiText += `- Current session status: ${payload.sessionContext.statusLabel}\n`;
+    if (payload.sessionContext.status === 'time_limited') {
+      aiText += `- Interpretation: Omitted exercises and lower total volume are not regressions. The next plan must be shorter and prioritized rather than cramming missed work into one session.\n`;
+    } else if (payload.sessionContext.status === 'pain_limited') {
+      aiText += `- Interpretation: Do not progress or re-prescribe painful movements without a pain-free alternative and an appropriate stop rule.\n`;
+    } else if (payload.sessionContext.status === 'recovery_limited') {
+      aiText += `- Interpretation: Treat lower output as readiness-limited until comparable recovered-session evidence shows otherwise.\n`;
+    } else if (payload.sessionContext.isIncomplete) {
+      aiText += `- Interpretation: Do not classify omitted exercises or lower session totals as regressions.\n`;
+    }
+    if (payload.sessionContext.nextWorkoutMinutes != null) {
+      aiText += `- Hard time budget for the next workout: ${payload.sessionContext.nextWorkoutMinutes} minutes, including warm-ups and rest.\n`;
+    } else {
+      aiText += `- Next-workout time budget: Not provided. Keep the plan at or below the latest completed comparable session's total workload, show an estimated duration, and separate must-do work from optional work.\n`;
+    }
+    aiText += `\n`;
+
     aiText += `SESSION GOALS & FOCUS\n`;
     if (goalsForExport.length) {
       goalsForExport.forEach((goal) => {
@@ -4033,8 +4195,17 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       aiText += `- No upcoming constraints reported.\n`;
     }
     aiText += `\n`;
+
+    if (includeNotes && workoutNotes.length) {
+      aiText += `WORKOUT NOTES (use these before the automatic guardrails)\n`;
+      workoutNotes.forEach((note) => {
+        aiText += `- ${note}\n`;
+      });
+      aiText += `- A failed attempt is not a completed set or proof of a successful logged best. Reconcile notes about failures, pain, speed, readiness, and time limits before making progression decisions.\n\n`;
+    }
+
     if (progressionGuard) {
-      aiText += `PROGRESSION METRICS (from recent sessions in this chat)\n`;
+      aiText += `PROGRESSION METRICS (from selected app history)\n`;
       if (progressionLines.length) {
         progressionLines.forEach((line) => {
           aiText += `- ${line}\n`;
@@ -4078,14 +4249,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       });
     } else {
       aiText += `- No past data yet to compare.\n\n`;
-    }
-
-    if (includeNotes && workoutNotes.length) {
-      aiText += `WORKOUT NOTES\n`;
-      workoutNotes.forEach((note) => {
-        aiText += `- ${note}\n`;
-      });
-      aiText += `\n`;
     }
 
     aiText += `DETAILED SET LOG\n`;
@@ -4132,9 +4295,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     aiText += `NEXT STEPS REQUEST\n`;
     aiText += `Analyze the session and consistency metrics, flag regressions or PRs, and produce a ready-to-follow next workout. The user should be able to follow it without making programming decisions mid-session.\n`;
     aiText += `1. Insight: Distinguish evidence from inference. Note trends, weak points, and possible fatigue signals without treating mechanical volume or a single session as proof.\n`;
-    aiText += `2. Exact workout: List exercises in order. Separate warm-up/ramp sets from work sets and give exact sets × reps, load or load range, rest time, target RIR/RPE, and one concise technique cue.\n`;
+    aiText += `2. Exact workout: List exercises in order. Separate warm-up/ramp sets from work sets and give exact sets × reps, load or load range, rest time, target RIR/RPE, and one concise technique cue. State warm-up sets, work sets, total logged sets, and a realistic duration estimate based on the prescribed rest periods.\n`;
     aiText += `3. Progression: For every exercise, choose HOLD, ADD REPS, ADD LOAD, REDUCE, or TEST BASELINE and explain why. Do not automatically increase both load and volume. Use realistic equipment increments.\n`;
-    aiText += `4. Autoregulation: Include simple green/yellow/red rules for readiness and a stop/substitution rule for pain or technique breakdown. Ask only for truly missing information that would materially change safety or the plan.\n`;
+    aiText += `4. Feasibility: Obey the hard time budget when supplied. Otherwise, do not expand beyond the latest completed comparable session without a specific recovery-based reason. Put essential work under MUST DO and extra work under OPTIONAL IF TIME; a time-limited prior session must lead to a shorter prioritized plan, not a catch-up marathon.\n`;
+    aiText += `5. Autoregulation: Include simple green/yellow/red rules for readiness and a stop/substitution rule for pain or technique breakdown. Ask only for truly missing information that would materially change safety or the plan.\n`;
 
     if (navigator.clipboard) {
       navigator.clipboard
@@ -4175,15 +4339,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   /* ------------------ UTILS ------------------ */
-  // Local date string in the same format calendar.js uses (YYYY-MM-DD, local time)
-  function getLocalDateString() {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }
-
   // Stable confirm modal to replace native confirm() which may auto-dismiss in some environments
   function formatSec(sec) {
     return formatSecondsHuman(sec);
@@ -4274,6 +4429,7 @@ if (typeof module !== "undefined") {
 module.exports = {
   THEME_PACKS,
   EXERCISE_GOAL_TYPES,
+  SESSION_STATUS_OPTIONS,
   getThemePack,
   canLogSet,
   canLogCardio,
@@ -4298,5 +4454,9 @@ module.exports = {
   prepareExerciseGoalsForExport,
   buildGoalInsight,
   buildStrengthDecisionSupport,
+  normalizeSessionStatus,
+  normalizeWorkoutMinutes,
+  getLocalDateString,
+  buildSessionPlanningContext,
 };
 }
