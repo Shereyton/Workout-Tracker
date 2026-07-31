@@ -4,6 +4,9 @@ const {
   buildExerciseHighlightsForExport,
   computeConsistencyMetricsFromStats,
   buildStrengthDecisionSupport,
+  normalizeWorkoutMinutes,
+  getLocalDateString,
+  buildSessionPlanningContext,
   formatCardioHistoryLine,
   parseYMD,
   formatShortDate,
@@ -155,9 +158,63 @@ describe('export summary helpers', () => {
     expect(decision.nextLoad).toBe(210);
     expect(decision.text).toMatch(/do not increase volume at the same time/);
   });
+
+  it('does not overstate a normal two-rep drop but still flags a major collapse', () => {
+    const normalDrop = computeSessionStats(normalizePayload({
+      exercises: [{
+        name: 'Nautilus Lat Pulldown',
+        sets: [{ weight: 80, reps: 8 }, { weight: 80, reps: 6 }],
+      }],
+    })).exercises[0];
+    const majorDrop = computeSessionStats(normalizePayload({
+      exercises: [{
+        name: 'Life Fitness Pullover',
+        sets: [{ weight: 110, reps: 8 }, { weight: 110, reps: 3 }],
+      }],
+    })).exercises[0];
+
+    expect(buildStrengthDecisionSupport(normalDrop).text).not.toMatch(/large within-session drop/);
+    expect(buildStrengthDecisionSupport(majorDrop).text).toMatch(/large within-session drop/);
+  });
+
+  it('matches comparable exercises despite casing and spacing differences', () => {
+    const current = computeSessionStats(normalizePayload({
+      date: '2026-07-30',
+      exercises: [{
+        name: 'Lat Pulldown Close Grip (MAG Grip)',
+        sets: [{ weight: 210, reps: 4 }],
+      }],
+    }));
+    const previous = computeSessionStats(normalizePayload({
+      date: '2026-07-23',
+      exercises: [{
+        name: '  lat pulldown close grip (mag grip)  ',
+        sets: [{ weight: 195, reps: 5 }],
+      }],
+    }));
+    const highlight = buildExerciseHighlightsForExport(current, [previous])[0];
+
+    expect(highlight.trend).toMatch(/volume vs avg last 1/);
+    expect(highlight.previous[0]).toMatch(/Jul 23/);
+  });
+
+  it('normalizes session completion and a realistic next-workout time budget', () => {
+    expect(normalizeWorkoutMinutes('92.4')).toBe(92);
+    expect(normalizeWorkoutMinutes('8')).toBeNull();
+    expect(buildSessionPlanningContext('time_limited', '90')).toEqual({
+      status: 'time_limited',
+      statusLabel: 'Stopped because time ran out',
+      isIncomplete: true,
+      nextWorkoutMinutes: 90,
+    });
+  });
 });
 
 describe('date and cardio formatting', () => {
+  it('formats a local Date for per-day session context storage', () => {
+    expect(getLocalDateString(new Date(2026, 6, 31, 23, 30))).toBe('2026-07-31');
+  });
+
   it('formats calendar dates without shifting to the prior local day', () => {
     expect(formatShortDate('2025-01-07')).toBe('Jan 7');
   });

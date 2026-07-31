@@ -228,6 +228,19 @@
               <button class="chip-option compare-option" data-value="all">All</button>
             </div>
           </div>
+          <div class="planning-context">
+            <label class="field-label" for="sessionStatus">How today’s session ended</label>
+            <select id="sessionStatus" class="field">
+              <option value="complete">Completed as planned</option>
+              <option value="time_limited">Stopped because time ran out</option>
+              <option value="pain_limited">Stopped because of pain or discomfort</option>
+              <option value="recovery_limited">Reduced because recovery/readiness was poor</option>
+              <option value="other_incomplete">Incomplete for another reason</option>
+            </select>
+            <label class="field-label" for="nextWorkoutMinutes">Time available next workout (minutes)</label>
+            <input type="number" id="nextWorkoutMinutes" class="field" min="15" max="360" step="5" inputmode="numeric" placeholder="Optional, e.g. 90">
+            <p class="empty-hint muted-text">Used to prevent the AI from prescribing a workout that cannot fit your schedule.</p>
+          </div>
         </section>
         <section id="goalsSection" class="context-card" data-reveal>
           <h3>Goals &amp; Focus</h3>
