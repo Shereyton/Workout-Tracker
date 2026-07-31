@@ -1,5 +1,6 @@
 const {
   canLogSet,
+  canLogStrengthEntry,
   canLogCardio,
   normalizeSet,
   normalizePayload,
@@ -13,6 +14,16 @@ describe('canLogSet', () => {
   });
   it('rejects invalid reps', () => {
     expect(canLogSet(50, 0)).toBe(false);
+  });
+});
+
+describe('canLogStrengthEntry', () => {
+  it('allows a failed attempt with weight and zero completed reps', () => {
+    expect(canLogStrengthEntry(295, 0, 'failed_attempt')).toBe(true);
+  });
+
+  it('still rejects zero reps for a completed set', () => {
+    expect(canLogStrengthEntry(295, 0, 'working')).toBe(false);
   });
 });
 
@@ -53,7 +64,7 @@ describe('data normalization', () => {
     expect(norm.exercises[0].sets[0].weight).toBe(20);
     expect(norm.exercises[0].sets[0].reps).toBe(1);
     expect(norm.exercises[0].nextSet).toBe(2);
-    expect(norm.schema).toBe(5);
+    expect(norm.schema).toBe(6);
   });
 });
 

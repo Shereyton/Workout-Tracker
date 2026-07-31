@@ -153,9 +153,34 @@ body.dark .set-item+ .set-item{border-top:1px solid var(--input-border);}
 }
 body.dark .edit-form{background:#29374a;}
 .edit-form .row{display:flex;gap:8px;}
-.edit-form input{margin:0;font-size:14px;padding:8px;border-radius:6px;}
+.edit-form input,.edit-form select{margin:0;font-size:14px;padding:8px;border-radius:6px;min-width:0;}
 .edit-form .row2{display:flex;gap:6px;}
 .edit-form .row2 button{flex:1;}
+
+.accuracy-details{
+  margin:2px 0 14px;
+  border:1px solid var(--input-border);
+  border-radius:14px;
+  background:var(--surface-soft,#f8f9fb);
+  overflow:hidden;
+}
+.accuracy-details summary{
+  padding:12px 14px;
+  cursor:pointer;
+  font-weight:800;
+  list-style-position:inside;
+}
+.accuracy-details summary span{display:block;margin:3px 0 0 20px;color:var(--muted-fg);font-size:11px;font-weight:650;}
+.accuracy-grid,.progression-profile{display:grid;grid-template-columns:1fr 1fr;gap:7px 10px;padding:0 14px 14px;}
+.accuracy-grid .field-label,.progression-profile .field-label{align-self:end;color:var(--muted-fg);font-size:11px;font-weight:750;}
+.accuracy-grid .field,.progression-profile .field{width:100%;margin:0;}
+.progression-profile{padding-top:14px;border-top:1px solid var(--input-border);}
+.progression-profile h3,.progression-profile .inline-row,.progression-profile .btn,.progression-profile .exercise-goal-note{grid-column:1/-1;}
+.progression-profile h3{font-size:14px;margin:0;}
+.progression-profile .btn{margin:2px 0 0;}
+.profile-number{flex:1;min-width:0;color:var(--muted-fg);font-size:10px;font-weight:750;}
+.profile-number .field{margin-top:5px;}
+body.dark .accuracy-details{background:var(--surface-strong);}
 
 .rest-timer{
   background:linear-gradient(135deg,#ff9a9e 0%,#fecfef 100%);
@@ -908,6 +933,8 @@ body.dark .dock-action.is-active{background:linear-gradient(145deg,rgba(114,88,2
   .current-exercise{border-radius:18px;margin-top:10px;}
   .exercise-goal-form{grid-template-columns:1fr;}
   .exercise-goal-form__actions,.exercise-goal-note{grid-column:1;}
+  .accuracy-grid,.progression-profile{grid-template-columns:1fr;}
+  .progression-profile h3,.progression-profile .inline-row,.progression-profile .btn,.progression-profile .exercise-goal-note{grid-column:1;}
   .context-grid{gap:12px;}
   .calendar-day{min-height:39px;padding:7px 3px;font-size:13px;}
   .calendar-nav{gap:5px;}

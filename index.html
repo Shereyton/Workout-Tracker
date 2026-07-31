@@ -174,6 +174,66 @@
         </div>
         <div id="supersetInputs" class="superset-inputs hidden"></div>
 
+        <details id="accuracyDetails" class="accuracy-details">
+          <summary>Set accuracy <span>Optional, improves progression</span></summary>
+          <div id="setAccuracyFields" class="accuracy-grid">
+            <label class="field-label" for="setRole">Set role</label>
+            <select id="setRole" class="field">
+              <option value="working">Working set</option>
+              <option value="warmup">Warm-up</option>
+              <option value="ramp">Ramp set</option>
+              <option value="top_set">Top set</option>
+              <option value="back_off">Back-off set</option>
+              <option value="technique">Technique set</option>
+              <option value="failed_attempt">Failed attempt</option>
+              <option value="unknown">Not classified</option>
+            </select>
+            <label class="field-label" for="setRir">Reps left (RIR)</label>
+            <input type="number" id="setRir" class="field" min="0" max="10" step="0.5" inputmode="decimal" placeholder="Optional, 0–10">
+            <label class="field-label" for="setTechnique">Technique</label>
+            <select id="setTechnique" class="field">
+              <option value="unknown">Not recorded</option>
+              <option value="good">Good / full standard</option>
+              <option value="minor">Minor breakdown</option>
+              <option value="poor">Poor / unsafe</option>
+            </select>
+            <label class="field-label" for="setPain">Pain</label>
+            <select id="setPain" class="field">
+              <option value="unknown">Not recorded</option>
+              <option value="none">No pain</option>
+              <option value="discomfort">Discomfort</option>
+              <option value="stopped">Pain stopped the set</option>
+            </select>
+          </div>
+          <div class="progression-profile">
+            <h3>Saved progression profile</h3>
+            <label class="field-label" for="exercisePurpose">Purpose</label>
+            <select id="exercisePurpose" class="field">
+              <option value="general">General progression</option>
+              <option value="primary_strength">Primary strength lift</option>
+              <option value="secondary_strength">Secondary strength lift</option>
+              <option value="hypertrophy_compound">Hypertrophy compound</option>
+              <option value="hypertrophy_isolation">Hypertrophy isolation</option>
+              <option value="power_skill">Power / skill</option>
+              <option value="rehab_tolerance">Rehab / tolerance</option>
+              <option value="conditioning">Conditioning</option>
+            </select>
+            <div class="inline-row inline-row--tight">
+              <label class="profile-number">Rep range min
+                <input type="number" id="exerciseRepMin" class="field" min="1" max="100" step="1" inputmode="numeric">
+              </label>
+              <label class="profile-number">Rep range max
+                <input type="number" id="exerciseRepMax" class="field" min="1" max="100" step="1" inputmode="numeric">
+              </label>
+              <label class="profile-number">Smallest weight jump
+                <input type="number" id="exerciseLoadStep" class="field" min="0.25" max="100" step="0.25" inputmode="decimal">
+              </label>
+            </div>
+            <button type="button" id="saveExerciseProfile" class="btn btn-secondary">Save Progression Profile</button>
+            <p class="exercise-goal-note">Saved separately for this exercise. The long-term goal never becomes the next-session load automatically.</p>
+          </div>
+        </details>
+
         <button id="logBtn" class="btn btn-primary">Log Set</button>
         <button id="nextExerciseBtn" class="btn btn-secondary">Next Exercise</button>
         <button id="finishBtn" class="btn btn-finish">Finish Workout</button>
