@@ -82,11 +82,13 @@ describe('exercise profile and model-derived strength estimate', () => {
       purpose: 'primary_strength',
       repMin: 1,
       repMax: 5,
+      targetRir: 2.5,
       loadStep: 2.5,
     })).toMatchObject({
       purpose: 'primary_strength',
       repMin: 1,
       repMax: 5,
+      targetRir: 2.5,
       loadStep: 2.5,
     });
   });
@@ -96,6 +98,7 @@ describe('exercise profile and model-derived strength estimate', () => {
     expect(estimate.estimate).toBeGreaterThan(225);
     expect(estimate.uncertainty).toBeGreaterThan(0);
     expect(estimate.lowerBound).toBe(225);
+    expect(estimate.model).toMatch(/Epley, Brzycki, and Lander/);
     expect(estimate.confidence).toBe('MODERATE');
     expect(estimateE1rmFromSet({ weight: 295, reps: 0, role: 'failed_attempt' })).toBeNull();
     expect(estimateE1rmFromSet(qualitySet(100, 12))).toBeNull();
@@ -130,7 +133,60 @@ describe('one-variable progression decisions', () => {
 
     expect(decision.decision).toBe('ADD LOAD');
     expect(decision.nextLoad).toBe(105);
+    expect(decision.predictedMinimumRepsAtNextLoad).toBeGreaterThanOrEqual(8);
+    expect(decision.nextLoadPreservesRepMinimum).toBe(true);
     expect(decision.text).toMatch(/do not add sets at the same time/);
+  });
+
+  it('holds when the equipment jump is predicted to break the saved rep minimum', () => {
+    const largeJumpProfile = { ...profile, loadStep: 20 };
+    const makeStats = (sets) => computeSessionStats({
+      sessionContext: { status: 'complete' },
+      exercises: [{
+        name: 'Machine Press',
+        progressionProfile: largeJumpProfile,
+        sets,
+      }],
+    }).exercises[0];
+    const previous = makeStats([qualitySet(100, 12), qualitySet(100, 12)]);
+    const current = makeStats([qualitySet(100, 12), qualitySet(100, 12)]);
+    const decision = buildStrengthDecisionSupport(current, previous);
+
+    expect(decision.decision).toBe('HOLD');
+    expect(decision.nextLoad).toBe(120);
+    expect(decision.nextLoadPreservesRepMinimum).toBe(false);
+    expect(decision.text).toMatch(/below the 8-rep minimum/);
+  });
+
+  it('requires the saved RIR target before adding load', () => {
+    const higherRirProfile = { ...profile, targetRir: 3 };
+    const makeStats = (sets) => computeSessionStats({
+      sessionContext: { status: 'complete' },
+      exercises: [{
+        name: 'Machine Press',
+        progressionProfile: higherRirProfile,
+        sets,
+      }],
+    }).exercises[0];
+    const previous = makeStats([qualitySet(100, 12), qualitySet(100, 12)]);
+    const current = makeStats([qualitySet(100, 12), qualitySet(100, 12)]);
+
+    expect(buildStrengthDecisionSupport(current, previous).decision).toBe('HOLD');
+  });
+
+  it('treats a 20 percent rep loss across three same-load sets as a screen, not a diagnosis', () => {
+    const current = exerciseStats([
+      qualitySet(100, 10),
+      qualitySet(100, 9),
+      qualitySet(100, 8),
+    ]);
+    const decision = buildStrengthDecisionSupport(current);
+
+    expect(decision.decision).toBe('HOLD');
+    expect(decision.text).toMatch(/conservative 20% fatigue screen/);
+    expect(decision.evidenceTrace.heuristic).toContain(
+      '20% repeated-set rep-loss screen; requires confirmation and is not diagnostic',
+    );
   });
 
   it('holds after a failed attempt and uses the successful top set', () => {

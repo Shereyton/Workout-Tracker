@@ -57,7 +57,7 @@ describe('normalizePayload - mixed exercises', () => {
     expect(norm.totalSets).toBe(
       squat.sets.length + jog.sets.length + sup.sets.length
     );
-    expect(norm.schema).toBe(6);
+    expect(norm.schema).toBe(7);
   });
 
   it('preserves structured session planning context in exported payloads', () => {

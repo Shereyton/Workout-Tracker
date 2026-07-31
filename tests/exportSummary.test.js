@@ -206,6 +206,8 @@ describe('export summary helpers', () => {
       statusLabel: 'Stopped because time ran out',
       isIncomplete: true,
       nextWorkoutMinutes: 90,
+      mustDoTargetMinutes: 81,
+      timeBufferMinutes: 9,
     });
   });
 });
