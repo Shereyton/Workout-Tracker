@@ -35,7 +35,7 @@ function getThemePack(value) {
   return THEME_PACKS[value] || THEME_PACKS.aurora;
 }
 
-const WT_SCHEMA_VERSION = 6;
+const WT_SCHEMA_VERSION = 7;
 
 const EXERCISE_GOAL_TYPES = Object.freeze({
   weight: Object.freeze({ label: 'Weight', unit: 'lbs', step: 0.5 }),
@@ -71,14 +71,14 @@ const PAIN_OPTIONS = Object.freeze({
 });
 
 const EXERCISE_PURPOSES = Object.freeze({
-  general: Object.freeze({ label: 'General progression', repMin: 6, repMax: 12 }),
-  primary_strength: Object.freeze({ label: 'Primary strength lift', repMin: 1, repMax: 5 }),
-  secondary_strength: Object.freeze({ label: 'Secondary strength lift', repMin: 3, repMax: 8 }),
-  hypertrophy_compound: Object.freeze({ label: 'Hypertrophy compound', repMin: 6, repMax: 12 }),
-  hypertrophy_isolation: Object.freeze({ label: 'Hypertrophy isolation', repMin: 8, repMax: 20 }),
-  power_skill: Object.freeze({ label: 'Power / skill', repMin: 1, repMax: 5 }),
-  rehab_tolerance: Object.freeze({ label: 'Rehab / tolerance', repMin: 8, repMax: 15 }),
-  conditioning: Object.freeze({ label: 'Conditioning', repMin: 8, repMax: 20 }),
+  general: Object.freeze({ label: 'General progression', repMin: 6, repMax: 12, targetRir: 2 }),
+  primary_strength: Object.freeze({ label: 'Primary strength lift', repMin: 1, repMax: 5, targetRir: 2 }),
+  secondary_strength: Object.freeze({ label: 'Secondary strength lift', repMin: 3, repMax: 8, targetRir: 2 }),
+  hypertrophy_compound: Object.freeze({ label: 'Hypertrophy compound', repMin: 6, repMax: 12, targetRir: 2 }),
+  hypertrophy_isolation: Object.freeze({ label: 'Hypertrophy isolation', repMin: 8, repMax: 20, targetRir: 2 }),
+  power_skill: Object.freeze({ label: 'Power / skill', repMin: 1, repMax: 5, targetRir: 3 }),
+  rehab_tolerance: Object.freeze({ label: 'Rehab / tolerance', repMin: 8, repMax: 15, targetRir: 3 }),
+  conditioning: Object.freeze({ label: 'Conditioning', repMin: 8, repMax: 20, targetRir: 3 }),
 });
 
 function normalizeSetRole(value) {
@@ -117,6 +117,7 @@ function defaultExerciseProfile(purpose = 'general') {
     purposeLabel: defaults.label,
     repMin: defaults.repMin,
     repMax: defaults.repMax,
+    targetRir: defaults.targetRir,
     loadStep: 5,
   };
 }
@@ -126,6 +127,7 @@ function normalizeExerciseProfile(value) {
   const base = defaultExerciseProfile(source.purpose);
   const repMin = Math.floor(Number(source.repMin));
   const repMax = Math.floor(Number(source.repMax));
+  const targetRir = Number(source.targetRir);
   const loadStep = Number(source.loadStep);
   const safeMin = Number.isFinite(repMin) && repMin >= 1 && repMin <= 100
     ? repMin
@@ -138,6 +140,9 @@ function normalizeExerciseProfile(value) {
     purposeLabel: base.purposeLabel,
     repMin: safeMin,
     repMax: safeMax,
+    targetRir: Number.isFinite(targetRir) && targetRir >= 0 && targetRir <= 10
+      ? Number(targetRir.toFixed(1))
+      : base.targetRir,
     loadStep: Number.isFinite(loadStep) && loadStep >= 0.25 && loadStep <= 100
       ? Number(loadStep.toFixed(2))
       : base.loadStep,
@@ -565,11 +570,14 @@ function getLocalDateString(date = new Date()) {
 function buildSessionPlanningContext(status, nextWorkoutMinutes) {
   const normalizedStatus = normalizeSessionStatus(status);
   const minutes = normalizeWorkoutMinutes(nextWorkoutMinutes);
+  const mustDoTargetMinutes = minutes == null ? null : Math.floor(minutes * 0.9);
   return {
     status: normalizedStatus,
     statusLabel: SESSION_STATUS_OPTIONS[normalizedStatus],
     isIncomplete: normalizedStatus !== 'complete',
     nextWorkoutMinutes: minutes,
+    mustDoTargetMinutes,
+    timeBufferMinutes: minutes == null ? null : minutes - mustDoTargetMinutes,
   };
 }
 
@@ -789,6 +797,68 @@ function describeConstraintsLines(constraints) {
   return lines;
 }
 
+function estimateE1rmEnsemble(weight, effectiveReps, maximumEffectiveReps = 10) {
+  const safeWeight = Number(weight);
+  const safeReps = Number(effectiveReps);
+  if (
+    !Number.isFinite(safeWeight) || safeWeight <= 0
+    || !Number.isFinite(safeReps) || safeReps < 1
+    || safeReps > maximumEffectiveReps
+  ) {
+    return null;
+  }
+  const formulas = safeReps === 1
+    ? [safeWeight, safeWeight, safeWeight]
+    : [
+      safeWeight * (1 + (safeReps / 30)),
+      safeWeight * (36 / (37 - safeReps)),
+      (100 * safeWeight) / (101.3 - (2.67123 * safeReps)),
+    ];
+  const sorted = formulas.slice().sort((a, b) => a - b);
+  const estimate = sorted[1];
+  return {
+    estimate,
+    formulaSpread: (sorted[2] - sorted[0]) / 2,
+  };
+}
+
+function estimateRepsAtLoad(e1rm, load, targetRir = 0) {
+  const max = Number(e1rm);
+  const nextLoad = Number(load);
+  const rir = normalizeRir(targetRir) ?? 0;
+  if (!Number.isFinite(max) || max <= 0 || !Number.isFinite(nextLoad) || nextLoad <= 0) {
+    return null;
+  }
+  const effectiveRepPredictions = [
+    30 * ((max / nextLoad) - 1),
+    37 - ((36 * nextLoad) / max),
+    (101.3 - ((100 * nextLoad) / max)) / 2.67123,
+  ].filter((value) => Number.isFinite(value));
+  if (effectiveRepPredictions.length !== 3) return null;
+  const sorted = effectiveRepPredictions.sort((a, b) => a - b);
+  return Number(Math.max(0, sorted[1] - rir).toFixed(1));
+}
+
+function estimateNextLoadFeasibility(sets, nextLoad, targetRir, repMin) {
+  if (!Array.isArray(sets) || !sets.length) return null;
+  const predictions = sets.map((set) => {
+    const weight = Number(set.weight);
+    const reps = Number(set.reps);
+    const rir = normalizeRir(set.rir);
+    if (rir == null || !Number.isFinite(reps) || reps < 1) return null;
+    const ensemble = estimateE1rmEnsemble(weight, reps + Math.min(4, rir), 15);
+    return ensemble
+      ? estimateRepsAtLoad(ensemble.estimate, nextLoad, targetRir)
+      : null;
+  });
+  if (predictions.some((value) => value == null)) return null;
+  const predictedMinimumReps = Math.min(...predictions);
+  return {
+    predictedMinimumReps,
+    preservesRepMinimum: predictedMinimumReps >= Number(repMin),
+  };
+}
+
 function estimateE1rmFromSet(set) {
   if (!isProgressionSet(set)) return null;
   if (normalizePain(set.pain) === 'stopped' || normalizeTechnique(set.technique) === 'poor') {
@@ -801,18 +871,11 @@ function estimateE1rmFromSet(set) {
     return null;
   }
   const effectiveReps = reps + (rir == null ? 0 : Math.min(4, rir));
-  if (effectiveReps < 1 || effectiveReps > 10) return null;
-  const formulas = effectiveReps === 1
-    ? [weight, weight, weight]
-    : [
-      weight * (1 + (effectiveReps / 30)),
-      weight * (36 / (37 - effectiveReps)),
-      weight * Math.pow(effectiveReps, 0.1),
-    ];
-  const sorted = formulas.slice().sort((a, b) => a - b);
-  const estimate = sorted[1];
+  const ensemble = estimateE1rmEnsemble(weight, effectiveReps, 10);
+  if (!ensemble) return null;
+  const { estimate, formulaSpread } = ensemble;
   const uncertainty = Math.max(
-    (sorted[2] - sorted[0]) / 2,
+    formulaSpread,
     estimate * (effectiveReps <= 3 ? 0.05 : effectiveReps <= 6 ? 0.07 : 0.10),
   );
   const confidence = rir != null && normalizeTechnique(set.technique) === 'good'
@@ -823,6 +886,7 @@ function estimateE1rmFromSet(set) {
     uncertainty: Number(uncertainty.toFixed(1)),
     lowerBound: weight,
     effectiveReps: Number(effectiveReps.toFixed(1)),
+    model: 'Median of Epley, Brzycki, and Lander formulas',
     confidence,
   };
 }
@@ -1026,6 +1090,8 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
     && repDropCount >= 2
     && repDropPercent >= 30
     && finalRepeatedReps < profile.repMin;
+  const possibleRepeatedSetFatigue = repeatedReps.length >= 3
+    && repDropPercent >= 20;
   const nextLoad = Number((topWeight + step).toFixed(2));
   const loadIncreasePercent = topWeight > 0
     ? ((nextLoad - topWeight) / topWeight) * 100
@@ -1062,6 +1128,12 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
   const allRirKnown = validSets.length > 0 && rirValues.length === validSets.length;
   const allPainKnown = validSets.length > 0
     && validSets.every((set) => normalizePain(set.pain) !== 'unknown');
+  const nextLoadFeasibility = estimateNextLoadFeasibility(
+    repeatedTopSets,
+    nextLoad,
+    profile.targetRir,
+    profile.repMin,
+  );
   const allAtTop = validSets.length > 0
     && validSets.every((set) => Number(set.reps) >= profile.repMax);
   const allWithinRange = validSets.length > 0
@@ -1075,6 +1147,20 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
     : [];
   const previousAllAtTop = previousSets.length > 0
     && previousSets.every((set) => Number(set.reps) >= profile.repMax);
+  const previousRirValues = previousSets
+    .map((set) => normalizeRir(set.rir))
+    .filter((value) => value != null)
+    .sort((a, b) => a - b);
+  const previousMedianRir = previousRirValues.length
+    ? previousRirValues[Math.floor(previousRirValues.length / 2)]
+    : null;
+  const previousQualityKnown = previousSets.length > 0
+    && previousSets.every(
+      (set) => normalizeSetRole(set.role) !== 'unknown'
+        && normalizeRir(set.rir) != null
+        && normalizeTechnique(set.technique) === 'good'
+        && normalizePain(set.pain) !== 'unknown',
+    );
   const shortRestLikely = repeatedTopSets.some((set, index) => {
     if (index === 0) return false;
     return Number.isFinite(Number(set.restActual))
@@ -1089,6 +1175,7 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
     && allTechniqueGood
     && allRirKnown
     && allPainKnown
+    && previousQualityKnown
   ) {
     confidence = 'HIGH';
   } else if (hasComparablePrevious && validSets.length) {
@@ -1116,13 +1203,16 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
   } else if (failedAttempts.length) {
     decision = 'HOLD';
     reason = `${failedAttempts.length} failed attempt${failedAttempts.length === 1 ? ' was' : 's were'} recorded. A failed attempt is not a completed set, PR, or reason to add weight; base the next session on the heaviest successful high-quality work.`;
-  } else if (hasLargeRepDrop && shortRestLikely) {
+  } else if ((hasLargeRepDrop || possibleRepeatedSetFatigue) && shortRestLikely) {
     decision = 'INCREASE REST';
     const repSequence = repeatedReps.join('→');
     reason = `reps at ${formatGoalNumber(topWeight)} lbs fell ${repSequence} and actual rest was materially shorter than planned. Restore the prescribed rest before changing load or sets.`;
   } else if (hasLargeRepDrop) {
     const repSequence = repeatedReps.join('→');
     reason = `reps at ${formatGoalNumber(topWeight)} lbs fell ${repSequence}, with the final set below the saved ${profile.repMin}–${profile.repMax} range. Hold load and review rest, effort, and technique; one session does not diagnose fatigue.`;
+  } else if (possibleRepeatedSetFatigue) {
+    const repSequence = repeatedReps.join('→');
+    reason = `reps at ${formatGoalNumber(topWeight)} lbs fell ${repSequence} across at least three same-load sets, crossing a conservative 20% fatigue screen. Hold load and sets, confirm planned rest, and compare another session; this screen is a heuristic, not a diagnosis.`;
   } else if (!hasComparablePrevious) {
     decision = 'TEST BASELINE';
     reason = `this is the first comparable session in the selected history. Repeat a conservative submaximal exposure and record set role, RIR, technique, and pain before making an aggressive change.`;
@@ -1133,11 +1223,31 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
     && previousAllAtTop
     && allRirKnown
     && allPainKnown
-    && medianRir >= 1
+    && medianRir >= profile.targetRir
     && allTechniqueGood
+    && previousQualityKnown
+    && previousMedianRir >= profile.targetRir
+    && nextLoadFeasibility
+    && !nextLoadFeasibility.preservesRepMinimum
+  ) {
+    reason = `two comparable sessions reached the top of the saved range, but the saved ${formatGoalNumber(step)} lb jump predicts only about ${formatGoalNumber(nextLoadFeasibility.predictedMinimumReps)} reps at the saved ${formatGoalNumber(profile.targetRir)} RIR target—below the ${profile.repMin}-rep minimum. Hold the load or change the rep range; do not add sets at the same time.`;
+  } else if (
+    hasComparablePrevious
+    &&
+    allAtTop
+    && previousAllAtTop
+    && allRirKnown
+    && allPainKnown
+    && medianRir >= profile.targetRir
+    && allTechniqueGood
+    && previousQualityKnown
+    && previousMedianRir >= profile.targetRir
   ) {
     decision = 'ADD LOAD';
-    reason = `two comparable sessions reached the top of the saved ${profile.repMin}–${profile.repMax} range with at least 1 RIR and good technique. Add only the saved ${formatGoalNumber(step)} lb increment, return toward the lower end of the range, and do not add sets at the same time.`;
+    const feasibilityText = nextLoadFeasibility
+      ? ` The formula ensemble estimates at least about ${formatGoalNumber(nextLoadFeasibility.predictedMinimumReps)} reps at ${formatGoalNumber(profile.targetRir)} RIR after rounding; this is a conservative feasibility check, not a guarantee.`
+      : ` Load feasibility could not be modeled reliably, so the completed-set evidence—not the estimate—remains the basis for this change.`;
+    reason = `two comparable sessions reached the top of the saved ${profile.repMin}–${profile.repMax} range at or above the saved ${formatGoalNumber(profile.targetRir)} RIR target with good technique. Add only the saved ${formatGoalNumber(step)} lb increment, return toward the lower end of the range, and do not add sets at the same time.${feasibilityText}`;
   } else if (allAtTop) {
     reason = `all progression sets reached the top of the saved ${profile.repMin}–${profile.repMax} range, but another comparable high-quality exposure or missing RIR, technique, or pain evidence is needed before adding load.`;
   } else if (allWithinRange) {
@@ -1156,6 +1266,40 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
     reason = `there is not enough evidence to justify more weight. Match or improve clean reps at this load first, then progress one variable at a time.`;
   }
 
+  const missingEvidence = [];
+  if (!hasComparablePrevious) missingEvidence.push('comparable prior session');
+  if (hasComparablePrevious && !previousQualityKnown) {
+    missingEvidence.push('complete RIR, technique, pain, and role data for the prior session');
+  }
+  if (!allRolesKnown) missingEvidence.push('set role');
+  if (!allRirKnown) missingEvidence.push('RIR');
+  if (!allTechniqueGood) missingEvidence.push('confirmed good technique on every eligible set');
+  if (!allPainKnown) missingEvidence.push('pain status');
+  const evidenceTrace = {
+    observed: [
+      `${validSets.length} eligible progression set${validSets.length === 1 ? '' : 's'}`,
+      `Top successful set ${formatGoalNumber(topWeight)} lbs × ${topReps}`,
+      repeatedReps.length > 1
+        ? `Same-load reps ${repeatedReps.join('→')}`
+        : null,
+    ].filter(Boolean),
+    estimated: [
+      current.e1rm
+        ? `Model-derived e1RM ${formatGoalNumber(current.e1rm.estimate)} ± ${formatGoalNumber(current.e1rm.uncertainty)} lbs`
+        : null,
+      nextLoadFeasibility
+        ? `About ${formatGoalNumber(nextLoadFeasibility.predictedMinimumReps)} minimum reps predicted at ${formatGoalNumber(profile.targetRir)} RIR after the saved load jump`
+        : null,
+    ].filter(Boolean),
+    heuristic: [
+      'Progress one primary variable at a time',
+      possibleRepeatedSetFatigue
+        ? '20% repeated-set rep-loss screen; requires confirmation and is not diagnostic'
+        : null,
+    ].filter(Boolean),
+    missing: missingEvidence,
+  };
+
   return {
     decision,
     topWeight,
@@ -1163,11 +1307,15 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
     repeatedReps,
     repDropPercent: Number(repDropPercent.toFixed(1)),
     repRange: [profile.repMin, profile.repMax],
+    targetRir: profile.targetRir,
     medianRir,
     confidence,
     e1rm: current.e1rm || null,
     nextLoad,
+    predictedMinimumRepsAtNextLoad: nextLoadFeasibility?.predictedMinimumReps ?? null,
+    nextLoadPreservesRepMinimum: nextLoadFeasibility?.preservesRepMinimum ?? null,
     loadIncreasePercent: Number(loadIncreasePercent.toFixed(1)),
+    evidenceTrace,
     text: `${current.name} – ${decision} (${confidence} confidence): ${reason}${current.e1rm
       ? ` Model-derived e1RM range: ${formatGoalNumber(Math.max(current.e1rm.lowerBound, current.e1rm.estimate - current.e1rm.uncertainty))}–${formatGoalNumber(current.e1rm.estimate + current.e1rm.uncertainty)} lbs (${current.e1rm.confidence} estimate confidence; not a tested max).`
       : ''}`,
@@ -1650,6 +1798,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exercisePurposeInput = document.getElementById('exercisePurpose');
   const exerciseRepMinInput = document.getElementById('exerciseRepMin');
   const exerciseRepMaxInput = document.getElementById('exerciseRepMax');
+  const exerciseTargetRirInput = document.getElementById('exerciseTargetRir');
   const exerciseLoadStepInput = document.getElementById('exerciseLoadStep');
   const saveExerciseProfileBtn = document.getElementById('saveExerciseProfile');
   const exerciseStage = document.getElementById('exerciseStage');
@@ -3254,6 +3403,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     exercisePurposeInput.value = profile.purpose;
     exerciseRepMinInput.value = String(profile.repMin);
     exerciseRepMaxInput.value = String(profile.repMax);
+    exerciseTargetRirInput.value = String(profile.targetRir);
     exerciseLoadStepInput.value = String(profile.loadStep);
 
     const failedOption = setRoleInput.querySelector('option[value="failed_attempt"]');
@@ -3301,6 +3451,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const defaults = defaultExerciseProfile(exercisePurposeInput.value);
       exerciseRepMinInput.value = String(defaults.repMin);
       exerciseRepMaxInput.value = String(defaults.repMax);
+      exerciseTargetRirInput.value = String(defaults.targetRir);
       if (!exerciseLoadStepInput.value) exerciseLoadStepInput.value = String(defaults.loadStep);
     });
   }
@@ -3310,19 +3461,22 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       if (!currentExercise || currentExercise.isCardio) return;
       const repMin = Math.floor(Number(exerciseRepMinInput.value));
       const repMax = Math.floor(Number(exerciseRepMaxInput.value));
+      const targetRir = Number(exerciseTargetRirInput.value);
       const loadStep = Number(exerciseLoadStepInput.value);
       if (
         !Number.isFinite(repMin) || !Number.isFinite(repMax)
         || repMin < 1 || repMax < repMin || repMax > 100
+        || !Number.isFinite(targetRir) || targetRir < 0 || targetRir > 10
         || !Number.isFinite(loadStep) || loadStep < 0.25 || loadStep > 100
       ) {
-        showToast('Use a valid rep range and a 0.25–100 lb load jump.');
+        showToast('Use a valid rep range, 0–10 RIR target, and 0.25–100 lb load jump.');
         return;
       }
       const profile = normalizeExerciseProfile({
         purpose: exercisePurposeInput.value,
         repMin,
         repMax,
+        targetRir,
         loadStep,
       });
       const key = exerciseGoalKey(currentExercise.name);
@@ -4584,6 +4738,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     });
     const progressionLines = [];
     const nextTargetLines = [];
+    const progressionDecisions = [];
     (currentStats.exercises || []).forEach((ex) => {
       const prev = prevByName.get(exerciseGoalKey(ex.name));
       if (prev) {
@@ -4607,8 +4762,22 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
 
       const decisionSupport = buildStrengthDecisionSupport(ex, prev);
-      if (decisionSupport) nextTargetLines.push(decisionSupport.text);
+      if (decisionSupport) {
+        nextTargetLines.push(decisionSupport.text);
+        progressionDecisions.push({
+          exercise: ex.name,
+          primaryAction: decisionSupport.decision,
+          confidence: decisionSupport.confidence,
+          repRange: decisionSupport.repRange,
+          targetRir: decisionSupport.targetRir,
+          nextLoad: decisionSupport.nextLoad,
+          predictedMinimumRepsAtNextLoad: decisionSupport.predictedMinimumRepsAtNextLoad,
+          nextLoadPreservesRepMinimum: decisionSupport.nextLoadPreservesRepMinimum,
+          evidenceTrace: decisionSupport.evidenceTrace,
+        });
+      }
     });
+    if (progressionDecisions.length) payload.progressionDecisions = progressionDecisions;
 
     const jsonStr = JSON.stringify(payload, null, 2);
     triggerDownload(
@@ -4731,6 +4900,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     if (payload.sessionContext.nextWorkoutMinutes != null) {
       aiText += `- Hard time budget for the next workout: ${payload.sessionContext.nextWorkoutMinutes} minutes, including warm-ups and rest.\n`;
+      aiText += `- MUST DO duration target: at most ${payload.sessionContext.mustDoTargetMinutes} minutes, leaving ${payload.sessionContext.timeBufferMinutes} minutes for normal setup and transition uncertainty. OPTIONAL work may use only genuinely remaining time.\n`;
     } else {
       aiText += `- Next-workout time budget: Not provided. Keep the plan at or below the latest completed comparable session's total workload, show an estimated duration, and separate must-do work from optional work.\n`;
     }
@@ -4771,7 +4941,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (strengthProfiles.length) {
       strengthProfiles.forEach((exercise) => {
         const profile = normalizeExerciseProfile(exercise.progressionProfile);
-        aiText += `- ${exercise.name}: ${profile.purposeLabel}; target ${profile.repMin}–${profile.repMax} reps; smallest load jump ${formatGoalNumber(profile.loadStep)} lbs.\n`;
+        aiText += `- ${exercise.name}: ${profile.purposeLabel}; target ${profile.repMin}–${profile.repMax} reps at ${formatGoalNumber(profile.targetRir)} RIR; smallest load jump ${formatGoalNumber(profile.loadStep)} lbs.\n`;
       });
     } else {
       aiText += `- No strength exercise profiles in this session.\n`;
@@ -4817,7 +4987,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       aiText += `PROGRESSION GUARD (MANDATORY IF INCLUDED)\n`;
       aiText += `- Prevent true stagnation without forcing load increases. Progress may be more load, more clean reps, better range of motion, improved technique, appropriate rest, or lower effort at the same work.\n`;
       aiText += `- Compare volume, top-set load/reps, repeated-load rep drop, and recent sessions. A deliberate hold or deload is valid when fatigue, recovery, pain, or insufficient evidence makes an increase inappropriate.\n`;
-      aiText += `- Increase one primary variable at a time. Add load only after the prescribed work is completed cleanly and repeatably; round to equipment the user can actually load.\n\n`;
+      aiText += `- Increase one primary variable at a time. Add load only after the prescribed work is completed cleanly and repeatably at the saved RIR target; round to equipment the user can actually load and check whether that jump can reasonably preserve the saved rep minimum. Treat that formula check as a conservative estimate, never a guarantee.\n\n`;
     }
 
     if (nextTargetLines.length) {
@@ -4902,7 +5072,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     aiText += `1. Insight: Distinguish evidence from inference. Note trends, weak points, and possible fatigue signals without treating mechanical volume or a single session as proof.\n`;
     aiText += `2. Exact workout: List exercises in order. Separate warm-up/ramp sets from work sets and give exact sets × reps, load or load range, rest time, target RIR/RPE, and one concise technique cue. State warm-up sets, work sets, total logged sets, and a realistic duration estimate based on the prescribed rest periods.\n`;
     aiText += `3. Progression: For every exercise, choose exactly one primary action from HOLD, ADD REPS, ADD LOAD, ADD SET, REDUCE LOAD, REDUCE SETS, INCREASE REST, CHANGE REP RANGE, TEST BASELINE, DELOAD, SUBSTITUTE EXERCISE, or STOP AND SEEK APPROPRIATE GUIDANCE. Explain why. Simultaneous increases in load and sets are prohibited; use the saved equipment increment.\n`;
-    aiText += `4. Feasibility: Obey the hard time budget when supplied. Otherwise, do not expand beyond the latest completed comparable session without a specific recovery-based reason. Put essential work under MUST DO and extra work under OPTIONAL IF TIME; a time-limited prior session must lead to a shorter prioritized plan, not a catch-up marathon.\n`;
+    aiText += `4. Feasibility: Obey the hard time budget when supplied and keep MUST DO work within the exported 90% duration target. Otherwise, do not expand beyond the latest completed comparable session without a specific recovery-based reason. Put essential work under MUST DO and extra work under OPTIONAL IF TIME; a time-limited prior session must lead to a shorter prioritized plan, not a catch-up marathon.\n`;
     aiText += `5. Evidence trace: For every decision, label Observed, Reported, Estimated, Inferred, and Heuristic information separately and give HIGH, MODERATE, LOW, or INSUFFICIENT confidence. Missing data must lower confidence rather than being invented.\n`;
     aiText += `6. Autoregulation: Include simple green/yellow/red rules for readiness and a stop/substitution rule for pain or technique breakdown. Ask only for truly missing information that would materially change safety or the plan.\n`;
     aiText += `7. Final validation: The required plan is invalid if it exceeds the time budget, counts failed/warm-up sets as successful working sets, uses the long-term goal as the next load, prescribes catch-up volume, or recommends ADD LOAD/ADD SET for a pain-limited movement.\n`;
@@ -5059,6 +5229,9 @@ module.exports = {
   formatSetContext,
   normalizePayload,
   computeSessionStats,
+  estimateE1rmEnsemble,
+  estimateRepsAtLoad,
+  estimateNextLoadFeasibility,
   estimateE1rmFromSet,
   buildExerciseHighlightsForExport,
   computeConsistencyMetricsFromStats,
