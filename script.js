@@ -19,6 +19,7 @@ const WT_KEYS = {
   prefExerciseGoalProgress: 'wt_pref_exerciseGoalProgressExport',
   sessionStatus: 'wt_sessionStatus',
   nextWorkoutMinutes: 'wt_nextWorkoutMinutes',
+  exerciseProfiles: 'wt_exerciseProfiles',
 };
 
 const THEME_PACKS = Object.freeze({
@@ -34,7 +35,7 @@ function getThemePack(value) {
   return THEME_PACKS[value] || THEME_PACKS.aurora;
 }
 
-const WT_SCHEMA_VERSION = 5;
+const WT_SCHEMA_VERSION = 6;
 
 const EXERCISE_GOAL_TYPES = Object.freeze({
   weight: Object.freeze({ label: 'Weight', unit: 'lbs', step: 0.5 }),
@@ -43,6 +44,121 @@ const EXERCISE_GOAL_TYPES = Object.freeze({
   duration: Object.freeze({ label: 'Duration', unit: 'minutes', step: 0.5 }),
   performance: Object.freeze({ label: 'Performance', unit: 'points', step: 0.1 }),
 });
+
+const SET_ROLE_OPTIONS = Object.freeze({
+  unknown: 'Not classified',
+  warmup: 'Warm-up',
+  ramp: 'Ramp set',
+  working: 'Working set',
+  top_set: 'Top set',
+  back_off: 'Back-off set',
+  technique: 'Technique set',
+  failed_attempt: 'Failed attempt',
+});
+
+const TECHNIQUE_OPTIONS = Object.freeze({
+  unknown: 'Not recorded',
+  good: 'Good / full standard',
+  minor: 'Minor breakdown',
+  poor: 'Poor / unsafe',
+});
+
+const PAIN_OPTIONS = Object.freeze({
+  unknown: 'Not recorded',
+  none: 'No pain',
+  discomfort: 'Discomfort',
+  stopped: 'Pain stopped the set',
+});
+
+const EXERCISE_PURPOSES = Object.freeze({
+  general: Object.freeze({ label: 'General progression', repMin: 6, repMax: 12 }),
+  primary_strength: Object.freeze({ label: 'Primary strength lift', repMin: 1, repMax: 5 }),
+  secondary_strength: Object.freeze({ label: 'Secondary strength lift', repMin: 3, repMax: 8 }),
+  hypertrophy_compound: Object.freeze({ label: 'Hypertrophy compound', repMin: 6, repMax: 12 }),
+  hypertrophy_isolation: Object.freeze({ label: 'Hypertrophy isolation', repMin: 8, repMax: 20 }),
+  power_skill: Object.freeze({ label: 'Power / skill', repMin: 1, repMax: 5 }),
+  rehab_tolerance: Object.freeze({ label: 'Rehab / tolerance', repMin: 8, repMax: 15 }),
+  conditioning: Object.freeze({ label: 'Conditioning', repMin: 8, repMax: 20 }),
+});
+
+function normalizeSetRole(value) {
+  return Object.prototype.hasOwnProperty.call(SET_ROLE_OPTIONS, value)
+    ? value
+    : 'unknown';
+}
+
+function normalizeRir(value) {
+  if (value === '' || value === null || value === undefined) return null;
+  const rir = Number(value);
+  return Number.isFinite(rir) && rir >= 0 && rir <= 10
+    ? Number(rir.toFixed(1))
+    : null;
+}
+
+function normalizeTechnique(value) {
+  return Object.prototype.hasOwnProperty.call(TECHNIQUE_OPTIONS, value)
+    ? value
+    : 'unknown';
+}
+
+function normalizePain(value) {
+  return Object.prototype.hasOwnProperty.call(PAIN_OPTIONS, value)
+    ? value
+    : 'unknown';
+}
+
+function defaultExerciseProfile(purpose = 'general') {
+  const safePurpose = Object.prototype.hasOwnProperty.call(EXERCISE_PURPOSES, purpose)
+    ? purpose
+    : 'general';
+  const defaults = EXERCISE_PURPOSES[safePurpose];
+  return {
+    purpose: safePurpose,
+    purposeLabel: defaults.label,
+    repMin: defaults.repMin,
+    repMax: defaults.repMax,
+    loadStep: 5,
+  };
+}
+
+function normalizeExerciseProfile(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const base = defaultExerciseProfile(source.purpose);
+  const repMin = Math.floor(Number(source.repMin));
+  const repMax = Math.floor(Number(source.repMax));
+  const loadStep = Number(source.loadStep);
+  const safeMin = Number.isFinite(repMin) && repMin >= 1 && repMin <= 100
+    ? repMin
+    : base.repMin;
+  const safeMax = Number.isFinite(repMax) && repMax >= safeMin && repMax <= 100
+    ? repMax
+    : Math.max(safeMin, base.repMax);
+  return {
+    purpose: base.purpose,
+    purposeLabel: base.purposeLabel,
+    repMin: safeMin,
+    repMax: safeMax,
+    loadStep: Number.isFinite(loadStep) && loadStep >= 0.25 && loadStep <= 100
+      ? Number(loadStep.toFixed(2))
+      : base.loadStep,
+  };
+}
+
+function sanitizeExerciseProfiles(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  Object.entries(value).forEach(([name, profile]) => {
+    const key = exerciseGoalKey(name);
+    if (key) out[key] = normalizeExerciseProfile(profile);
+  });
+  return out;
+}
+
+function isProgressionSet(set) {
+  if (!set || set.completed === false || Number(set.reps) <= 0) return false;
+  const role = normalizeSetRole(set.role);
+  return !['warmup', 'ramp', 'technique', 'failed_attempt'].includes(role);
+}
 
 function exerciseGoalKey(name) {
   return trimString(name, 80).toLowerCase().replace(/\s+/g, ' ');
@@ -99,6 +215,11 @@ function getGoalPerformanceFromExercise(exercise, goalType, exerciseName = '') {
   const values = [];
   const record = (set) => {
     if (!set) return;
+    if (
+      set.completed === false
+      || normalizeSetRole(set.role) === 'failed_attempt'
+      || normalizePain(set.pain) === 'stopped'
+    ) return;
     let value = null;
     if (goalType === 'weight') value = Number(set.weight);
     else if (goalType === 'reps') value = Number(set.reps);
@@ -110,7 +231,14 @@ function getGoalPerformanceFromExercise(exercise, goalType, exerciseName = '') {
   if (exercise.isSuperset) {
     exercise.sets.forEach((set) => {
       (set.exercises || []).forEach((inner) => {
-        if (exerciseGoalKey(inner.name) === exerciseGoalKey(exerciseName)) record(inner);
+        if (exerciseGoalKey(inner.name) === exerciseGoalKey(exerciseName)) {
+          record({
+            ...inner,
+            role: set.role,
+            completed: set.completed,
+            pain: set.pain,
+          });
+        }
       });
     });
   } else {
@@ -241,17 +369,40 @@ function coercePositiveNumber(n) {
 function normalizeSet(s) {
   // supports strength set and cardio set
   const out = { ...s };
+  const isStrengthSet = 'weight' in out || 'reps' in out || Array.isArray(out.exercises);
+  if (isStrengthSet) {
+    const requestedRole = out.role ?? out.setRole;
+    const hasZeroCompletedReps = !Array.isArray(out.exercises)
+      && Number(out.reps) === 0;
+    out.role = normalizeSetRole(
+      out.outcome === 'failed' || hasZeroCompletedReps
+        ? 'failed_attempt'
+        : requestedRole,
+    );
+    out.completed = out.role !== 'failed_attempt' && out.completed !== false;
+    out.outcome = out.completed ? 'completed' : 'failed';
+    out.rir = out.completed ? normalizeRir(out.rir) : null;
+    out.technique = normalizeTechnique(out.technique);
+    out.pain = normalizePain(out.pain);
+    delete out.setRole;
+  }
   if ('weight' in out) out.weight = coercePositiveNumber(out.weight);
-  if ('reps' in out)
-    out.reps = Math.max(1, Math.floor(coercePositiveNumber(out.reps)));
+  if ('reps' in out) {
+    out.reps = out.role === 'failed_attempt'
+      ? 0
+      : Math.max(1, Math.floor(coercePositiveNumber(out.reps)));
+  }
   // Normalize superset inner exercises if present
   if (Array.isArray(out.exercises)) {
     out.exercises = out.exercises.map((sub) => {
       const subOut = { ...sub };
       if ('weight' in subOut)
         subOut.weight = coercePositiveNumber(subOut.weight);
-      if ('reps' in subOut)
-        subOut.reps = Math.max(1, Math.floor(coercePositiveNumber(subOut.reps)));
+      if ('reps' in subOut) {
+        subOut.reps = out.role === 'failed_attempt'
+          ? 0
+          : Math.max(1, Math.floor(coercePositiveNumber(subOut.reps)));
+      }
       if ('name' in subOut) subOut.name = String(subOut.name || 'Unknown');
       return subOut;
     });
@@ -273,6 +424,20 @@ function normalizeSet(s) {
   return out;
 }
 
+function formatSetContext(set, { includeRole = true } = {}) {
+  if (!set || typeof set !== 'object') return '';
+  const parts = [];
+  const role = normalizeSetRole(set.role);
+  if (includeRole && role !== 'unknown') parts.push(SET_ROLE_OPTIONS[role]);
+  const rir = normalizeRir(set.rir);
+  if (rir != null) parts.push(`${formatGoalNumber(rir)} RIR`);
+  const technique = normalizeTechnique(set.technique);
+  if (technique !== 'unknown') parts.push(`Technique: ${TECHNIQUE_OPTIONS[technique]}`);
+  const pain = normalizePain(set.pain);
+  if (pain !== 'none' && pain !== 'unknown') parts.push(`Pain: ${PAIN_OPTIONS[pain]}`);
+  return parts.join(' • ');
+}
+
 function normalizeExercise(e) {
   const isSuperset = !!e.isSuperset;
   const isCardio = !!e.isCardio;
@@ -291,6 +456,9 @@ function normalizeExercise(e) {
     sets,
     nextSet: sets.length + 1,
   };
+  base.progressionProfile = normalizeExerciseProfile(
+    e.progressionProfile || e.profile,
+  );
   const goal = normalizeExerciseGoal(e.goal, e.name);
   if (goal) base.goal = goal;
   if (Array.isArray(e.exerciseGoals)) {
@@ -621,49 +789,129 @@ function describeConstraintsLines(constraints) {
   return lines;
 }
 
+function estimateE1rmFromSet(set) {
+  if (!isProgressionSet(set)) return null;
+  if (normalizePain(set.pain) === 'stopped' || normalizeTechnique(set.technique) === 'poor') {
+    return null;
+  }
+  const weight = Number(set.weight);
+  const reps = Number(set.reps);
+  const rir = normalizeRir(set.rir);
+  if (!Number.isFinite(weight) || weight <= 0 || !Number.isFinite(reps) || reps < 1) {
+    return null;
+  }
+  const effectiveReps = reps + (rir == null ? 0 : Math.min(4, rir));
+  if (effectiveReps < 1 || effectiveReps > 10) return null;
+  const formulas = effectiveReps === 1
+    ? [weight, weight, weight]
+    : [
+      weight * (1 + (effectiveReps / 30)),
+      weight * (36 / (37 - effectiveReps)),
+      weight * Math.pow(effectiveReps, 0.1),
+    ];
+  const sorted = formulas.slice().sort((a, b) => a - b);
+  const estimate = sorted[1];
+  const uncertainty = Math.max(
+    (sorted[2] - sorted[0]) / 2,
+    estimate * (effectiveReps <= 3 ? 0.05 : effectiveReps <= 6 ? 0.07 : 0.10),
+  );
+  const confidence = rir != null && normalizeTechnique(set.technique) === 'good'
+    ? (effectiveReps <= 6 ? 'HIGH' : 'MODERATE')
+    : 'LOW';
+  return {
+    estimate: Number(estimate.toFixed(1)),
+    uncertainty: Number(uncertainty.toFixed(1)),
+    lowerBound: weight,
+    effectiveReps: Number(effectiveReps.toFixed(1)),
+    confidence,
+  };
+}
+
 function computeSessionStats(payload) {
   const date = payload && payload.date ? String(payload.date) : null;
   const exercises = Array.isArray(payload && payload.exercises)
     ? payload.exercises
     : [];
   const map = new Map();
-  let totalSets = 0;
+  const totalSets = exercises.reduce(
+    (sum, exercise) => sum + (Array.isArray(exercise?.sets) ? exercise.sets.length : 0),
+    0,
+  );
   let totalVolume = 0;
   let totalCardioDuration = 0;
+  const roleCounts = {
+    warmup: 0,
+    ramp: 0,
+    working: 0,
+    top_set: 0,
+    back_off: 0,
+    technique: 0,
+    failed_attempt: 0,
+    unknown: 0,
+  };
 
-  const ensureEntry = (name, type) => {
+  exercises.forEach((exercise) => {
+    (exercise?.sets || []).forEach((set) => {
+      if (exercise.isCardio) return;
+      roleCounts[normalizeSetRole(set.role)] += 1;
+    });
+  });
+
+  const ensureEntry = (name, type, profile = null) => {
     if (!map.has(name)) {
       map.set(name, {
         name,
         type,
+        profile: type === 'strength' ? normalizeExerciseProfile(profile) : null,
         totalSets: 0,
+        progressionSetCount: 0,
+        failedAttemptCount: 0,
+        unknownSetCount: 0,
         totalVolume: 0,
+        workingVolume: 0,
         totalDuration: 0,
         totalDistance: 0,
         topSet: null,
         bestDescription: null,
         longestDuration: 0,
         strengthSets: [],
+        e1rm: null,
       });
     }
     return map.get(name);
   };
 
-  const recordStrengthSet = (name, weight, reps) => {
-    const entry = ensureEntry(name, 'strength');
+  const recordStrengthSet = (name, rawSet, profile) => {
+    const set = normalizeSet(rawSet);
+    const entry = ensureEntry(name, 'strength', profile);
     entry.totalSets += 1;
-    entry.strengthSets.push({ weight, reps });
-    const vol = weight * reps;
-    entry.totalVolume += vol;
-    totalVolume += vol;
-    totalSets += 1;
+    entry.strengthSets.push(set);
+    const weight = coercePositiveNumber(set.weight);
+    const reps = Math.max(0, Math.floor(coercePositiveNumber(set.reps)));
+    const volume = set.completed === false ? 0 : weight * reps;
+    entry.totalVolume += volume;
+    totalVolume += volume;
+    if (normalizeSetRole(set.role) === 'failed_attempt') entry.failedAttemptCount += 1;
+    if (normalizeSetRole(set.role) === 'unknown') entry.unknownSetCount += 1;
+
+    const validPerformance = isProgressionSet(set)
+      && normalizePain(set.pain) !== 'stopped'
+      && normalizeTechnique(set.technique) !== 'poor';
+    if (!validPerformance) return;
+
+    entry.progressionSetCount += 1;
+    entry.workingVolume += volume;
     if (
-      !entry.topSet ||
-      weight > entry.topSet.weight ||
-      (weight === entry.topSet.weight && reps > entry.topSet.reps)
+      !entry.topSet
+      || weight > entry.topSet.weight
+      || (weight === entry.topSet.weight && reps > entry.topSet.reps)
     ) {
-      entry.topSet = { weight, reps };
-      entry.bestDescription = `${weight} lbs × ${reps} reps`;
+      entry.topSet = { ...set, weight, reps };
+      entry.bestDescription = `${weight} lbs × ${reps} rep${reps === 1 ? '' : 's'}`;
+    }
+    const estimate = estimateE1rmFromSet(set);
+    if (estimate && (!entry.e1rm || estimate.estimate > entry.e1rm.estimate)) {
+      entry.e1rm = estimate;
     }
   };
 
@@ -672,10 +920,7 @@ function computeSessionStats(payload) {
     entry.totalSets += 1;
     entry.totalDuration += duration;
     totalCardioDuration += duration;
-    totalSets += 1;
-    if (Number.isFinite(distance) && distance > 0) {
-      entry.totalDistance += distance;
-    }
+    if (Number.isFinite(distance) && distance > 0) entry.totalDistance += distance;
     if (!entry.bestDescription || duration > entry.longestDuration) {
       entry.longestDuration = duration;
       const distanceText = Number.isFinite(distance) && distance > 0
@@ -689,56 +934,51 @@ function computeSessionStats(payload) {
     if (exercise && exercise.isSuperset) {
       (exercise.sets || []).forEach((set) => {
         (set.exercises || []).forEach((inner) => {
-          const name = trimString(inner.name || exercise.name || 'Exercise', 80);
-          const weight = coercePositiveNumber(inner.weight);
-          const reps = Math.max(1, Math.floor(coercePositiveNumber(inner.reps)));
-          recordStrengthSet(name, weight, reps);
+          recordStrengthSet(
+            trimString(inner.name || exercise.name || 'Exercise', 80),
+            { ...set, ...inner, exercises: undefined },
+            exercise.progressionProfile,
+          );
         });
       });
     } else if (exercise && exercise.isCardio) {
       (exercise.sets || []).forEach((set) => {
-        const duration = Math.max(
-          0,
-          Math.floor(coercePositiveNumber(set.duration)),
-        );
-        let distance = null;
-        if (set.distance !== null && set.distance !== undefined) {
-          const d = Number(set.distance);
-          if (Number.isFinite(d) && d >= 0) distance = d;
-        }
+        const duration = Math.max(0, Math.floor(coercePositiveNumber(set.duration)));
+        const parsedDistance = Number(set.distance);
+        const distance = set.distance != null && Number.isFinite(parsedDistance) && parsedDistance >= 0
+          ? parsedDistance
+          : null;
         recordCardioSet(trimString(exercise.name || 'Cardio', 80), duration, distance);
       });
     } else if (exercise) {
       (exercise.sets || []).forEach((set) => {
-        const weight = coercePositiveNumber(set.weight);
-        const reps = Math.max(1, Math.floor(coercePositiveNumber(set.reps)));
-        recordStrengthSet(trimString(exercise.name || 'Exercise', 80), weight, reps);
+        recordStrengthSet(
+          trimString(exercise.name || 'Exercise', 80),
+          set,
+          exercise.progressionProfile,
+        );
       });
     }
   });
 
-  const stats = Array.from(map.values()).map((entry) => ({
-    name: entry.name,
-    type: entry.type,
-    totalSets: entry.totalSets,
-    totalVolume: entry.totalVolume,
-    totalDuration: entry.totalDuration,
-    totalDistance: entry.totalDistance,
-    topSet: entry.topSet,
-    bestDescription: entry.bestDescription,
-    strengthSets: entry.strengthSets,
-  }));
-
   return {
     date,
+    sessionContext: payload?.sessionContext || null,
     totalSets,
     totalVolume,
     totalCardioDuration,
-    exercises: stats,
+    roleCounts,
+    progressionSetCount: roleCounts.working + roleCounts.top_set + roleCounts.back_off + roleCounts.unknown,
+    warmupSetCount: roleCounts.warmup + roleCounts.ramp,
+    failedAttemptCount: roleCounts.failed_attempt,
+    exercises: Array.from(map.values()).map((entry) => ({
+      ...entry,
+      sessionContext: payload?.sessionContext || null,
+    })),
   };
 }
 
-function buildStrengthDecisionSupport(current, previous = null, loadStep = 5) {
+function buildStrengthDecisionSupport(current, previous = null, loadStep = null) {
   if (
     !current ||
     current.type !== 'strength' ||
@@ -749,15 +989,21 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = 5) {
     return null;
   }
 
+  const profile = normalizeExerciseProfile(current.profile);
   const topWeight = Number(current.topSet.weight);
   const topReps = Number(current.topSet.reps);
   const step = Number.isFinite(Number(loadStep)) && Number(loadStep) > 0
     ? Number(loadStep)
-    : 5;
+    : profile.loadStep;
   const strengthSets = Array.isArray(current.strengthSets)
     ? current.strengthSets
     : [];
-  const repeatedTopSets = strengthSets.filter(
+  const validSets = strengthSets.filter(
+    (set) => isProgressionSet(set)
+      && normalizePain(set.pain) !== 'stopped'
+      && normalizeTechnique(set.technique) !== 'poor',
+  );
+  const repeatedTopSets = validSets.filter(
     (set) => Number(set.weight) === topWeight,
   );
   const repeatedReps = repeatedTopSets
@@ -778,41 +1024,134 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = 5) {
   const repDropCount = Math.max(0, peakRepeatedReps - finalRepeatedReps);
   const hasLargeRepDrop = repeatedReps.length > 1
     && repDropCount >= 2
-    && repDropPercent >= 30;
+    && repDropPercent >= 30
+    && finalRepeatedReps < profile.repMin;
   const nextLoad = Number((topWeight + step).toFixed(2));
   const loadIncreasePercent = topWeight > 0
     ? ((nextLoad - topWeight) / topWeight) * 100
     : 0;
   const previousTopWeight = Number(previous?.topSet?.weight);
   const previousTopReps = Number(previous?.topSet?.reps);
-  const hasComparablePrevious = Number.isFinite(previousTopWeight)
+  const previousStatus = previous?.sessionContext?.status || 'complete';
+  const hasComparablePrevious = previousStatus !== 'pain_limited'
+    && Number.isFinite(previousTopWeight)
     && Number.isFinite(previousTopReps);
   const volumeRatio = hasComparablePrevious && Number(previous.totalVolume) > 0
-    ? Number(current.totalVolume) / Number(previous.totalVolume)
+    ? Number(current.workingVolume) / Number(previous.workingVolume || previous.totalVolume)
     : null;
+
+  const failedAttempts = strengthSets.filter(
+    (set) => normalizeSetRole(set.role) === 'failed_attempt' || set.completed === false,
+  );
+  const painStopped = strengthSets.some((set) => normalizePain(set.pain) === 'stopped');
+  const discomfortRecorded = strengthSets.some(
+    (set) => normalizePain(set.pain) === 'discomfort',
+  );
+  const poorTechnique = strengthSets.some((set) => normalizeTechnique(set.technique) === 'poor');
+  const rirValues = validSets
+    .map((set) => normalizeRir(set.rir))
+    .filter((value) => value != null)
+    .sort((a, b) => a - b);
+  const medianRir = rirValues.length
+    ? rirValues[Math.floor(rirValues.length / 2)]
+    : null;
+  const allRolesKnown = validSets.length > 0
+    && validSets.every((set) => normalizeSetRole(set.role) !== 'unknown');
+  const allTechniqueGood = validSets.length > 0
+    && validSets.every((set) => normalizeTechnique(set.technique) === 'good');
+  const allRirKnown = validSets.length > 0 && rirValues.length === validSets.length;
+  const allPainKnown = validSets.length > 0
+    && validSets.every((set) => normalizePain(set.pain) !== 'unknown');
+  const allAtTop = validSets.length > 0
+    && validSets.every((set) => Number(set.reps) >= profile.repMax);
+  const allWithinRange = validSets.length > 0
+    && validSets.every((set) => Number(set.reps) >= profile.repMin);
+  const previousSets = Array.isArray(previous?.strengthSets)
+    ? previous.strengthSets.filter(
+      (set) => isProgressionSet(set)
+        && normalizePain(set.pain) !== 'stopped'
+        && normalizeTechnique(set.technique) !== 'poor',
+    )
+    : [];
+  const previousAllAtTop = previousSets.length > 0
+    && previousSets.every((set) => Number(set.reps) >= profile.repMax);
+  const shortRestLikely = repeatedTopSets.some((set, index) => {
+    if (index === 0) return false;
+    return Number.isFinite(Number(set.restActual))
+      && Number.isFinite(Number(set.restPlanned))
+      && Number(set.restActual) < Number(set.restPlanned) * 0.85;
+  });
+
+  let confidence = 'LOW';
+  if (
+    hasComparablePrevious
+    && allRolesKnown
+    && allTechniqueGood
+    && allRirKnown
+    && allPainKnown
+  ) {
+    confidence = 'HIGH';
+  } else if (hasComparablePrevious && validSets.length) {
+    confidence = 'MODERATE';
+  }
 
   let decision = 'HOLD';
   let reason = '';
-  if (hasLargeRepDrop) {
+  if (painStopped) {
+    decision = 'STOP AND SEEK APPROPRIATE GUIDANCE';
+    confidence = 'HIGH';
+    reason = `pain stopped at least one set. Do not add load or sets; use a previously established pain-free alternative or seek appropriate assessment for concerning symptoms.`;
+  } else if (current.sessionContext?.status === 'pain_limited') {
+    decision = 'HOLD';
+    reason = `the session was marked pain-limited. Do not progress load or sets from this session; identify the affected movement and use only a previously established pain-free alternative if training continues.`;
+  } else if (discomfortRecorded) {
+    decision = 'HOLD';
+    reason = `discomfort was recorded. Do not add load or sets until the movement is pain-free at the required technique standard; use a previously established pain-free alternative if needed.`;
+  } else if (poorTechnique) {
+    decision = 'REDUCE LOAD';
+    reason = `at least one set was marked poor or unsafe. Reduce load by the smallest practical amount and restore the full technique standard before progressing.`;
+  } else if (current.sessionContext?.status === 'recovery_limited') {
+    decision = 'HOLD';
+    reason = `the session was marked recovery-limited. Preserve or reduce the prior prescription until a comparable recovered session confirms readiness to progress.`;
+  } else if (failedAttempts.length) {
+    decision = 'HOLD';
+    reason = `${failedAttempts.length} failed attempt${failedAttempts.length === 1 ? ' was' : 's were'} recorded. A failed attempt is not a completed set, PR, or reason to add weight; base the next session on the heaviest successful high-quality work.`;
+  } else if (hasLargeRepDrop && shortRestLikely) {
+    decision = 'INCREASE REST';
     const repSequence = repeatedReps.join('→');
-    reason = `reps at ${formatGoalNumber(topWeight)} lbs fell ${repSequence} (${repDropPercent.toFixed(0)}% from best to final set). That is a large within-session drop, so adding load is not supported; review rest, pacing, technique, and the prescribed rep target.`;
+    reason = `reps at ${formatGoalNumber(topWeight)} lbs fell ${repSequence} and actual rest was materially shorter than planned. Restore the prescribed rest before changing load or sets.`;
+  } else if (hasLargeRepDrop) {
+    const repSequence = repeatedReps.join('→');
+    reason = `reps at ${formatGoalNumber(topWeight)} lbs fell ${repSequence}, with the final set below the saved ${profile.repMin}–${profile.repMax} range. Hold load and review rest, effort, and technique; one session does not diagnose fatigue.`;
   } else if (!hasComparablePrevious) {
-    reason = `this is the first comparable session in the selected history. Repeat the load and establish another clean baseline before increasing it.`;
+    decision = 'TEST BASELINE';
+    reason = `this is the first comparable session in the selected history. Repeat a conservative submaximal exposure and record set role, RIR, technique, and pain before making an aggressive change.`;
+  } else if (
+    hasComparablePrevious
+    &&
+    allAtTop
+    && previousAllAtTop
+    && allRirKnown
+    && allPainKnown
+    && medianRir >= 1
+    && allTechniqueGood
+  ) {
+    decision = 'ADD LOAD';
+    reason = `two comparable sessions reached the top of the saved ${profile.repMin}–${profile.repMax} range with at least 1 RIR and good technique. Add only the saved ${formatGoalNumber(step)} lb increment, return toward the lower end of the range, and do not add sets at the same time.`;
+  } else if (allAtTop) {
+    reason = `all progression sets reached the top of the saved ${profile.repMin}–${profile.repMax} range, but another comparable high-quality exposure or missing RIR, technique, or pain evidence is needed before adding load.`;
+  } else if (allWithinRange) {
+    decision = 'ADD REPS';
+    reason = `all progression sets stayed inside the saved ${profile.repMin}–${profile.repMax} range. Keep load and sets stable and target one additional total clean repetition before considering more weight.`;
   } else if (
     topWeight < previousTopWeight ||
-    (volumeRatio !== null && volumeRatio < 0.9)
+    (
+      current.sessionContext?.status === 'complete'
+      && volumeRatio !== null
+      && volumeRatio < 0.9
+    )
   ) {
     reason = `performance was below the previous comparable session. Keep the load stable or reduce it if needed to restore clean, repeatable work before progressing.`;
-  } else if (
-    topWeight === previousTopWeight &&
-    topReps > previousTopReps &&
-    (volumeRatio === null || volumeRatio >= 0.97)
-  ) {
-    decision = 'REVIEW';
-    const loadOption = loadIncreasePercent >= 2 && loadIncreasePercent <= 10
-      ? `${formatGoalNumber(nextLoad)} lbs is the smallest standard load option`
-      : `the next standard load step would be ${loadIncreasePercent.toFixed(1)}%, so add reps instead`;
-    reason = `reps improved at the same top load without a meaningful volume loss. ${loadOption}; increase load only if the prescribed reps were exceeded cleanly and readiness supports it, and do not increase volume at the same time.`;
   } else {
     reason = `there is not enough evidence to justify more weight. Match or improve clean reps at this load first, then progress one variable at a time.`;
   }
@@ -823,9 +1162,15 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = 5) {
     topReps,
     repeatedReps,
     repDropPercent: Number(repDropPercent.toFixed(1)),
+    repRange: [profile.repMin, profile.repMax],
+    medianRir,
+    confidence,
+    e1rm: current.e1rm || null,
     nextLoad,
     loadIncreasePercent: Number(loadIncreasePercent.toFixed(1)),
-    text: `${current.name} – ${decision} ${formatGoalNumber(topWeight)} lbs: ${reason}`,
+    text: `${current.name} – ${decision} (${confidence} confidence): ${reason}${current.e1rm
+      ? ` Model-derived e1RM range: ${formatGoalNumber(Math.max(current.e1rm.lowerBound, current.e1rm.estimate - current.e1rm.uncertainty))}–${formatGoalNumber(current.e1rm.estimate + current.e1rm.uncertainty)} lbs (${current.e1rm.confidence} estimate confidence; not a tested max).`
+      : ''}`,
   };
 }
 
@@ -864,15 +1209,18 @@ function buildExerciseHighlightsForExport(currentStats, previousStats) {
         : `${exercise.totalSets} sets completed`;
       highlight.today = `${description} (${exercise.totalSets} set${exercise.totalSets === 1 ? '' : 's'})`;
 
-      const volumes = recent.map((entry) => entry.stats.totalVolume || 0);
+      const currentProgressionVolume = exercise.workingVolume || exercise.totalVolume || 0;
+      const volumes = recent.map(
+        (entry) => entry.stats.workingVolume || entry.stats.totalVolume || 0,
+      );
       if (volumes.length) {
         const avgVolume =
           volumes.reduce((sum, value) => sum + value, 0) / volumes.length;
         if (avgVolume > 0) {
-          const delta = ((exercise.totalVolume - avgVolume) / avgVolume) * 100;
+          const delta = ((currentProgressionVolume - avgVolume) / avgVolume) * 100;
           highlight.trend = `${delta >= 0 ? '+' : ''}${delta.toFixed(
             1,
-          )}% volume vs avg last ${volumes.length}`;
+          )}% progression volume vs avg last ${volumes.length}`;
         }
         const maxPrevWeight = prevEntries.reduce((max, entry) => {
           const w =
@@ -1045,12 +1393,12 @@ function mergeIntoHistory(payload) {
       for (const [setIdx, s] of ex.sets.entries()) {
         const setNumber = s.set || setIdx + 1;
         for (const sub of s.exercises || []) {
-          lines.push(
-            `${sub.name}: Set ${setNumber} - ${coercePositiveNumber(sub.weight)} lbs × ${Math.max(
+          lines.push(normalizeSetRole(s.role) === 'failed_attempt'
+            ? `${sub.name}: Set ${setNumber} - Failed attempt at ${coercePositiveNumber(sub.weight)} lbs`
+            : `${sub.name}: Set ${setNumber} - ${coercePositiveNumber(sub.weight)} lbs × ${Math.max(
               1,
               Math.floor(coercePositiveNumber(sub.reps)),
-            )} reps`,
-          );
+            )} reps`);
         }
       }
     } else if (ex.isCardio) {
@@ -1060,12 +1408,12 @@ function mergeIntoHistory(payload) {
     } else {
       for (const [setIdx, s] of ex.sets.entries()) {
         const setNumber = s.set || setIdx + 1;
-        lines.push(
-          `${ex.name}: Set ${setNumber} - ${coercePositiveNumber(s.weight)} lbs × ${Math.max(
+        lines.push(normalizeSetRole(s.role) === 'failed_attempt'
+          ? `${ex.name}: Set ${setNumber} - Failed attempt at ${coercePositiveNumber(s.weight)} lbs`
+          : `${ex.name}: Set ${setNumber} - ${coercePositiveNumber(s.weight)} lbs × ${Math.max(
             1,
             Math.floor(coercePositiveNumber(s.reps)),
-          )} reps`,
-        );
+          )} reps`);
       }
     }
   }
@@ -1175,6 +1523,9 @@ let nextWorkoutMinutes = normalizeWorkoutMinutes(
   wtStorage.get(WT_KEYS.nextWorkoutMinutes, null),
 );
 let exerciseGoals = sanitizeExerciseGoals(wtStorage.get(WT_KEYS.exerciseGoals, {}));
+let exerciseProfiles = sanitizeExerciseProfiles(
+  wtStorage.get(WT_KEYS.exerciseProfiles, {}),
+);
 if (typeof localStorage !== "undefined") {
   const s = wtStorage.get(WT_KEYS.session, null);
   const c = wtStorage.get(WT_KEYS.current, null);
@@ -1208,6 +1559,13 @@ let restSetIndex = null;
 
 function canLogSet(w, r) {
   return !Number.isNaN(w) && !Number.isNaN(r) && w >= 0 && w <= 9999 && r > 0 && r <= 999;
+}
+
+function canLogStrengthEntry(w, r, role = 'working') {
+  if (normalizeSetRole(role) === 'failed_attempt') {
+    return Number.isFinite(w) && w >= 0 && w <= 9999 && Number(r) === 0;
+  }
+  return canLogSet(w, r);
 }
 
 function canLogCardio(distance, duration, name) {
@@ -1283,6 +1641,17 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const progressionGuardToggle = document.getElementById('progressionGuardToggle');
   const sessionStatusSelect = document.getElementById('sessionStatus');
   const nextWorkoutMinutesInput = document.getElementById('nextWorkoutMinutes');
+  const accuracyDetails = document.getElementById('accuracyDetails');
+  const setAccuracyFields = document.getElementById('setAccuracyFields');
+  const setRoleInput = document.getElementById('setRole');
+  const setRirInput = document.getElementById('setRir');
+  const setTechniqueInput = document.getElementById('setTechnique');
+  const setPainInput = document.getElementById('setPain');
+  const exercisePurposeInput = document.getElementById('exercisePurpose');
+  const exerciseRepMinInput = document.getElementById('exerciseRepMin');
+  const exerciseRepMaxInput = document.getElementById('exerciseRepMax');
+  const exerciseLoadStepInput = document.getElementById('exerciseLoadStep');
+  const saveExerciseProfileBtn = document.getElementById('saveExerciseProfile');
   const exerciseStage = document.getElementById('exerciseStage');
   const exerciseStageType = document.getElementById('exerciseStageType');
   const exerciseGoalPanel = document.getElementById('exerciseGoalPanel');
@@ -2251,7 +2620,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     const w = parseFloat(weightInput.value);
     const r = parseInt(repsInput.value, 10);
-    logBtn.disabled = !canLogSet(w, r);
+    logBtn.disabled = !canLogStrengthEntry(w, r, setRoleInput?.value);
   }
 
   function getPlannedRestSeconds() {
@@ -2871,6 +3240,101 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     showToast(`Goal removed for ${exerciseName}`);
   });
 
+  function renderAccuracyDetails() {
+    if (!accuracyDetails || !currentExercise) return;
+    const isCardio = !!currentExercise.isCardio;
+    accuracyDetails.classList.toggle('hidden', isCardio);
+    if (isCardio) return;
+
+    const key = exerciseGoalKey(currentExercise.name);
+    const profile = normalizeExerciseProfile(
+      exerciseProfiles[key] || currentExercise.progressionProfile,
+    );
+    currentExercise.progressionProfile = profile;
+    exercisePurposeInput.value = profile.purpose;
+    exerciseRepMinInput.value = String(profile.repMin);
+    exerciseRepMaxInput.value = String(profile.repMax);
+    exerciseLoadStepInput.value = String(profile.loadStep);
+
+    const failedOption = setRoleInput.querySelector('option[value="failed_attempt"]');
+    if (failedOption) failedOption.disabled = !!currentExercise.isSuperset;
+    if (currentExercise.isSuperset && setRoleInput.value === 'failed_attempt') {
+      setRoleInput.value = 'working';
+    }
+  }
+
+  function getPendingSetContext() {
+    const role = normalizeSetRole(setRoleInput?.value || 'working');
+    return {
+      role,
+      outcome: role === 'failed_attempt' ? 'failed' : 'completed',
+      completed: role !== 'failed_attempt',
+      rir: role === 'failed_attempt' ? null : normalizeRir(setRirInput?.value),
+      technique: normalizeTechnique(setTechniqueInput?.value),
+      pain: normalizePain(setPainInput?.value),
+    };
+  }
+
+  function updateSetContextControls() {
+    if (!setRoleInput || !repsInput) return;
+    const failed = setRoleInput.value === 'failed_attempt';
+    repsInput.min = failed ? '0' : '1';
+    repsInput.placeholder = failed ? 'Completed reps (0)' : 'Reps';
+    if (failed) {
+      repsInput.value = '0';
+      setRirInput.value = '';
+      setRirInput.disabled = true;
+    } else {
+      if (repsInput.value === '0') repsInput.value = '';
+      setRirInput.disabled = false;
+    }
+    updateLogButtonState();
+  }
+
+  if (setRoleInput) setRoleInput.addEventListener('change', updateSetContextControls);
+  [setRirInput, setTechniqueInput, setPainInput].forEach((control) => {
+    if (control) control.addEventListener('change', updateLogButtonState);
+  });
+
+  if (exercisePurposeInput) {
+    exercisePurposeInput.addEventListener('change', () => {
+      const defaults = defaultExerciseProfile(exercisePurposeInput.value);
+      exerciseRepMinInput.value = String(defaults.repMin);
+      exerciseRepMaxInput.value = String(defaults.repMax);
+      if (!exerciseLoadStepInput.value) exerciseLoadStepInput.value = String(defaults.loadStep);
+    });
+  }
+
+  if (saveExerciseProfileBtn) {
+    saveExerciseProfileBtn.addEventListener('click', () => {
+      if (!currentExercise || currentExercise.isCardio) return;
+      const repMin = Math.floor(Number(exerciseRepMinInput.value));
+      const repMax = Math.floor(Number(exerciseRepMaxInput.value));
+      const loadStep = Number(exerciseLoadStepInput.value);
+      if (
+        !Number.isFinite(repMin) || !Number.isFinite(repMax)
+        || repMin < 1 || repMax < repMin || repMax > 100
+        || !Number.isFinite(loadStep) || loadStep < 0.25 || loadStep > 100
+      ) {
+        showToast('Use a valid rep range and a 0.25–100 lb load jump.');
+        return;
+      }
+      const profile = normalizeExerciseProfile({
+        purpose: exercisePurposeInput.value,
+        repMin,
+        repMax,
+        loadStep,
+      });
+      const key = exerciseGoalKey(currentExercise.name);
+      exerciseProfiles[key] = profile;
+      currentExercise.progressionProfile = profile;
+      wtStorage.set(WT_KEYS.exerciseProfiles, exerciseProfiles);
+      saveState();
+      showToast(`Progression profile saved for ${currentExercise.name}.`);
+      announce(`Saved progression profile for ${currentExercise.name}`);
+    });
+  }
+
   /* ------------------ SELECT EXERCISE ------------------ */
   exerciseSelect.addEventListener("change", (e) => {
     const chosen = e.target.value;
@@ -2898,7 +3362,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     const meta = allExercises.find((e) => e.name === name);
     const isCardio = (meta && meta.category === "Cardio") || name === "Plank";
-    currentExercise = { name, sets: [], nextSet: 1, isCardio };
+    currentExercise = {
+      name,
+      sets: [],
+      nextSet: 1,
+      isCardio,
+      progressionProfile: normalizeExerciseProfile(
+        exerciseProfiles[exerciseGoalKey(name)],
+      ),
+    };
     supersetInputs.classList.add("hidden");
     if (currentExercise.isCardio) {
       standardInputs.classList.add("hidden");
@@ -2939,6 +3411,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       exercises: [...clean],
       sets: [],
       nextSet: 1,
+      progressionProfile: normalizeExerciseProfile(
+        exerciseProfiles[exerciseGoalKey(clean.join(" + "))],
+      ),
     };
     setupSupersetInputs(clean);
     standardInputs.classList.add("hidden");
@@ -3013,6 +3488,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     exerciseStage.style.setProperty('--set-energy', String(Math.min(1, .2 + ((currentExercise.nextSet || 1) - 1) * .16)));
     setExerciseGoalFormOpen(false);
     renderExerciseGoalPanel();
+    renderAccuracyDetails();
+    updateSetContextControls();
   }
 
   /* ------------------ LOG SET ------------------ */
@@ -3028,6 +3505,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         return;
       }
       const planned = getPlannedRestSeconds();
+      const setContext = getPendingSetContext();
       // Normalize inner exercises and wrap in normalized set object
       const supersetSet = normalizeSet({
         set: currentExercise.nextSet,
@@ -3036,6 +3514,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         ts: Date.now(),
         restPlanned: planned,
         restActual: null,
+        ...setContext,
       });
       currentExercise.sets.push(supersetSet);
       addSetElement(
@@ -3119,9 +3598,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     const w = parseFloat(weightInput.value);
     const r = parseInt(repsInput.value, 10);
+    const setContext = getPendingSetContext();
 
-    if (!canLogSet(w, r)) {
-      showToast("Enter weight & reps");
+    if (!canLogStrengthEntry(w, r, setContext.role)) {
+      showToast(
+        setContext.role === 'failed_attempt'
+          ? 'Enter the attempted weight; completed reps must be 0.'
+          : 'Enter weight & reps',
+      );
       return;
     }
 
@@ -3135,6 +3619,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       ts: Date.now(),
       restPlanned: planned,
       restActual: null,
+      ...setContext,
     });
     currentExercise.sets.push(strengthSet);
 
@@ -3149,6 +3634,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     weightInput.focus();
     weightInput.select();
     repsInput.value = "";
+    setRirInput.value = '';
+    setTechniqueInput.value = 'unknown';
+    setPainInput.value = 'unknown';
+    if (setContext.role === 'failed_attempt') {
+      setRoleInput.value = 'working';
+      updateSetContextControls();
+    }
 
     if (planned != null) {
       startRest(planned, currentExercise.sets.length - 1);
@@ -3176,6 +3668,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         : setObj.restPlanned != null
           ? ` • Rest planned: ${formatSec(setObj.restPlanned)}`
           : "";
+    const setContextInfo = formatSetContext(setObj, {
+      includeRole: normalizeSetRole(setObj.role) !== 'failed_attempt',
+    });
 
     let meta = "";
     if (currentExercise.isSuperset) {
@@ -3187,7 +3682,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const dur = formatSec(setObj.duration);
       meta = dist ? `${dist} in ${dur}` : dur;
     } else {
-      meta = `${setObj.weight} lbs × ${setObj.reps} reps`;
+      meta = normalizeSetRole(setObj.role) === 'failed_attempt'
+        ? `Failed attempt at ${setObj.weight} lbs`
+        : `${setObj.weight} lbs × ${setObj.reps} rep${Number(setObj.reps) === 1 ? '' : 's'}`;
     }
 
     const content = document.createElement("div");
@@ -3198,7 +3695,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     label.textContent = `${currentExercise.name} – Set ${setObj.set}`;
     const metaEl = document.createElement("div");
     metaEl.className = "set-meta";
-    metaEl.textContent = `${meta}${restInfo}`;
+    metaEl.textContent = `${meta}${setContextInfo ? ` • ${setContextInfo}` : ''}${restInfo}`;
     content.appendChild(label);
     content.appendChild(metaEl);
 
@@ -3285,6 +3782,37 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   /* === FIXED EDIT FORM === */
+  function addSetContextEditor(form, set) {
+    if (!form || !set) return;
+    const role = normalizeSetRole(set.role);
+    const technique = normalizeTechnique(set.technique);
+    const pain = normalizePain(set.pain);
+    const roleOptions = Object.entries(SET_ROLE_OPTIONS)
+      .filter(([value]) => !(currentExercise?.isSuperset && value === 'failed_attempt'))
+      .map(([value, label]) => `<option value="${value}"${value === role ? ' selected' : ''}>${label}</option>`)
+      .join('');
+    const techniqueOptions = Object.entries(TECHNIQUE_OPTIONS)
+      .map(([value, label]) => `<option value="${value}"${value === technique ? ' selected' : ''}>${label}</option>`)
+      .join('');
+    const painOptions = Object.entries(PAIN_OPTIONS)
+      .map(([value, label]) => `<option value="${value}"${value === pain ? ' selected' : ''}>${label}</option>`)
+      .join('');
+    const context = document.createElement('div');
+    context.className = 'set-context-editor';
+    context.innerHTML = `
+      <div class="row">
+        <select class="editRole" aria-label="Set role">${roleOptions}</select>
+        <input type="number" class="editRir" value="${normalizeRir(set.rir) ?? ''}" min="0" max="10" step="0.5" placeholder="RIR">
+      </div>
+      <div class="row">
+        <select class="editTechnique" aria-label="Technique quality">${techniqueOptions}</select>
+        <select class="editPain" aria-label="Pain status">${painOptions}</select>
+      </div>
+    `;
+    const actions = form.querySelector('.row2');
+    form.insertBefore(context, actions || null);
+  }
+
   function openEditForm(item, idx) {
     if (item.querySelector(".edit-form")) return;
     const s = currentExercise.sets[idx];
@@ -3382,8 +3910,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         <button type="button" class="btn-mini edit" data-edit-save>Save</button>
         <button type="button" class="btn-mini del"  data-edit-cancel>Cancel</button>
       </div>
-    `;
+      `;
     }
+    if (!currentExercise.isCardio) addSetContextEditor(form, s);
     item.appendChild(form);
     const firstField = form.querySelector("input");
     if (firstField) firstField.focus();
@@ -3450,7 +3979,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           const newPlanned = vPlanned === "" ? null : parseInt(vPlanned, 10);
           const newActual = vActual === "" ? null : parseInt(vActual, 10);
 
-          if (!canLogSet(newW, newR)) {
+          const editRole = form.querySelector('.editRole')?.value || s.role;
+          if (!canLogStrengthEntry(newW, newR, editRole)) {
             showToast("Enter valid weight & reps");
             return;
           }
@@ -3460,11 +3990,38 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
             reps: newR,
             restPlanned: newPlanned,
             restActual: newActual,
+            role: editRole,
+            outcome: editRole === 'failed_attempt' ? 'failed' : 'completed',
+            rir: form.querySelector('.editRir')?.value,
+            technique: form.querySelector('.editTechnique')?.value,
+            pain: form.querySelector('.editPain')?.value,
           });
           s.weight = norm.weight;
           s.reps = norm.reps;
           s.restPlanned = norm.restPlanned;
           s.restActual = norm.restActual;
+          s.role = norm.role;
+          s.completed = norm.completed;
+          s.outcome = norm.outcome;
+          s.rir = norm.rir;
+          s.technique = norm.technique;
+          s.pain = norm.pain;
+        }
+
+        if (currentExercise.isSuperset) {
+          const contextNorm = normalizeSet({
+            exercises: s.exercises,
+            role: form.querySelector('.editRole')?.value,
+            rir: form.querySelector('.editRir')?.value,
+            technique: form.querySelector('.editTechnique')?.value,
+            pain: form.querySelector('.editPain')?.value,
+          });
+          s.role = contextNorm.role;
+          s.completed = contextNorm.completed;
+          s.outcome = contextNorm.outcome;
+          s.rir = contextNorm.rir;
+          s.technique = contextNorm.technique;
+          s.pain = contextNorm.pain;
         }
 
         saveState();
@@ -3534,6 +4091,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   function pushOrMergeExercise(ex) {
     const existing = session.exercises.find((e) => e.name === ex.name);
     if (existing) {
+      existing.progressionProfile = normalizeExerciseProfile(ex.progressionProfile);
       ex.sets.forEach((s) => {
         const norm = normalizeSet({ ...s, set: existing.sets.length + 1 });
         existing.sets.push(norm);
@@ -3544,6 +4102,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         isSuperset: ex.isSuperset || false,
         isCardio: ex.isCardio || false,
         exercises: ex.exercises ? [...ex.exercises] : undefined,
+        progressionProfile: normalizeExerciseProfile(ex.progressionProfile),
         sets: ex.sets.map((s) => normalizeSet({ ...s })),
       });
     }
@@ -3618,7 +4177,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         ex.sets.forEach((set, setIdx) => {
           set.exercises.forEach(sub => {
             const setNumber = set.set || setIdx + 1;
-            lines.push(`${sub.name}: Set ${setNumber} - ${sub.weight} lbs × ${sub.reps} reps`);
+            lines.push(normalizeSetRole(set.role) === 'failed_attempt'
+              ? `${sub.name}: Set ${setNumber} - Failed attempt at ${sub.weight} lbs`
+              : `${sub.name}: Set ${setNumber} - ${sub.weight} lbs × ${sub.reps} rep${Number(sub.reps) === 1 ? '' : 's'}`);
           });
         });
       } else if(ex.isCardio){
@@ -3628,7 +4189,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       } else {
         ex.sets.forEach((set, setIdx) => {
           const setNumber = set.set || setIdx + 1;
-          lines.push(`${ex.name}: Set ${setNumber} - ${set.weight} lbs × ${set.reps} reps`);
+          lines.push(normalizeSetRole(set.role) === 'failed_attempt'
+            ? `${ex.name}: Set ${setNumber} - Failed attempt at ${set.weight} lbs`
+            : `${ex.name}: Set ${setNumber} - ${set.weight} lbs × ${set.reps} rep${Number(set.reps) === 1 ? '' : 's'}`);
         });
       }
     });
@@ -3644,6 +4207,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   function buildExportExercises() {
     const exportExercises = session.exercises.map((e) => ({
       ...e,
+      progressionProfile: normalizeExerciseProfile(e.progressionProfile),
       sets: e.sets.map((s) => normalizeSet({ ...s })),
     }));
     if (currentExercise && currentExercise.sets.length) {
@@ -3651,6 +4215,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         (e) => e.name === currentExercise.name,
       );
       if (exExisting) {
+        exExisting.progressionProfile = normalizeExerciseProfile(
+          currentExercise.progressionProfile,
+        );
         currentExercise.sets.forEach((s) => {
           const norm = normalizeSet({ ...s, set: exExisting.sets.length + 1 });
           exExisting.sets.push(norm);
@@ -3663,6 +4230,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           exercises: currentExercise.exercises
             ? [...currentExercise.exercises]
             : undefined,
+          progressionProfile: normalizeExerciseProfile(
+            currentExercise.progressionProfile,
+          ),
           sets: currentExercise.sets.map((s) => normalizeSet({ ...s })),
         });
       }
@@ -4017,17 +4587,22 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     (currentStats.exercises || []).forEach((ex) => {
       const prev = prevByName.get(exerciseGoalKey(ex.name));
       if (prev) {
-        const volChange = formatPercentChange(ex.totalVolume, prev.totalVolume);
+        const currentProgressionVolume = ex.workingVolume || ex.totalVolume;
+        const previousProgressionVolume = prev.workingVolume || prev.totalVolume;
+        const volChange = formatPercentChange(
+          currentProgressionVolume,
+          previousProgressionVolume,
+        );
         const topChange = formatPercentChange(
           ex.topSet?.weight ?? null,
           prev.topSet?.weight ?? null,
         );
         const prevTop = formatTopSet(prev.topSet);
         const currTop = formatTopSet(ex.topSet);
-        const prevVol = formatVolumeNumber(prev.totalVolume);
-        const currVol = formatVolumeNumber(ex.totalVolume);
+        const prevVol = formatVolumeNumber(previousProgressionVolume);
+        const currVol = formatVolumeNumber(currentProgressionVolume);
         progressionLines.push(
-          `${ex.name} – Volume: ${prevVol} → ${currVol} (${volChange}); Top set: ${prevTop} → ${currTop} (${topChange})`,
+          `${ex.name} – Progression volume: ${prevVol} → ${currVol} (${volChange}); Top successful set: ${prevTop} → ${currTop} (${topChange})`,
         );
       }
 
@@ -4043,7 +4618,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     const csvColumns = [
       "Exercise", "Set", "Weight", "Reps", "Distance", "Duration", "Time",
-      "RestPlanned(sec)", "RestActual(sec)", "GoalType", "GoalValue", "GoalUnit",
+      "RestPlanned(sec)", "RestActual(sec)", "SetRole", "Outcome", "RIR",
+      "Technique", "Pain", "GoalType", "GoalValue", "GoalUnit",
     ];
     if (includeExerciseGoalProgress) {
       csvColumns.push("CurrentBest", "GoalRemaining", "ProgressPercent");
@@ -4084,6 +4660,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
             csv += `${csvRow([
               sub.name, s.set, sub.weight, sub.reps, "", "", s.time,
               s.restPlanned ?? "", s.restActual ?? "",
+              s.role ?? "unknown", s.outcome ?? "completed", s.rir ?? "",
+              s.technique ?? "unknown", s.pain ?? "none",
               ...goalCsvCells(goal),
             ])}\n`;
           });
@@ -4092,6 +4670,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           csv += `${csvRow([
             ex.name, s.set, "", "", s.distance ?? "", s.duration ?? "", s.time,
             s.restPlanned ?? "", s.restActual ?? "",
+            "", "", "", "", "",
             ...goalCsvCells(goal),
           ])}\n`;
         } else {
@@ -4099,6 +4678,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           csv += `${csvRow([
             ex.name, s.set, s.weight, s.reps, "", "", s.time,
             s.restPlanned ?? "", s.restActual ?? "",
+            s.role ?? "unknown", s.outcome ?? "completed", s.rir ?? "",
+            s.technique ?? "unknown", s.pain ?? "none",
             ...goalCsvCells(goal),
           ])}\n`;
         }
@@ -4123,8 +4704,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     let aiText = `WORKOUT DATA - ${payload.date}\n\n`;
     aiText += `SESSION SNAPSHOT\n`;
-    aiText += `- Total logged sets: ${payload.totalSets} (includes warm-ups unless the user identifies them separately)\n`;
+    aiText += `- Total logged sets: ${payload.totalSets} (all logged roles; see classification below)\n`;
     aiText += `- Mechanical volume load: ${formatVolumeNumber(currentStats.totalVolume)} (sum weight × reps; useful for comparison, not a direct measure of fatigue or training quality)\n`;
+    const explicitProgressionSets = currentStats.roleCounts.working
+      + currentStats.roleCounts.top_set
+      + currentStats.roleCounts.back_off;
+    aiText += `- Set classification: ${currentStats.warmupSetCount} warm-up/ramp; ${explicitProgressionSets} working/top/back-off; ${currentStats.roleCounts.technique} technique; ${currentStats.failedAttemptCount} failed; ${currentStats.roleCounts.unknown} unclassified.\n`;
     if (currentStats.totalCardioDuration) {
       aiText += `- Cardio duration: ${formatSecondsHuman(currentStats.totalCardioDuration)}\n`;
     }
@@ -4181,9 +4766,23 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     aiText += `- Treat these as long-term targets, not next-session prescriptions. Use workout history, execution quality, and recovery context; never force an unsafe jump to reach a goal faster.\n\n`;
 
+    aiText += `SAVED EXERCISE PROGRESSION PROFILES\n`;
+    const strengthProfiles = payload.exercises.filter((exercise) => !exercise.isCardio);
+    if (strengthProfiles.length) {
+      strengthProfiles.forEach((exercise) => {
+        const profile = normalizeExerciseProfile(exercise.progressionProfile);
+        aiText += `- ${exercise.name}: ${profile.purposeLabel}; target ${profile.repMin}–${profile.repMax} reps; smallest load jump ${formatGoalNumber(profile.loadStep)} lbs.\n`;
+      });
+    } else {
+      aiText += `- No strength exercise profiles in this session.\n`;
+    }
+    aiText += `- These profiles define the exercise's training purpose and executable progression range. They do not prove readiness for an increase.\n\n`;
+
     aiText += `DATA INTERPRETATION LIMITS\n`;
     aiText += `- A weight goal compares the goal with the heaviest load logged for that exercise; it is not an estimated or tested one-repetition maximum.\n`;
-    aiText += `- Set roles, repetitions in reserve (RIR), pain, technique quality, and equipment increments are not recorded unless the user states them in notes.\n`;
+    aiText += `- Set role, RIR, pain, technique quality, and equipment increment are structured when recorded. Missing values must remain unknown; never infer exact RIR, technique, pain, or equipment equivalence.\n`;
+    aiText += `- Use only completed working/top/back-off sets for progression. Warm-ups, ramp sets, technique sets, painful stopped sets, and failed attempts cannot establish a successful best.\n`;
+    aiText += `- Estimated 1RM is a model-derived range, not a verified maximum. Do not estimate from failures, painful/poor-technique sets, or more than 10 effective reps for strength prescription.\n`;
     aiText += `- A rep drop across repeated-load sets is a fatigue/pacing signal, not a diagnosis. Do not infer readiness or prescribe a load increase from volume alone.\n\n`;
 
     aiText += `SCHEDULE & CONSTRAINTS\n`;
@@ -4276,14 +4875,20 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
                 : "";
           const rest = rp || ra ? (rp ? rp : "") + (ra ? ra : "") : "";
           if (ex.isSuperset) {
-            const parts = (s.exercises || []).map((sub) => `${sub.name}: ${sub.weight} lbs × ${sub.reps} reps`).join(" | ");
-            aiText += `  Set ${s.set}: ${parts}${rest ? rest : ""}\n`;
+            const parts = (s.exercises || []).map((sub) => `${sub.name}: ${sub.weight} lbs × ${sub.reps} rep${Number(sub.reps) === 1 ? '' : 's'}`).join(" | ");
+            const context = formatSetContext(s);
+            aiText += `  Set ${s.set}: ${parts}${context ? ` [${context}]` : ''}${rest ? rest : ""}\n`;
           } else if (ex.isCardio) {
             const dist = s.distance != null ? `${s.distance} mi` : "";
             const dur = formatSec(s.duration);
             aiText += `  Set ${s.set}: ${dist ? dist + " in " : ""}${dur}${rest ? rest : ""}\n`;
           } else {
-            aiText += `  Set ${s.set}: ${s.weight} lbs × ${s.reps} reps${rest ? rest : ""}\n`;
+            const failedAttempt = normalizeSetRole(s.role) === 'failed_attempt';
+            const context = formatSetContext(s, { includeRole: !failedAttempt });
+            const performance = failedAttempt
+              ? `Failed attempt at ${s.weight} lbs`
+              : `${s.weight} lbs × ${s.reps} rep${Number(s.reps) === 1 ? '' : 's'}`;
+            aiText += `  Set ${s.set}: ${performance}${context ? ` [${context}]` : ''}${rest ? rest : ""}\n`;
           }
         });
         aiText += `\n`;
@@ -4296,9 +4901,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     aiText += `Analyze the session and consistency metrics, flag regressions or PRs, and produce a ready-to-follow next workout. The user should be able to follow it without making programming decisions mid-session.\n`;
     aiText += `1. Insight: Distinguish evidence from inference. Note trends, weak points, and possible fatigue signals without treating mechanical volume or a single session as proof.\n`;
     aiText += `2. Exact workout: List exercises in order. Separate warm-up/ramp sets from work sets and give exact sets × reps, load or load range, rest time, target RIR/RPE, and one concise technique cue. State warm-up sets, work sets, total logged sets, and a realistic duration estimate based on the prescribed rest periods.\n`;
-    aiText += `3. Progression: For every exercise, choose HOLD, ADD REPS, ADD LOAD, REDUCE, or TEST BASELINE and explain why. Do not automatically increase both load and volume. Use realistic equipment increments.\n`;
+    aiText += `3. Progression: For every exercise, choose exactly one primary action from HOLD, ADD REPS, ADD LOAD, ADD SET, REDUCE LOAD, REDUCE SETS, INCREASE REST, CHANGE REP RANGE, TEST BASELINE, DELOAD, SUBSTITUTE EXERCISE, or STOP AND SEEK APPROPRIATE GUIDANCE. Explain why. Simultaneous increases in load and sets are prohibited; use the saved equipment increment.\n`;
     aiText += `4. Feasibility: Obey the hard time budget when supplied. Otherwise, do not expand beyond the latest completed comparable session without a specific recovery-based reason. Put essential work under MUST DO and extra work under OPTIONAL IF TIME; a time-limited prior session must lead to a shorter prioritized plan, not a catch-up marathon.\n`;
-    aiText += `5. Autoregulation: Include simple green/yellow/red rules for readiness and a stop/substitution rule for pain or technique breakdown. Ask only for truly missing information that would materially change safety or the plan.\n`;
+    aiText += `5. Evidence trace: For every decision, label Observed, Reported, Estimated, Inferred, and Heuristic information separately and give HIGH, MODERATE, LOW, or INSUFFICIENT confidence. Missing data must lower confidence rather than being invented.\n`;
+    aiText += `6. Autoregulation: Include simple green/yellow/red rules for readiness and a stop/substitution rule for pain or technique breakdown. Ask only for truly missing information that would materially change safety or the plan.\n`;
+    aiText += `7. Final validation: The required plan is invalid if it exceeds the time budget, counts failed/warm-up sets as successful working sets, uses the long-term goal as the next load, prescribes catch-up volume, or recommends ADD LOAD/ADD SET for a pain-limited movement.\n`;
 
     if (navigator.clipboard) {
       navigator.clipboard
@@ -4405,6 +5012,7 @@ function getSessionSnapshot() {
     isSuperset: ex.isSuperset || false,
     isCardio: ex.isCardio || false,
     exercises: ex.exercises ? [...ex.exercises] : undefined,
+    progressionProfile: normalizeExerciseProfile(ex.progressionProfile),
     sets: ex.sets.map((s) => normalizeSet({ ...s })),
   }));
   if (currentExercise) {
@@ -4415,6 +5023,7 @@ function getSessionSnapshot() {
       exercises: currentExercise.exercises
         ? [...currentExercise.exercises]
         : undefined,
+      progressionProfile: normalizeExerciseProfile(currentExercise.progressionProfile),
       sets: currentExercise.sets.map((s) => normalizeSet({ ...s })),
     });
   }
@@ -4430,12 +5039,27 @@ module.exports = {
   THEME_PACKS,
   EXERCISE_GOAL_TYPES,
   SESSION_STATUS_OPTIONS,
+  SET_ROLE_OPTIONS,
+  TECHNIQUE_OPTIONS,
+  PAIN_OPTIONS,
+  EXERCISE_PURPOSES,
   getThemePack,
   canLogSet,
+  canLogStrengthEntry,
   canLogCardio,
   normalizeSet,
+  normalizeSetRole,
+  normalizeRir,
+  normalizeTechnique,
+  normalizePain,
+  defaultExerciseProfile,
+  normalizeExerciseProfile,
+  sanitizeExerciseProfiles,
+  isProgressionSet,
+  formatSetContext,
   normalizePayload,
   computeSessionStats,
+  estimateE1rmFromSet,
   buildExerciseHighlightsForExport,
   computeConsistencyMetricsFromStats,
   appendUniqueHistoryLines,

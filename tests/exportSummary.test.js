@@ -132,12 +132,12 @@ describe('export summary helpers', () => {
     expect(rdlDecision.decision).toBe('HOLD');
     expect(rdlDecision.repeatedReps).toEqual([9, 5, 4]);
     expect(rdlDecision.repDropPercent).toBe(55.6);
-    expect(rdlDecision.text).toMatch(/adding load is not supported/);
-    expect(frontSquatDecision.decision).toBe('HOLD');
+    expect(rdlDecision.text).toMatch(/one session does not diagnose fatigue/);
+    expect(frontSquatDecision.decision).toBe('TEST BASELINE');
     expect(frontSquatDecision.text).toMatch(/first comparable session/);
   });
 
-  it('allows review of the smallest standard load step only after comparable improvement', () => {
+  it('keeps load stable while comparable sessions are still inside the saved rep range', () => {
     const previous = computeSessionStats(normalizePayload({
       date: '2026-07-17',
       exercises: [{
@@ -154,9 +154,9 @@ describe('export summary helpers', () => {
     })).exercises[0];
     const decision = buildStrengthDecisionSupport(current, previous);
 
-    expect(decision.decision).toBe('REVIEW');
+    expect(decision.decision).toBe('ADD REPS');
     expect(decision.nextLoad).toBe(210);
-    expect(decision.text).toMatch(/do not increase volume at the same time/);
+    expect(decision.text).toMatch(/target one additional total clean repetition/);
   });
 
   it('does not overstate a normal two-rep drop but still flags a major collapse', () => {
@@ -174,7 +174,7 @@ describe('export summary helpers', () => {
     })).exercises[0];
 
     expect(buildStrengthDecisionSupport(normalDrop).text).not.toMatch(/large within-session drop/);
-    expect(buildStrengthDecisionSupport(majorDrop).text).toMatch(/large within-session drop/);
+    expect(buildStrengthDecisionSupport(majorDrop).text).toMatch(/final set below the saved/);
   });
 
   it('matches comparable exercises despite casing and spacing differences', () => {
@@ -194,7 +194,7 @@ describe('export summary helpers', () => {
     }));
     const highlight = buildExerciseHighlightsForExport(current, [previous])[0];
 
-    expect(highlight.trend).toMatch(/volume vs avg last 1/);
+    expect(highlight.trend).toMatch(/progression volume vs avg last 1/);
     expect(highlight.previous[0]).toMatch(/Jul 23/);
   });
 
