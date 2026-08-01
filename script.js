@@ -35,7 +35,7 @@ function getThemePack(value) {
   return THEME_PACKS[value] || THEME_PACKS.aurora;
 }
 
-const WT_SCHEMA_VERSION = 7;
+const WT_SCHEMA_VERSION = 8;
 
 const EXERCISE_GOAL_TYPES = Object.freeze({
   weight: Object.freeze({ label: 'Weight', unit: 'lbs', step: 0.5 }),
@@ -79,7 +79,33 @@ const EXERCISE_PURPOSES = Object.freeze({
   power_skill: Object.freeze({ label: 'Power / skill', repMin: 1, repMax: 5, targetRir: 3 }),
   rehab_tolerance: Object.freeze({ label: 'Rehab / tolerance', repMin: 8, repMax: 15, targetRir: 3 }),
   conditioning: Object.freeze({ label: 'Conditioning', repMin: 8, repMax: 20, targetRir: 3 }),
+  hybrid: Object.freeze({ label: 'Balanced strength + muscle', repMin: 5, repMax: 10, targetRir: 2 }),
 });
+
+const GOAL_PATHS = Object.freeze({
+  strength: Object.freeze({
+    label: 'Get stronger',
+    description: 'Prioritize safe weight increases and strength-specific practice.',
+  }),
+  hypertrophy: Object.freeze({
+    label: 'Build muscle',
+    description: 'Prioritize quality reps and productive volume before adding weight.',
+  }),
+  balanced: Object.freeze({
+    label: 'Strength + muscle',
+    description: 'Balance weight, reps, and repeatable working sets.',
+  }),
+  performance: Object.freeze({
+    label: 'Improve performance',
+    description: 'Progress distance, time, or repeatable output.',
+  }),
+});
+
+function normalizeGoalPath(value, goalType = 'weight') {
+  if (goalType === 'distance' || goalType === 'duration') return 'performance';
+  if (Object.prototype.hasOwnProperty.call(GOAL_PATHS, value)) return value;
+  return goalType === 'weight' ? 'strength' : 'balanced';
+}
 
 function normalizeSetRole(value) {
   return Object.prototype.hasOwnProperty.call(SET_ROLE_OPTIONS, value)
@@ -113,6 +139,7 @@ function defaultExerciseProfile(purpose = 'general') {
     : 'general';
   const defaults = EXERCISE_PURPOSES[safePurpose];
   return {
+    mode: 'auto',
     purpose: safePurpose,
     purposeLabel: defaults.label,
     repMin: defaults.repMin,
@@ -136,6 +163,7 @@ function normalizeExerciseProfile(value) {
     ? repMax
     : Math.max(safeMin, base.repMax);
   return {
+    mode: source.mode === 'custom' ? 'custom' : 'auto',
     purpose: base.purpose,
     purposeLabel: base.purposeLabel,
     repMin: safeMin,
@@ -147,6 +175,40 @@ function normalizeExerciseProfile(value) {
       ? Number(loadStep.toFixed(2))
       : base.loadStep,
   };
+}
+
+function isLikelyIsolationExercise(name) {
+  return /(curl|raise|extension|pushdown|fly|calf|leg curl|hamstring curl|pullover)/i
+    .test(String(name || ''));
+}
+
+function buildAutomaticExerciseProfile(exerciseName, goal, previousProfile = null) {
+  const normalizedGoal = normalizeExerciseGoal(goal, exerciseName);
+  const previous = normalizeExerciseProfile(previousProfile);
+  if (!normalizedGoal) {
+    return normalizeExerciseProfile({
+      ...defaultExerciseProfile('general'),
+      mode: 'auto',
+      loadStep: previous.loadStep,
+    });
+  }
+  const goalType = normalizedGoal?.goalType || 'weight';
+  const path = normalizeGoalPath(normalizedGoal?.goalPath, goalType);
+  let purpose = 'general';
+  if (path === 'performance') purpose = 'conditioning';
+  else if (path === 'strength') purpose = 'primary_strength';
+  else if (path === 'balanced') purpose = 'hybrid';
+  else if (path === 'hypertrophy') {
+    purpose = isLikelyIsolationExercise(exerciseName)
+      ? 'hypertrophy_isolation'
+      : 'hypertrophy_compound';
+  }
+  const automatic = defaultExerciseProfile(purpose);
+  return normalizeExerciseProfile({
+    ...automatic,
+    mode: 'auto',
+    loadStep: previous.loadStep,
+  });
 }
 
 function sanitizeExerciseProfiles(value) {
@@ -187,9 +249,12 @@ function normalizeExerciseGoal(value, exerciseName = '', nowIso = new Date().toI
   );
   const remainingDistanceToGoal = Math.max(0, goalValue - currentBestPerformance);
   const meta = EXERCISE_GOAL_TYPES[goalType];
+  const goalPath = normalizeGoalPath(value.goalPath, goalType);
   const normalized = {
     exerciseName: name,
     goalType,
+    goalPath,
+    goalPathLabel: GOAL_PATHS[goalPath].label,
     goalValue,
     ...(goalType === 'weight' ? { goalWeight: goalValue } : {}),
     unit: trimString(value.unit || meta.unit, 20),
@@ -305,6 +370,8 @@ function exerciseGoalForExport(goal, includeProgress = false) {
   const exported = {
     exerciseName: normalized.exerciseName,
     goalType: normalized.goalType,
+    goalPath: normalized.goalPath,
+    goalPathLabel: normalized.goalPathLabel,
     goalValue: normalized.goalValue,
     ...(normalized.goalType === 'weight'
       ? { goalWeight: normalized.goalWeight }
@@ -353,16 +420,17 @@ function buildGoalInsight(goal) {
   if (!normalized) return '';
   const best = normalized.currentBestPerformance;
   const remaining = normalized.remainingDistanceToGoal;
+  const pathLabel = normalized.goalPathLabel;
   if (remaining <= 0) {
-    return `Goal reached with a logged best of ${formatGoalNumber(best)} ${normalized.unit}. Confirm it with controlled, high-quality work before setting the next target.`;
+    return `${pathLabel} coaching is active. Goal reached with a logged best of ${formatGoalNumber(best)} ${normalized.unit}. Confirm it with controlled, high-quality work before setting the next target.`;
   }
   if (best <= 0) {
-    return `Log a baseline set so guidance can measure the path to ${formatGoalNumber(normalized.goalValue)} ${normalized.unit}.`;
+    return `${pathLabel} coaching is active. Log a normal baseline workout, then export it so the AI can calculate the next exact step toward ${formatGoalNumber(normalized.goalValue)} ${normalized.unit}.`;
   }
   if (normalized.goalType === 'weight') {
-    return `Your logged best is ${formatGoalNumber(remaining)} ${normalized.unit} below the long-term goal. Add weight only after the current prescription is completed cleanly and repeatably; use the smallest available increment and progress one variable at a time.`;
+    return `${pathLabel} coaching is active. Your logged best is ${formatGoalNumber(remaining)} ${normalized.unit} below the long-term goal. The AI should use the smallest available increment and progress one variable at a time after clean, repeatable work.`;
   }
-  return `Your logged best is ${formatGoalNumber(remaining)} ${normalized.unit} below the long-term goal. Improve it gradually after the current prescription is completed cleanly and repeatably.`;
+  return `${pathLabel} coaching is active. Your logged best is ${formatGoalNumber(remaining)} ${normalized.unit} below the long-term goal. Keep logging and exporting; the AI should calculate each next step from completed work.`;
 }
 
 // ----- Data Health Utilities -----
@@ -1042,7 +1110,12 @@ function computeSessionStats(payload) {
   };
 }
 
-function buildStrengthDecisionSupport(current, previous = null, loadStep = null) {
+function buildStrengthDecisionSupport(
+  current,
+  previous = null,
+  loadStep = null,
+  additionalHistory = [],
+) {
   if (
     !current ||
     current.type !== 'strength' ||
@@ -1146,7 +1219,14 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
     )
     : [];
   const previousAllAtTop = previousSets.length > 0
-    && previousSets.every((set) => Number(set.reps) >= profile.repMax);
+    && previousStatus !== 'pain_limited'
+    && previousStatus !== 'recovery_limited'
+    && Number(previous?.topSet?.weight) === topWeight
+    && previousSets.every((set) => Number(set.reps) >= profile.repMax)
+    && previousSets.every((set) => normalizePain(set.pain) !== 'discomfort')
+    && !(previous?.strengthSets || []).some(
+      (set) => normalizeSetRole(set.role) === 'failed_attempt' || set.completed === false,
+    );
   const previousRirValues = previousSets
     .map((set) => normalizeRir(set.rir))
     .filter((value) => value != null)
@@ -1161,6 +1241,34 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
         && normalizeTechnique(set.technique) === 'good'
         && normalizePain(set.pain) !== 'unknown',
     );
+  const olderComparableSessions = Array.isArray(additionalHistory)
+    ? additionalHistory
+    : [];
+  const olderTopRangeCount = olderComparableSessions.filter((session) => {
+    if (
+      !session
+      || session.sessionContext?.status === 'pain_limited'
+      || session.sessionContext?.status === 'recovery_limited'
+    ) return false;
+    if (Number(session.topSet?.weight) !== topWeight) return false;
+    const sets = Array.isArray(session.strengthSets)
+      ? session.strengthSets.filter(
+        (set) => isProgressionSet(set)
+          && normalizePain(set.pain) !== 'stopped'
+          && normalizeTechnique(set.technique) !== 'poor',
+      )
+      : [];
+    return sets.length > 0
+      && sets.every((set) => Number(set.reps) >= profile.repMax)
+      && sets.every((set) => normalizePain(set.pain) !== 'discomfort')
+      && !session.strengthSets.some(
+        (set) => normalizeSetRole(set.role) === 'failed_attempt' || set.completed === false,
+      );
+  }).length;
+  const outcomeBasedProgressionReady = profile.mode === 'auto'
+    && allAtTop
+    && previousAllAtTop
+    && olderTopRangeCount >= 1;
   const shortRestLikely = repeatedTopSets.some((set, index) => {
     if (index === 0) return false;
     return Number.isFinite(Number(set.restActual))
@@ -1248,6 +1356,16 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
       ? ` The formula ensemble estimates at least about ${formatGoalNumber(nextLoadFeasibility.predictedMinimumReps)} reps at ${formatGoalNumber(profile.targetRir)} RIR after rounding; this is a conservative feasibility check, not a guarantee.`
       : ` Load feasibility could not be modeled reliably, so the completed-set evidence—not the estimate—remains the basis for this change.`;
     reason = `two comparable sessions reached the top of the saved ${profile.repMin}–${profile.repMax} range at or above the saved ${formatGoalNumber(profile.targetRir)} RIR target with good technique. Add only the saved ${formatGoalNumber(step)} lb increment, return toward the lower end of the range, and do not add sets at the same time.${feasibilityText}`;
+  } else if (
+    outcomeBasedProgressionReady
+    && nextLoadFeasibility
+    && !nextLoadFeasibility.preservesRepMinimum
+  ) {
+    reason = `three comparable successful workouts reached the top of the automatic ${profile.repMin}–${profile.repMax} range, but the saved ${formatGoalNumber(step)} lb jump predicts fewer than ${profile.repMin} reps. Hold this weight and keep building clean reps; the equipment jump is too large for the current range.`;
+  } else if (outcomeBasedProgressionReady) {
+    decision = 'ADD LOAD';
+    confidence = allPainKnown && allTechniqueGood ? 'HIGH' : 'MODERATE';
+    reason = `three comparable successful workouts at ${formatGoalNumber(topWeight)} lbs reached the top of the automatic ${profile.repMin}–${profile.repMax} range. Add only the saved ${formatGoalNumber(step)} lb increment, return to the lower end of the range, and keep sets unchanged. This outcome-based rule lets automatic coaching progress without requiring technical effort ratings.`;
   } else if (allAtTop) {
     reason = `all progression sets reached the top of the saved ${profile.repMin}–${profile.repMax} range, but another comparable high-quality exposure or missing RIR, technique, or pain evidence is needed before adding load.`;
   } else if (allWithinRange) {
@@ -1293,6 +1411,9 @@ function buildStrengthDecisionSupport(current, previous = null, loadStep = null)
     ].filter(Boolean),
     heuristic: [
       'Progress one primary variable at a time',
+      outcomeBasedProgressionReady
+        ? 'Three-exposure outcome fallback used because technical effort data are optional'
+        : null,
       possibleRepeatedSetFatigue
         ? '20% repeated-set rep-loss screen; requires confirmation and is not diagnostic'
         : null,
@@ -1671,6 +1792,14 @@ let nextWorkoutMinutes = normalizeWorkoutMinutes(
   wtStorage.get(WT_KEYS.nextWorkoutMinutes, null),
 );
 let exerciseGoals = sanitizeExerciseGoals(wtStorage.get(WT_KEYS.exerciseGoals, {}));
+if (Object.keys(exerciseGoals).length) {
+  progressionGuard = true;
+  wtStorage.set(WT_KEYS.progressionGuard, true);
+  if (dayCompare === 'none') {
+    dayCompare = '3';
+    wtStorage.set(WT_KEYS.dayCompare, dayCompare);
+  }
+}
 let exerciseProfiles = sanitizeExerciseProfiles(
   wtStorage.get(WT_KEYS.exerciseProfiles, {}),
 );
@@ -1800,6 +1929,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseRepMaxInput = document.getElementById('exerciseRepMax');
   const exerciseTargetRirInput = document.getElementById('exerciseTargetRir');
   const exerciseLoadStepInput = document.getElementById('exerciseLoadStep');
+  const exerciseCoachingModeInput = document.getElementById('exerciseCoachingMode');
+  const customProfileFields = document.getElementById('customProfileFields');
+  const automaticCoachingSummary = document.getElementById('automaticCoachingSummary');
   const saveExerciseProfileBtn = document.getElementById('saveExerciseProfile');
   const exerciseStage = document.getElementById('exerciseStage');
   const exerciseStageType = document.getElementById('exerciseStageType');
@@ -1813,10 +1945,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseGoalRemaining = document.getElementById('exerciseGoalRemaining');
   const exerciseGoalProgressBar = document.getElementById('exerciseGoalProgressBar');
   const exerciseGoalInsight = document.getElementById('exerciseGoalInsight');
+  const exerciseGoalCoachPlan = document.getElementById('exerciseGoalCoachPlan');
   const exerciseGoalForm = document.getElementById('exerciseGoalForm');
   const exerciseGoalExercise = document.getElementById('exerciseGoalExercise');
   const exerciseGoalExerciseLabel = document.getElementById('exerciseGoalExerciseLabel');
   const exerciseGoalType = document.getElementById('exerciseGoalType');
+  const exerciseGoalPath = document.getElementById('exerciseGoalPath');
+  const exerciseGoalPathField = document.getElementById('exerciseGoalPathField');
+  const exerciseGoalPathHint = document.getElementById('exerciseGoalPathHint');
   const exerciseGoalValue = document.getElementById('exerciseGoalValue');
   const exerciseGoalValueLabel = document.getElementById('exerciseGoalValueLabel');
   const saveExerciseGoal = document.getElementById('saveExerciseGoal');
@@ -2300,7 +2436,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     else if (dayCompare === '3') win = 'Compare: Last 3';
     else if (dayCompare === '7') win = 'Compare: Last 7';
     else if (dayCompare === 'all') win = 'Compare: All';
-    const goalCount = goals.filter((g) => g.active).length;
+    const goalCount = goals.filter((g) => g.active).length
+      + Object.keys(exerciseGoals).length;
     const goalText = goalCount ? `Goals: ${goalCount}` : 'Goals: None';
     const progText = progressionGuard ? 'Progression Guard: ON' : 'Progression Guard: OFF';
     const statusText = sessionStatus === 'complete'
@@ -3232,6 +3369,23 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     exerciseGoalValue.placeholder = examples[type] || 'Enter target';
   }
 
+  function updateExerciseGoalPathField() {
+    const goalType = EXERCISE_GOAL_TYPES[exerciseGoalType.value]
+      ? exerciseGoalType.value
+      : 'weight';
+    const isPerformanceGoal = goalType === 'distance' || goalType === 'duration';
+    exerciseGoalPathField.classList.toggle('hidden', isPerformanceGoal);
+    if (isPerformanceGoal) {
+      exerciseGoalPath.value = 'balanced';
+      return;
+    }
+    const path = normalizeGoalPath(exerciseGoalPath.value, goalType);
+    exerciseGoalPath.value = path === 'performance'
+      ? normalizeGoalPath(null, goalType)
+      : path;
+    exerciseGoalPathHint.textContent = GOAL_PATHS[exerciseGoalPath.value].description;
+  }
+
   function refreshExerciseGoalProgress(exercise = currentExercise) {
     if (!exercise) return;
     const snapshots = buildExerciseGoalSnapshots(exercise, exerciseGoals);
@@ -3292,8 +3446,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const goal = exerciseGoals[exerciseGoalKey(name)] || null;
     exerciseGoalHeading.textContent = goal
       ? `${name} goal`
-      : 'Set Goal (Optional)';
-    exerciseGoalAction.textContent = goal ? 'Edit' : 'Add';
+      : 'Set your goal';
+    exerciseGoalAction.textContent = goal ? 'Edit' : 'Start';
     exerciseGoalStatus.classList.toggle('hidden', !goal);
     removeExerciseGoal.classList.toggle('hidden', !goal);
 
@@ -3308,7 +3462,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const track = exerciseGoalProgressBar.parentElement;
       track.setAttribute('aria-valuenow', String(Math.round(goal.progressPercentage)));
       exerciseGoalInsight.textContent = buildGoalInsight(goal);
+      exerciseGoalCoachPlan.textContent = `Automatic plan: ${goal.goalPathLabel}. Log the workout, export it, and follow the next prescription.`;
       exerciseGoalType.value = goal.goalType;
+      exerciseGoalPath.value = goal.goalPath === 'performance'
+        ? 'balanced'
+        : goal.goalPath;
       exerciseGoalValue.value = formatGoalNumber(goal.goalValue);
     } else {
       exerciseGoalBest.textContent = '—';
@@ -3316,9 +3474,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       exerciseGoalRemaining.textContent = '—';
       exerciseGoalProgressBar.style.width = '0%';
       exerciseGoalType.value = currentExercise.isCardio ? 'distance' : 'weight';
+      exerciseGoalPath.value = currentExercise.isCardio ? 'balanced' : 'strength';
       exerciseGoalValue.value = '';
+      exerciseGoalCoachPlan.textContent = '';
     }
     updateExerciseGoalValueField();
+    updateExerciseGoalPathField();
   }
 
   function setExerciseGoalFormOpen(open) {
@@ -3334,7 +3495,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     setExerciseGoalFormOpen(exerciseGoalForm.classList.contains('hidden'));
   });
   exerciseGoalExercise.addEventListener('change', renderExerciseGoalPanel);
-  exerciseGoalType.addEventListener('change', updateExerciseGoalValueField);
+  exerciseGoalType.addEventListener('change', () => {
+    updateExerciseGoalValueField();
+    if (exerciseGoalType.value === 'weight') exerciseGoalPath.value = 'strength';
+    else if (exerciseGoalType.value === 'reps') exerciseGoalPath.value = 'balanced';
+    updateExerciseGoalPathField();
+  });
+  exerciseGoalPath.addEventListener('change', updateExerciseGoalPathField);
   exerciseGoalValue.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
@@ -3344,6 +3511,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   saveExerciseGoal.addEventListener('click', () => {
     const exerciseName = getSelectedExerciseGoalName();
     const goalType = exerciseGoalType.value;
+    const goalPath = normalizeGoalPath(exerciseGoalPath.value, goalType);
     const goalValue = Number(exerciseGoalValue.value);
     if (!exerciseName || !EXERCISE_GOAL_TYPES[goalType] || !Number.isFinite(goalValue) || goalValue <= 0) {
       showToast('Enter a valid goal value');
@@ -3357,6 +3525,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     exerciseGoals[key] = normalizeExerciseGoal({
       exerciseName,
       goalType,
+      goalPath,
       goalValue,
       unit: EXERCISE_GOAL_TYPES[goalType].unit,
       dateCreated: previous ? previous.dateCreated : now,
@@ -3365,11 +3534,33 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         ? Math.max(previous.currentBestPerformance, performance, historicalBest)
         : Math.max(performance, historicalBest),
     }, exerciseName, now);
+    const previousProfile = normalizeExerciseProfile(
+      exerciseProfiles[key] || currentExercise.progressionProfile,
+    );
+    const automaticProfile = buildAutomaticExerciseProfile(
+      exerciseName,
+      exerciseGoals[key],
+      previousProfile,
+    );
+    exerciseProfiles[key] = automaticProfile;
+    if (!currentExercise.isSuperset) currentExercise.progressionProfile = automaticProfile;
+    wtStorage.set(WT_KEYS.exerciseProfiles, exerciseProfiles);
+    progressionGuard = true;
+    wtStorage.set(WT_KEYS.progressionGuard, true);
+    if (progressionGuardToggle) progressionGuardToggle.checked = true;
+    if (dayCompare === 'none') {
+      dayCompare = '3';
+      wtStorage.set(WT_KEYS.dayCompare, dayCompare);
+      renderDayType();
+    }
     persistExerciseGoals();
+    saveState();
     setExerciseGoalFormOpen(false);
     renderExerciseGoalPanel();
+    renderAccuracyDetails();
+    updateExportHint();
     announce(`Saved ${exerciseName} goal`);
-    showToast(`Goal saved for ${exerciseName}`);
+    showToast(`Automatic coaching started for ${exerciseName}.`);
   });
   removeExerciseGoal.addEventListener('click', async () => {
     const exerciseName = getSelectedExerciseGoalName();
@@ -3396,15 +3587,24 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (isCardio) return;
 
     const key = exerciseGoalKey(currentExercise.name);
-    const profile = normalizeExerciseProfile(
+    const goal = exerciseGoals[key] || null;
+    const savedProfile = normalizeExerciseProfile(
       exerciseProfiles[key] || currentExercise.progressionProfile,
     );
+    const profile = savedProfile.mode === 'auto'
+      ? buildAutomaticExerciseProfile(currentExercise.name, goal, savedProfile)
+      : savedProfile;
     currentExercise.progressionProfile = profile;
+    exerciseCoachingModeInput.value = profile.mode;
+    customProfileFields.classList.toggle('hidden', profile.mode !== 'custom');
     exercisePurposeInput.value = profile.purpose;
     exerciseRepMinInput.value = String(profile.repMin);
     exerciseRepMaxInput.value = String(profile.repMax);
     exerciseTargetRirInput.value = String(profile.targetRir);
     exerciseLoadStepInput.value = String(profile.loadStep);
+    automaticCoachingSummary.textContent = goal
+      ? `Automatic ${goal.goalPathLabel} plan: ${profile.repMin}–${profile.repMax} reps, usually stopping with ${formatGoalNumber(profile.targetRir)} clean reps left. You only need to log your workout and export it.`
+      : `No goal is saved yet. The app is using a general ${profile.repMin}–${profile.repMax} rep plan until you set a goal above.`;
 
     const failedOption = setRoleInput.querySelector('option[value="failed_attempt"]');
     if (failedOption) failedOption.disabled = !!currentExercise.isSuperset;
@@ -3456,9 +3656,45 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     });
   }
 
+  if (exerciseCoachingModeInput) {
+    exerciseCoachingModeInput.addEventListener('change', () => {
+      const custom = exerciseCoachingModeInput.value === 'custom';
+      customProfileFields.classList.toggle('hidden', !custom);
+      if (!custom && currentExercise) {
+        const key = exerciseGoalKey(currentExercise.name);
+        const profile = buildAutomaticExerciseProfile(
+          currentExercise.name,
+          exerciseGoals[key],
+          exerciseProfiles[key] || currentExercise.progressionProfile,
+        );
+        exercisePurposeInput.value = profile.purpose;
+        exerciseRepMinInput.value = String(profile.repMin);
+        exerciseRepMaxInput.value = String(profile.repMax);
+        exerciseTargetRirInput.value = String(profile.targetRir);
+        exerciseLoadStepInput.value = String(profile.loadStep);
+      }
+    });
+  }
+
   if (saveExerciseProfileBtn) {
     saveExerciseProfileBtn.addEventListener('click', () => {
       if (!currentExercise || currentExercise.isCardio) return;
+      const key = exerciseGoalKey(currentExercise.name);
+      if (exerciseCoachingModeInput.value === 'auto') {
+        const profile = buildAutomaticExerciseProfile(
+          currentExercise.name,
+          exerciseGoals[key],
+          exerciseProfiles[key] || currentExercise.progressionProfile,
+        );
+        exerciseProfiles[key] = profile;
+        currentExercise.progressionProfile = profile;
+        wtStorage.set(WT_KEYS.exerciseProfiles, exerciseProfiles);
+        saveState();
+        renderAccuracyDetails();
+        showToast(`Automatic coaching is on for ${currentExercise.name}.`);
+        announce(`Automatic coaching enabled for ${currentExercise.name}`);
+        return;
+      }
       const repMin = Math.floor(Number(exerciseRepMinInput.value));
       const repMax = Math.floor(Number(exerciseRepMaxInput.value));
       const targetRir = Number(exerciseTargetRirInput.value);
@@ -3469,23 +3705,24 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         || !Number.isFinite(targetRir) || targetRir < 0 || targetRir > 10
         || !Number.isFinite(loadStep) || loadStep < 0.25 || loadStep > 100
       ) {
-        showToast('Use a valid rep range, 0–10 RIR target, and 0.25–100 lb load jump.');
+        showToast('Check the advanced numbers and try again.');
         return;
       }
       const profile = normalizeExerciseProfile({
+        mode: 'custom',
         purpose: exercisePurposeInput.value,
         repMin,
         repMax,
         targetRir,
         loadStep,
       });
-      const key = exerciseGoalKey(currentExercise.name);
       exerciseProfiles[key] = profile;
       currentExercise.progressionProfile = profile;
       wtStorage.set(WT_KEYS.exerciseProfiles, exerciseProfiles);
       saveState();
-      showToast(`Progression profile saved for ${currentExercise.name}.`);
-      announce(`Saved progression profile for ${currentExercise.name}`);
+      renderAccuracyDetails();
+      showToast(`Custom AI settings saved for ${currentExercise.name}.`);
+      announce(`Saved custom AI settings for ${currentExercise.name}`);
     });
   }
 
@@ -3516,14 +3753,17 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     const meta = allExercises.find((e) => e.name === name);
     const isCardio = (meta && meta.category === "Cardio") || name === "Plank";
+    const key = exerciseGoalKey(name);
+    const savedProfile = normalizeExerciseProfile(exerciseProfiles[key]);
+    const resolvedProfile = savedProfile.mode === 'auto'
+      ? buildAutomaticExerciseProfile(name, exerciseGoals[key], savedProfile)
+      : savedProfile;
     currentExercise = {
       name,
       sets: [],
       nextSet: 1,
       isCardio,
-      progressionProfile: normalizeExerciseProfile(
-        exerciseProfiles[exerciseGoalKey(name)],
-      ),
+      progressionProfile: resolvedProfile,
     };
     supersetInputs.classList.add("hidden");
     if (currentExercise.isCardio) {
@@ -4729,10 +4969,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       payload.exerciseHighlights = sanitizeExerciseHighlights(highlights);
     }
     const prevByName = new Map();
+    const prevHistoryByName = new Map();
     previousStats.forEach((sess) => {
       (sess.exercises || []).forEach((ex) => {
         if (!ex || !ex.name) return;
         const key = exerciseGoalKey(ex.name);
+        if (!prevHistoryByName.has(key)) prevHistoryByName.set(key, []);
+        prevHistoryByName.get(key).push(ex);
         if (!prevByName.has(key)) prevByName.set(key, ex);
       });
     });
@@ -4761,7 +5004,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         );
       }
 
-      const decisionSupport = buildStrengthDecisionSupport(ex, prev);
+      const history = prevHistoryByName.get(exerciseGoalKey(ex.name)) || [];
+      const decisionSupport = buildStrengthDecisionSupport(
+        ex,
+        prev,
+        null,
+        history.slice(1),
+      );
       if (decisionSupport) {
         nextTargetLines.push(decisionSupport.text);
         progressionDecisions.push({
@@ -4887,6 +5136,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     aiText += `\n`;
 
+    aiText += `AUTOMATIC COACHING CONTRACT\n`;
+    aiText += `- The user has chosen a long-term result and should not have to design the next workout. Do the progression calculations for them.\n`;
+    aiText += `- Put a short DO THIS NEXT section first. Give one primary prescription, not a menu of programs or choices.\n`;
+    aiText += `- Keep the long-term goal fixed, update the next step from completed evidence after every export, and show the load/repetition/set percentage change used.\n`;
+    aiText += `- The user should only need to follow the prescription, log what happened, and export again. Reserve alternatives for pain, unavailable equipment, or a red-readiness safety rule.\n\n`;
+
     aiText += `SESSION COMPLETION & NEXT-WORKOUT BUDGET\n`;
     aiText += `- Current session status: ${payload.sessionContext.statusLabel}\n`;
     if (payload.sessionContext.status === 'time_limited') {
@@ -4921,6 +5176,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       performedGoalSnapshots.forEach((goal) => {
         aiText += `${goal.exerciseName}:\n`;
         aiText += `  Goal: ${formatGoalNumber(goal.goalValue)} ${goal.unit} (${goal.goalType})\n`;
+        aiText += `  Automatic coaching path: ${goal.goalPathLabel}\n`;
         if (includeExerciseGoalProgress) {
           aiText += `  App-tracked logged best: ${formatGoalNumber(goal.currentBestPerformance)} ${goal.unit}\n`;
           aiText += `  Arithmetic distance from goal: ${formatGoalNumber(goal.remainingDistanceToGoal)} ${goal.unit}\n`;
@@ -4936,17 +5192,18 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     aiText += `- Treat these as long-term targets, not next-session prescriptions. Use workout history, execution quality, and recovery context; never force an unsafe jump to reach a goal faster.\n\n`;
 
-    aiText += `SAVED EXERCISE PROGRESSION PROFILES\n`;
+    aiText += `AUTOMATIC EXERCISE COACHING RULES\n`;
     const strengthProfiles = payload.exercises.filter((exercise) => !exercise.isCardio);
     if (strengthProfiles.length) {
       strengthProfiles.forEach((exercise) => {
         const profile = normalizeExerciseProfile(exercise.progressionProfile);
-        aiText += `- ${exercise.name}: ${profile.purposeLabel}; target ${profile.repMin}–${profile.repMax} reps at ${formatGoalNumber(profile.targetRir)} RIR; smallest load jump ${formatGoalNumber(profile.loadStep)} lbs.\n`;
+        const modeLabel = profile.mode === 'auto' ? 'automatic from the saved goal' : 'custom advanced settings';
+        aiText += `- ${exercise.name}: ${modeLabel}; ${profile.purposeLabel}; target ${profile.repMin}–${profile.repMax} reps with about ${formatGoalNumber(profile.targetRir)} clean reps left; smallest load jump ${formatGoalNumber(profile.loadStep)} lbs.\n`;
       });
     } else {
       aiText += `- No strength exercise profiles in this session.\n`;
     }
-    aiText += `- These profiles define the exercise's training purpose and executable progression range. They do not prove readiness for an increase.\n\n`;
+    aiText += `- These rules define the exercise's executable path. They do not prove readiness for an increase; completed evidence still controls the next step.\n\n`;
 
     aiText += `DATA INTERPRETATION LIMITS\n`;
     aiText += `- A weight goal compares the goal with the heaviest load logged for that exercise; it is not an estimated or tested one-repetition maximum.\n`;
@@ -5068,14 +5325,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
 
     aiText += `NEXT STEPS REQUEST\n`;
-    aiText += `Analyze the session and consistency metrics, flag regressions or PRs, and produce a ready-to-follow next workout. The user should be able to follow it without making programming decisions mid-session.\n`;
+    aiText += `Analyze the session and produce one ready-to-follow next workout. Start with DO THIS NEXT. The user must not need to understand programming language or make training decisions mid-session.\n`;
     aiText += `1. Insight: Distinguish evidence from inference. Note trends, weak points, and possible fatigue signals without treating mechanical volume or a single session as proof.\n`;
-    aiText += `2. Exact workout: List exercises in order. Separate warm-up/ramp sets from work sets and give exact sets × reps, load or load range, rest time, target RIR/RPE, and one concise technique cue. State warm-up sets, work sets, total logged sets, and a realistic duration estimate based on the prescribed rest periods.\n`;
-    aiText += `3. Progression: For every exercise, choose exactly one primary action from HOLD, ADD REPS, ADD LOAD, ADD SET, REDUCE LOAD, REDUCE SETS, INCREASE REST, CHANGE REP RANGE, TEST BASELINE, DELOAD, SUBSTITUTE EXERCISE, or STOP AND SEEK APPROPRIATE GUIDANCE. Explain why. Simultaneous increases in load and sets are prohibited; use the saved equipment increment.\n`;
+    aiText += `2. Exact workout: List exercises in order. Separate warm-up sets from work sets and give exact sets × reps, exact load when equipment permits, rest time, a plain-language effort target such as “stop with 2 clean reps left,” and one concise technique cue. State warm-up sets, work sets, total logged sets, and a realistic duration estimate.\n`;
+    aiText += `3. Progression math: For every exercise, choose exactly one primary action from HOLD, ADD REPS, ADD LOAD, ADD SET, REDUCE LOAD, REDUCE SETS, INCREASE REST, CHANGE REP RANGE, TEST BASELINE, DELOAD, SUBSTITUTE EXERCISE, or STOP AND SEEK APPROPRIATE GUIDANCE. Show previous → next load, reps, and sets plus the percentage change. Explain the reason in one beginner-friendly sentence. Simultaneous increases in load and sets are prohibited; use the saved equipment increment.\n`;
     aiText += `4. Feasibility: Obey the hard time budget when supplied and keep MUST DO work within the exported 90% duration target. Otherwise, do not expand beyond the latest completed comparable session without a specific recovery-based reason. Put essential work under MUST DO and extra work under OPTIONAL IF TIME; a time-limited prior session must lead to a shorter prioritized plan, not a catch-up marathon.\n`;
     aiText += `5. Evidence trace: For every decision, label Observed, Reported, Estimated, Inferred, and Heuristic information separately and give HIGH, MODERATE, LOW, or INSUFFICIENT confidence. Missing data must lower confidence rather than being invented.\n`;
     aiText += `6. Autoregulation: Include simple green/yellow/red rules for readiness and a stop/substitution rule for pain or technique breakdown. Ask only for truly missing information that would materially change safety or the plan.\n`;
     aiText += `7. Final validation: The required plan is invalid if it exceeds the time budget, counts failed/warm-up sets as successful working sets, uses the long-term goal as the next load, prescribes catch-up volume, or recommends ADD LOAD/ADD SET for a pain-limited movement.\n`;
+    aiText += `8. Simplicity check: Rewrite anything a brand-new lifter would not understand. End with one sentence: “Follow this workout, log the result, and export again so I can calculate the next step.”\n`;
 
     if (navigator.clipboard) {
       navigator.clipboard
@@ -5213,6 +5471,7 @@ module.exports = {
   TECHNIQUE_OPTIONS,
   PAIN_OPTIONS,
   EXERCISE_PURPOSES,
+  GOAL_PATHS,
   getThemePack,
   canLogSet,
   canLogStrengthEntry,
@@ -5224,6 +5483,8 @@ module.exports = {
   normalizePain,
   defaultExerciseProfile,
   normalizeExerciseProfile,
+  normalizeGoalPath,
+  buildAutomaticExerciseProfile,
   sanitizeExerciseProfiles,
   isProgressionSet,
   formatSetContext,

@@ -174,6 +174,47 @@ describe('one-variable progression decisions', () => {
     expect(buildStrengthDecisionSupport(current, previous).decision).toBe('HOLD');
   });
 
+  it('uses three successful automatic exposures when optional effort fields are skipped', () => {
+    const automaticProfile = { ...profile, mode: 'auto' };
+    const makeStats = () => computeSessionStats({
+      sessionContext: { status: 'complete' },
+      exercises: [{
+        name: 'Machine Press',
+        progressionProfile: automaticProfile,
+        sets: [
+          { weight: 100, reps: 12, role: 'working' },
+          { weight: 100, reps: 12, role: 'working' },
+        ],
+      }],
+    }).exercises[0];
+    const decision = buildStrengthDecisionSupport(
+      makeStats(),
+      makeStats(),
+      null,
+      [makeStats()],
+    );
+
+    expect(decision.decision).toBe('ADD LOAD');
+    expect(decision.confidence).toBe('MODERATE');
+    expect(decision.text).toMatch(/without requiring technical effort ratings/);
+  });
+
+  it('does not use the beginner fallback for a custom advanced profile', () => {
+    const customProfile = { ...profile, mode: 'custom' };
+    const makeStats = () => computeSessionStats({
+      sessionContext: { status: 'complete' },
+      exercises: [{
+        name: 'Machine Press',
+        progressionProfile: customProfile,
+        sets: [{ weight: 100, reps: 12, role: 'working' }],
+      }],
+    }).exercises[0];
+
+    expect(buildStrengthDecisionSupport(
+      makeStats(), makeStats(), null, [makeStats()],
+    ).decision).toBe('HOLD');
+  });
+
   it('treats a 20 percent rep loss across three same-load sets as a screen, not a diagnosis', () => {
     const current = exerciseStats([
       qualitySet(100, 10),
