@@ -6,6 +6,7 @@ const {
   attachExerciseGoalSnapshots,
   prepareExerciseGoalsForExport,
   buildGoalInsight,
+  buildAutomaticExerciseProfile,
 } = require('../script');
 
 describe('custom exercise goals', () => {
@@ -20,9 +21,38 @@ describe('custom exercise goals', () => {
     });
 
     expect(goal.goalWeight).toBe(225);
+    expect(goal.goalPath).toBe('strength');
+    expect(goal.goalPathLabel).toBe('Get stronger');
     expect(goal.unit).toBe('lbs');
     expect(goal.remainingDistanceToGoal).toBe(35);
     expect(goal.progressPercentage).toBe(84.4);
+  });
+
+  it('turns plain-language goals into automatic exercise plans', () => {
+    const strength = buildAutomaticExerciseProfile('Bench Press', {
+      exerciseName: 'Bench Press',
+      goalType: 'weight',
+      goalPath: 'strength',
+      goalValue: 315,
+    }, { loadStep: 2.5 });
+    const muscleIsolation = buildAutomaticExerciseProfile('Bicep Curl', {
+      exerciseName: 'Bicep Curl',
+      goalType: 'weight',
+      goalPath: 'hypertrophy',
+      goalValue: 60,
+    }, { loadStep: 5 });
+    const noGoal = buildAutomaticExerciseProfile('Bench Press', null, { loadStep: 5 });
+
+    expect(strength).toMatchObject({
+      mode: 'auto', purpose: 'primary_strength', repMin: 1, repMax: 5, targetRir: 2,
+    });
+    expect(muscleIsolation).toMatchObject({
+      mode: 'auto', purpose: 'hypertrophy_isolation', repMin: 8, repMax: 20,
+    });
+    expect(noGoal).toMatchObject({
+      mode: 'auto', purpose: 'general', repMin: 6, repMax: 12,
+    });
+    expect(strength.loadStep).toBe(2.5);
   });
 
   it('rejects invalid goals and keys valid goals by exercise', () => {

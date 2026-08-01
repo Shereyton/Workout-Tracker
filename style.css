@@ -171,13 +171,20 @@ body.dark .edit-form{background:#29374a;}
   list-style-position:inside;
 }
 .accuracy-details summary span{display:block;margin:3px 0 0 20px;color:var(--muted-fg);font-size:11px;font-weight:650;}
+.accuracy-help{margin:0;padding:0 14px 12px;color:var(--muted-fg);font-size:12px;line-height:1.5;}
 .accuracy-grid,.progression-profile{display:grid;grid-template-columns:1fr 1fr;gap:7px 10px;padding:0 14px 14px;}
 .accuracy-grid .field-label,.progression-profile .field-label{align-self:end;color:var(--muted-fg);font-size:11px;font-weight:750;}
 .accuracy-grid .field,.progression-profile .field{width:100%;margin:0;}
+.advanced-coaching-settings{margin:0 14px 14px;border:1px solid var(--input-border);border-radius:14px;background:var(--surface-soft);}
+.advanced-coaching-settings>summary{padding:12px 13px;font-size:12px;}
+.advanced-coaching-settings>summary span{margin-left:20px;}
 .progression-profile{padding-top:14px;border-top:1px solid var(--input-border);}
 .progression-profile h3,.progression-profile .inline-row,.progression-profile .btn,.progression-profile .exercise-goal-note{grid-column:1/-1;}
 .progression-profile h3{font-size:14px;margin:0;}
 .progression-profile .btn{margin:2px 0 0;}
+.automatic-coaching-summary{grid-column:1/-1;margin:0;padding:11px 12px;border-radius:12px;background:rgba(54,190,149,.12);color:var(--ink);font-size:12px;font-weight:700;line-height:1.45;}
+.custom-profile-fields{grid-column:1/-1;display:grid;grid-template-columns:1fr;gap:8px;}
+.custom-profile-fields>.field-label,.custom-profile-fields>select{width:100%;}
 .profile-number{flex:1;min-width:0;color:var(--muted-fg);font-size:10px;font-weight:750;}
 .profile-number .field{margin-top:5px;}
 body.dark .accuracy-details{background:var(--surface-strong);}
@@ -757,6 +764,16 @@ body.dark .btn-reset{color:#c3c9dc;}
   font-size:12px;
   line-height:1.45;
 }
+.exercise-goal-coach-plan{
+  margin:9px 0 0;
+  padding:9px 10px;
+  border-radius:11px;
+  background:rgba(54,190,149,.12);
+  color:var(--ink);
+  font-size:11px;
+  font-weight:800;
+  line-height:1.45;
+}
 .exercise-goal-form{
   padding:14px;
   display:grid;
@@ -765,6 +782,16 @@ body.dark .btn-reset{color:#c3c9dc;}
   border-top:1px solid var(--line);
   background:var(--surface-soft);
 }
+.goal-form-intro{
+  grid-column:1/-1;
+  margin:0 0 4px;
+  color:var(--ink);
+  font-size:12px;
+  font-weight:700;
+  line-height:1.5;
+}
+.goal-path-field{grid-column:1/-1;display:grid;gap:6px;}
+.goal-path-field .exercise-goal-note{margin:0;}
 .exercise-goal-form .field-label{
   align-self:end;
   color:var(--muted-fg);
@@ -932,7 +959,7 @@ body.dark .dock-action.is-active{background:linear-gradient(145deg,rgba(114,88,2
   .inline-row:not(.day-label-row){gap:0;}
   .current-exercise{border-radius:18px;margin-top:10px;}
   .exercise-goal-form{grid-template-columns:1fr;}
-  .exercise-goal-form__actions,.exercise-goal-note{grid-column:1;}
+  .exercise-goal-form__actions,.exercise-goal-note,.goal-form-intro,.goal-path-field{grid-column:1;}
   .accuracy-grid,.progression-profile{grid-template-columns:1fr;}
   .progression-profile h3,.progression-profile .inline-row,.progression-profile .btn,.progression-profile .exercise-goal-note{grid-column:1;}
   .context-grid{gap:12px;}
