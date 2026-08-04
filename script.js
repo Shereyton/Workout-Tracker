@@ -1552,6 +1552,137 @@ function buildExerciseHighlightsForExport(currentStats, previousStats) {
   return highlights.slice(0, 6);
 }
 
+function getWorkoutExerciseRoster(payload) {
+  const names = [];
+  const seen = new Set();
+  const addName = (value) => {
+    const name = trimString(value || '', 80);
+    const key = exerciseGoalKey(name);
+    if (!name || !key || seen.has(key)) return;
+    seen.add(key);
+    names.push(name);
+  };
+
+  (payload?.exercises || []).forEach((exercise) => {
+    if (!exercise) return;
+    if (exercise.isSuperset) {
+      (exercise.exercises || []).forEach(addName);
+      (exercise.sets || []).forEach((set) => {
+        (set.exercises || []).forEach((inner) => addName(inner?.name));
+      });
+      if (!(exercise.exercises || []).length && !(exercise.sets || []).length) {
+        addName(exercise.name);
+      }
+      return;
+    }
+    addName(exercise.name);
+  });
+
+  return names;
+}
+
+function buildWorkoutCoverageReference(currentPayload, previousSessions = []) {
+  const currentExercises = getWorkoutExerciseRoster(currentPayload);
+  const currentKeys = new Set(currentExercises.map(exerciseGoalKey));
+  let bestMatch = null;
+
+  (Array.isArray(previousSessions) ? previousSessions : []).forEach((session, index) => {
+    const exercises = getWorkoutExerciseRoster(session);
+    if (!exercises.length) return;
+    const exerciseKeys = new Set(exercises.map(exerciseGoalKey));
+    const overlapCount = [...exerciseKeys].filter((key) => currentKeys.has(key)).length;
+    if (!overlapCount) return;
+    const unionCount = new Set([...currentKeys, ...exerciseKeys]).size || 1;
+    const similarity = overlapCount / unionCount;
+    const candidate = {
+      date: session?.date || null,
+      exercises,
+      session,
+      overlapCount,
+      similarity,
+      index,
+    };
+    if (
+      !bestMatch
+      || candidate.overlapCount > bestMatch.overlapCount
+      || (
+        candidate.overlapCount === bestMatch.overlapCount
+        && candidate.similarity > bestMatch.similarity
+      )
+      || (
+        candidate.overlapCount === bestMatch.overlapCount
+        && candidate.similarity === bestMatch.similarity
+        && candidate.index < bestMatch.index
+      )
+    ) {
+      bestMatch = candidate;
+    }
+  });
+
+  const comparableExercises = bestMatch?.exercises || [];
+  const requiredExercises = [...currentExercises];
+  const requiredKeys = new Set(requiredExercises.map(exerciseGoalKey));
+  comparableExercises.forEach((name) => {
+    const key = exerciseGoalKey(name);
+    if (requiredKeys.has(key)) return;
+    requiredKeys.add(key);
+    requiredExercises.push(name);
+  });
+  const possiblyOmittedExercises = comparableExercises.filter(
+    (name) => !currentKeys.has(exerciseGoalKey(name)),
+  );
+
+  return {
+    currentExercises,
+    comparableDate: bestMatch?.date || null,
+    comparableExercises,
+    requiredExercises,
+    possiblyOmittedExercises,
+    comparableSession: bestMatch?.session || null,
+  };
+}
+
+function getCoverageSetSummaries(payload, exerciseName) {
+  const targetKey = exerciseGoalKey(exerciseName);
+  const summaries = [];
+  const addStrengthSet = (set, weight, reps) => {
+    const normalized = normalizeSet({ ...set, weight, reps, exercises: undefined });
+    if (normalizeSetRole(normalized.role) === 'failed_attempt' || normalized.completed === false) {
+      summaries.push(`failed attempt at ${formatGoalNumber(normalized.weight)} lbs`);
+      return;
+    }
+    summaries.push(`${formatGoalNumber(normalized.weight)} lbs × ${formatGoalNumber(normalized.reps)}`);
+  };
+
+  (payload?.exercises || []).forEach((exercise) => {
+    if (!exercise) return;
+    if (exercise.isSuperset) {
+      (exercise.sets || []).forEach((set) => {
+        (set.exercises || []).forEach((inner) => {
+          if (exerciseGoalKey(inner?.name) === targetKey) {
+            addStrengthSet(set, inner.weight, inner.reps);
+          }
+        });
+      });
+      return;
+    }
+    if (exerciseGoalKey(exercise.name) !== targetKey) return;
+    if (exercise.isCardio) {
+      (exercise.sets || []).forEach((set) => {
+        const distance = Number(set.distance);
+        const distanceText = Number.isFinite(distance) && distance > 0
+          ? `${formatGoalNumber(distance)} mi in `
+          : '';
+        summaries.push(`${distanceText}${formatSecondsHuman(set.duration)}`);
+      });
+      return;
+    }
+    (exercise.sets || []).forEach((set) => addStrengthSet(set, set.weight, set.reps));
+  });
+
+  return summaries;
+}
+
 function computeConsistencyMetricsFromStats(allStats, referenceDate) {
   if (!Array.isArray(allStats) || !allStats.length) return null;
   const refDate =
@@ -4957,6 +5088,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     else if (dayCompare === '3') previousSessions = previousSessions.slice(0, 3);
     else if (dayCompare === '7') previousSessions = previousSessions.slice(0, 7);
 
+    const workoutCoverage = buildWorkoutCoverageReference(payload, previousSessions);
+    payload.workoutCoverage = {
+      currentExercises: workoutCoverage.currentExercises,
+      comparableDate: workoutCoverage.comparableDate,
+      comparableExercises: workoutCoverage.comparableExercises,
+      requiredExercises: workoutCoverage.requiredExercises,
+      possiblyOmittedExercises: workoutCoverage.possiblyOmittedExercises,
+    };
+
     const currentStats = computeSessionStats(payload);
     const previousStats = previousSessions.map((session) =>
       computeSessionStats(session),
@@ -5128,6 +5268,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       + currentStats.roleCounts.top_set
       + currentStats.roleCounts.back_off;
     aiText += `- Set classification: ${currentStats.warmupSetCount} warm-up/ramp; ${explicitProgressionSets} working/top/back-off; ${currentStats.roleCounts.technique} technique; ${currentStats.failedAttemptCount} failed; ${currentStats.roleCounts.unknown} unclassified.\n`;
+    const strengthSetCount = Object.values(currentStats.roleCounts)
+      .reduce((sum, count) => sum + Number(count || 0), 0);
+    const allStrengthSetsUseDefaultWorkingRole = strengthSetCount >= 4
+      && currentStats.roleCounts.working === strengthSetCount
+      && currentStats.warmupSetCount === 0;
+    if (allStrengthSetsUseDefaultWorkingRole) {
+      aiText += `- Set-role confidence: LOW. Every strength set used the default Working set label and no warm-ups were marked. Inspect low-to-high loading sequences for likely warm-up/ramp sets; label any correction as Inferred, exclude likely ramps from progression proof, and do not pretend the user explicitly classified them.\n`;
+    }
     if (currentStats.totalCardioDuration) {
       aiText += `- Cardio duration: ${formatSecondsHuman(currentStats.totalCardioDuration)}\n`;
     }
@@ -5139,13 +5287,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     aiText += `AUTOMATIC COACHING CONTRACT\n`;
     aiText += `- The user has chosen a long-term result and should not have to design the next workout. Do the progression calculations for them.\n`;
     aiText += `- Put a short DO THIS NEXT section first. Give one primary prescription, not a menu of programs or choices.\n`;
+    aiText += `- Always show the complete next-workout exercise list. A time limit may change priority and the stopping point, but it must never make the remaining planned exercises disappear from the response.\n`;
     aiText += `- Keep the long-term goal fixed, update the next step from completed evidence after every export, and show the load/repetition/set percentage change used.\n`;
     aiText += `- The user should only need to follow the prescription, log what happened, and export again. Reserve alternatives for pain, unavailable equipment, or a red-readiness safety rule.\n\n`;
 
     aiText += `SESSION COMPLETION & NEXT-WORKOUT BUDGET\n`;
     aiText += `- Current session status: ${payload.sessionContext.statusLabel}\n`;
     if (payload.sessionContext.status === 'time_limited') {
-      aiText += `- Interpretation: Omitted exercises and lower total volume are not regressions. The next plan must be shorter and prioritized rather than cramming missed work into one session.\n`;
+      aiText += `- Interpretation: Omitted exercises and lower total volume are not regressions. Preserve the complete next-workout exercise list, put the highest priorities first, identify a safe stopping point, and do not add catch-up sets.\n`;
     } else if (payload.sessionContext.status === 'pain_limited') {
       aiText += `- Interpretation: Do not progress or re-prescribe painful movements without a pain-free alternative and an appropriate stop rule.\n`;
     } else if (payload.sessionContext.status === 'recovery_limited') {
@@ -5155,11 +5304,42 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
     if (payload.sessionContext.nextWorkoutMinutes != null) {
       aiText += `- Hard time budget for the next workout: ${payload.sessionContext.nextWorkoutMinutes} minutes, including warm-ups and rest.\n`;
-      aiText += `- MUST DO duration target: at most ${payload.sessionContext.mustDoTargetMinutes} minutes, leaving ${payload.sessionContext.timeBufferMinutes} minutes for normal setup and transition uncertainty. OPTIONAL work may use only genuinely remaining time.\n`;
+      aiText += `- MUST DO FIRST duration target: at most ${payload.sessionContext.mustDoTargetMinutes} minutes, leaving ${payload.sessionContext.timeBufferMinutes} minutes for normal setup and transition uncertainty. Still display every remaining prescribed exercise afterward under CONTINUE IF TIME, with its exact sets, reps, load, rest, and normal per-exercise dose.\n`;
     } else {
-      aiText += `- Next-workout time budget: Not provided. Keep the plan at or below the latest completed comparable session's total workload, show an estimated duration, and separate must-do work from optional work.\n`;
+      aiText += `- Next-workout time budget: Not provided. Show the complete workout and its full estimated duration. Do not shrink or omit the exercise list merely because this session ran out of time; use priority order and a safe stopping point instead. Do not exceed the latest completed comparable session's normal per-exercise workload without a specific recovery-based reason.\n`;
     }
     aiText += `\n`;
+
+    aiText += `FULL NEXT-WORKOUT COVERAGE (MANDATORY)\n`;
+    aiText += `- Exercises logged today: ${workoutCoverage.currentExercises.length ? workoutCoverage.currentExercises.join('; ') : 'None'}\n`;
+    if (workoutCoverage.comparableDate && workoutCoverage.comparableExercises.length) {
+      aiText += `- Best matching recent workout roster (${workoutCoverage.comparableDate}): ${workoutCoverage.comparableExercises.join('; ')}\n`;
+    } else {
+      aiText += `- Best matching recent workout roster: Not available in the selected history.\n`;
+    }
+    if (workoutCoverage.possiblyOmittedExercises.length) {
+      aiText += `- Exercises possibly omitted only because time ran out: ${workoutCoverage.possiblyOmittedExercises.join('; ')}\n`;
+      aiText += `- Last comparable evidence for those exercises:\n`;
+      workoutCoverage.possiblyOmittedExercises.forEach((name) => {
+        const summaries = getCoverageSetSummaries(workoutCoverage.comparableSession, name);
+        const key = exerciseGoalKey(name);
+        const savedGoal = exerciseGoals[key] || null;
+        const savedProfile = normalizeExerciseProfile(exerciseProfiles[key]);
+        const resolvedProfile = savedProfile.mode === 'auto'
+          ? buildAutomaticExerciseProfile(name, savedGoal, savedProfile)
+          : savedProfile;
+        const goalText = savedGoal
+          ? ` Saved goal: ${formatGoalNumber(savedGoal.goalValue)} ${savedGoal.unit} (${savedGoal.goalPathLabel}).`
+          : ' No saved goal was found.';
+        aiText += `  ${name}: ${summaries.length ? summaries.join(', ') : 'No usable set details found'}.${goalText} Coaching target: ${resolvedProfile.repMin}–${resolvedProfile.repMax} reps with about ${formatGoalNumber(resolvedProfile.targetRir)} clean reps left; smallest load jump ${formatGoalNumber(resolvedProfile.loadStep)} lbs.\n`;
+      });
+    } else {
+      aiText += `- Exercises possibly omitted only because time ran out: None found in the selected comparable history.\n`;
+    }
+    aiText += `- Required coverage roster: ${workoutCoverage.requiredExercises.length ? workoutCoverage.requiredExercises.join('; ') : 'No exercises available'}\n`;
+    aiText += `- Every exercise in the required coverage roster must appear in the response with an exact prescription. If an exercise is intentionally removed or replaced for pain, safety, a changed goal, or equipment availability, list it explicitly and explain why; never silently omit it.\n`;
+    aiText += `- Time affects priority, not visibility: put the time-fitting portion under MUST DO FIRST, then show every remaining prescribed exercise under CONTINUE IF TIME in the order it should be performed. These remaining exercises are still part of the complete workout.\n`;
+    aiText += `- Do not turn missed work into catch-up volume. Give each exercise only its normal evidence-based dose.\n\n`;
 
     aiText += `SESSION GOALS & FOCUS\n`;
     if (goalsForExport.length) {
@@ -5209,6 +5389,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     aiText += `- A weight goal compares the goal with the heaviest load logged for that exercise; it is not an estimated or tested one-repetition maximum.\n`;
     aiText += `- Set role, RIR, pain, technique quality, and equipment increment are structured when recorded. Missing values must remain unknown; never infer exact RIR, technique, pain, or equipment equivalence.\n`;
     aiText += `- Use only completed working/top/back-off sets for progression. Warm-ups, ramp sets, technique sets, painful stopped sets, and failed attempts cannot establish a successful best.\n`;
+    aiText += `- If free-text notes mention a failed attempt, pain, or a stop condition that is absent from the structured counters, the note still controls safety. Do not count it as a completed set; state that the evidence was unstructured and lower confidence accordingly.\n`;
+    aiText += `- “No pain reported” is not the same as “pain-free.” When pain, technique, or RIR was not entered, write Missing/unknown rather than placing it under Reported as a favorable result.\n`;
     aiText += `- Estimated 1RM is a model-derived range, not a verified maximum. Do not estimate from failures, painful/poor-technique sets, or more than 10 effective reps for strength prescription.\n`;
     aiText += `- A rep drop across repeated-load sets is a fatigue/pacing signal, not a diagnosis. Do not infer readiness or prescribe a load increase from volume alone.\n\n`;
 
@@ -5327,12 +5509,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     aiText += `NEXT STEPS REQUEST\n`;
     aiText += `Analyze the session and produce one ready-to-follow next workout. Start with DO THIS NEXT. The user must not need to understand programming language or make training decisions mid-session.\n`;
     aiText += `1. Insight: Distinguish evidence from inference. Note trends, weak points, and possible fatigue signals without treating mechanical volume or a single session as proof.\n`;
-    aiText += `2. Exact workout: List exercises in order. Separate warm-up sets from work sets and give exact sets × reps, exact load when equipment permits, rest time, a plain-language effort target such as “stop with 2 clean reps left,” and one concise technique cue. State warm-up sets, work sets, total logged sets, and a realistic duration estimate.\n`;
-    aiText += `3. Progression math: For every exercise, choose exactly one primary action from HOLD, ADD REPS, ADD LOAD, ADD SET, REDUCE LOAD, REDUCE SETS, INCREASE REST, CHANGE REP RANGE, TEST BASELINE, DELOAD, SUBSTITUTE EXERCISE, or STOP AND SEEK APPROPRIATE GUIDANCE. Show previous → next load, reps, and sets plus the percentage change. Explain the reason in one beginner-friendly sentence. Simultaneous increases in load and sets are prohibited; use the saved equipment increment.\n`;
-    aiText += `4. Feasibility: Obey the hard time budget when supplied and keep MUST DO work within the exported 90% duration target. Otherwise, do not expand beyond the latest completed comparable session without a specific recovery-based reason. Put essential work under MUST DO and extra work under OPTIONAL IF TIME; a time-limited prior session must lead to a shorter prioritized plan, not a catch-up marathon.\n`;
-    aiText += `5. Evidence trace: For every decision, label Observed, Reported, Estimated, Inferred, and Heuristic information separately and give HIGH, MODERATE, LOW, or INSUFFICIENT confidence. Missing data must lower confidence rather than being invented.\n`;
-    aiText += `6. Autoregulation: Include simple green/yellow/red rules for readiness and a stop/substitution rule for pain or technique breakdown. Ask only for truly missing information that would materially change safety or the plan.\n`;
-    aiText += `7. Final validation: The required plan is invalid if it exceeds the time budget, counts failed/warm-up sets as successful working sets, uses the long-term goal as the next load, prescribes catch-up volume, or recommends ADD LOAD/ADD SET for a pain-limited movement.\n`;
+    aiText += `2. Exact full workout: List every exercise in the Required coverage roster in order. Separate warm-up sets from work sets and give exact sets × reps, exact load when equipment permits, rest time, a plain-language effort target such as “stop with 2 clean reps left,” and one concise technique cue. State warm-up sets, work sets, total logged sets, the MUST DO FIRST stopping point, and realistic durations for both the priority portion and the complete workout.\n`;
+    aiText += `3. Progression math: For every exercise, choose exactly one primary action from HOLD, ADD REPS, ADD LOAD, ADD SET, REDUCE LOAD, REDUCE SETS, INCREASE REST, CHANGE REP RANGE, TEST BASELINE, DELOAD, SUBSTITUTE EXERCISE, or STOP AND SEEK APPROPRIATE GUIDANCE. Show previous → next load, reps, and sets plus the percentage change. Explain the reason in one beginner-friendly sentence. The one-variable rule applies to the entire exercise: if total sets increase, no prescribed load anywhere in that exercise may increase; if any prescribed load increases, total sets may not increase. For ADD LOAD, use exactly one saved equipment increment unless the equipment cannot make that jump, in which case explain the available increment.\n`;
+    aiText += `4. Feasibility and complete coverage: Obey the hard time budget when supplied and keep MUST DO FIRST within the exported 90% duration target. Always display the rest of the complete workout under CONTINUE IF TIME with exact instructions, even when completing the entire list would exceed that day's time budget. Without a supplied budget, show the full estimated duration and do not shrink the exercise roster because the previous session ran out of time. Time changes order and stopping point only; it must not erase exercises or create catch-up volume.\n`;
+    aiText += `5. Evidence trace: For every decision, label Observed, Reported, Estimated, Inferred, Heuristic, and Missing/unknown information separately and give HIGH, MODERATE, LOW, or INSUFFICIENT confidence. Missing data must lower confidence rather than being invented. Never write “no pain reported/noted” under Reported when pain was simply not entered.\n`;
+    aiText += `6. Autoregulation: Include simple green/yellow/red rules for readiness and a stop/substitution rule for pain or technique breakdown. A yellow or red trigger may only hold, reduce, skip, or stop the planned load; it must never tell the user to attempt a heavier set after an earlier ramp set was slow, shaky, painful, or technically poor. Ask only for truly missing information that would materially change safety or the plan.\n`;
+    aiText += `7. Final validation: The required plan is invalid if any Required coverage exercise disappears without an explicit safety/goal/equipment reason, if MUST DO FIRST exceeds the time target, if it counts failed or likely warm-up sets as successful progression work, if it uses the long-term goal as the next load, if it prescribes catch-up volume, if it increases exercise load and total sets together, if ADD LOAD skips the saved increment without an equipment reason, or if it recommends ADD LOAD/ADD SET for a pain-limited movement. The displayed complete-workout duration may exceed a hard time budget only when the priority stopping point remains within budget.\n`;
     aiText += `8. Simplicity check: Rewrite anything a brand-new lifter would not understand. End with one sentence: “Follow this workout, log the result, and export again so I can calculate the next step.”\n`;
 
     if (navigator.clipboard) {
@@ -5495,6 +5677,9 @@ module.exports = {
   estimateNextLoadFeasibility,
   estimateE1rmFromSet,
   buildExerciseHighlightsForExport,
+  getWorkoutExerciseRoster,
+  buildWorkoutCoverageReference,
+  getCoverageSetSummaries,
   computeConsistencyMetricsFromStats,
   appendUniqueHistoryLines,
   csvRow,
