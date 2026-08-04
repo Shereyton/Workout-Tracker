@@ -4,6 +4,8 @@ const {
   buildExerciseHighlightsForExport,
   computeConsistencyMetricsFromStats,
   buildStrengthDecisionSupport,
+  buildWorkoutCoverageReference,
+  getCoverageSetSummaries,
   normalizeWorkoutMinutes,
   getLocalDateString,
   buildSessionPlanningContext,
@@ -209,6 +211,70 @@ describe('export summary helpers', () => {
       mustDoTargetMinutes: 81,
       timeBufferMinutes: 9,
     });
+  });
+
+  it('restores exercises omitted from a time-limited workout using the best matching recent roster', () => {
+    const current = normalizePayload({
+      date: '2026-08-03',
+      exercises: [
+        { name: 'Bench Press', sets: [{ weight: 290, reps: 1 }] },
+        { name: 'Chest-Supported Row', sets: [{ weight: 360, reps: 3 }] },
+      ],
+    });
+    const unrelatedLatest = normalizePayload({
+      date: '2026-08-01',
+      exercises: [
+        { name: 'Squat', sets: [{ weight: 255, reps: 5 }] },
+        { name: 'Romanian Deadlift', sets: [{ weight: 195, reps: 5 }] },
+      ],
+    });
+    const comparable = normalizePayload({
+      date: '2026-07-25',
+      exercises: [
+        { name: 'Bench Press', sets: [{ weight: 290, reps: 1 }] },
+        { name: 'Chest-Supported Row', sets: [{ weight: 360, reps: 3 }] },
+        { name: 'Wide-Grip Pulldown', sets: [{ weight: 150, reps: 5 }] },
+        { name: 'Chest Dip', sets: [{ weight: 70, reps: 6 }] },
+      ],
+    });
+
+    const coverage = buildWorkoutCoverageReference(current, [unrelatedLatest, comparable]);
+
+    expect(coverage.comparableDate).toBe('2026-07-25');
+    expect(coverage.requiredExercises).toEqual([
+      'Bench Press',
+      'Chest-Supported Row',
+      'Wide-Grip Pulldown',
+      'Chest Dip',
+    ]);
+    expect(coverage.possiblyOmittedExercises).toEqual([
+      'Wide-Grip Pulldown',
+      'Chest Dip',
+    ]);
+    expect(getCoverageSetSummaries(coverage.comparableSession, 'Chest Dip')).toEqual([
+      '70 lbs × 6',
+    ]);
+  });
+
+  it('keeps the current exercise order and deduplicates comparable coverage', () => {
+    const current = normalizePayload({
+      exercises: [
+        { name: 'Incline Bench Press', sets: [{ weight: 225, reps: 3 }] },
+        { name: 'Bench Press', sets: [{ weight: 275, reps: 1 }] },
+      ],
+    });
+    const previous = normalizePayload({
+      exercises: [
+        { name: 'bench press', sets: [{ weight: 275, reps: 1 }] },
+        { name: 'Chest Dip', sets: [{ weight: 70, reps: 5 }] },
+      ],
+    });
+
+    expect(buildWorkoutCoverageReference(current, [previous]).requiredExercises).toEqual([
+      'Incline Bench Press',
+      'Bench Press',
+      'Chest Dip',
+    ]);
   });
 });
 
