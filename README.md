@@ -18,9 +18,9 @@ These guardrails apply when logging, editing, merging current exercise into sess
 
 - JSON: `workout_YYYY-MM-DD.json` includes the normalized session plus context fields:
   - Core fields: `date`, `timestamp`, `totalExercises`, `totalSets`, `exercises[]`, `schema` (currently `8`).
-  - Optional extras saved when provided: `session{ sessionStart, sessionEnd, sessionDurationSec }`, `workoutNotes[]`, `goals[]`, `constraints`, and `exerciseHighlights`.
+  - Optional extras saved when provided: `session{ sessionStart, sessionEnd, sessionDurationSec }`, `workoutNotes[]`, `goals[]`, `constraints`, `exerciseHighlights`, and `exerciseSelection{ source, currentExercises[], requiredExercises[] }`.
 - CSV: header `Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)`. If session time is included, metadata rows are prepended.
-- AI Text: structured summary with session snapshot, goals, constraints, exercise highlights (including PR flags/trends), optional freeform notes, and an optional “Progression Guard” directive to prevent stagnation (tells the AI to use prior workouts in the same chat plus today’s log). When enabled, the export includes per-exercise progression metrics and auto “next targets” for every lift logged. Time-limited exports also recover the best-matching recent exercise roster so the AI must display the complete next workout while keeping a clear priority stopping point.
+- AI Text: structured summary with session snapshot, goals, constraints, exercise highlights (including PR flags/trends), optional freeform notes, and an optional “Progression Guard” directive to prevent stagnation. Historical workouts may guide progression calculations only; the current exported session exclusively controls which exercises appear in the next workout. Time limits may change priority and the stopping point, but never add exercises from another workout day.
 
 ## Context Panels
 
