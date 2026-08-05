@@ -4,8 +4,7 @@ const {
   buildExerciseHighlightsForExport,
   computeConsistencyMetricsFromStats,
   buildStrengthDecisionSupport,
-  buildWorkoutCoverageReference,
-  getCoverageSetSummaries,
+  buildExerciseSelectionReference,
   normalizeWorkoutMinutes,
   getLocalDateString,
   buildSessionPlanningContext,
@@ -213,67 +212,48 @@ describe('export summary helpers', () => {
     });
   });
 
-  it('restores exercises omitted from a time-limited workout using the best matching recent roster', () => {
+  it('uses only the current exported session to select next-workout exercises', () => {
     const current = normalizePayload({
       date: '2026-08-03',
       exercises: [
         { name: 'Bench Press', sets: [{ weight: 290, reps: 1 }] },
         { name: 'Chest-Supported Row', sets: [{ weight: 360, reps: 3 }] },
-      ],
-    });
-    const unrelatedLatest = normalizePayload({
-      date: '2026-08-01',
-      exercises: [
-        { name: 'Squat', sets: [{ weight: 255, reps: 5 }] },
-        { name: 'Romanian Deadlift', sets: [{ weight: 195, reps: 5 }] },
-      ],
-    });
-    const comparable = normalizePayload({
-      date: '2026-07-25',
-      exercises: [
-        { name: 'Bench Press', sets: [{ weight: 290, reps: 1 }] },
-        { name: 'Chest-Supported Row', sets: [{ weight: 360, reps: 3 }] },
-        { name: 'Wide-Grip Pulldown', sets: [{ weight: 150, reps: 5 }] },
-        { name: 'Chest Dip', sets: [{ weight: 70, reps: 6 }] },
+        { name: 'Shoulder Press', sets: [] },
       ],
     });
 
-    const coverage = buildWorkoutCoverageReference(current, [unrelatedLatest, comparable]);
-
-    expect(coverage.comparableDate).toBe('2026-07-25');
-    expect(coverage.requiredExercises).toEqual([
-      'Bench Press',
-      'Chest-Supported Row',
-      'Wide-Grip Pulldown',
-      'Chest Dip',
-    ]);
-    expect(coverage.possiblyOmittedExercises).toEqual([
-      'Wide-Grip Pulldown',
-      'Chest Dip',
-    ]);
-    expect(getCoverageSetSummaries(coverage.comparableSession, 'Chest Dip')).toEqual([
-      '70 lbs × 6',
-    ]);
+    expect(buildExerciseSelectionReference(current)).toEqual({
+      source: 'current_session_only',
+      currentExercises: [
+        'Bench Press',
+        'Chest-Supported Row',
+      ],
+      requiredExercises: [
+        'Bench Press',
+        'Chest-Supported Row',
+      ],
+    });
   });
 
-  it('keeps the current exercise order and deduplicates comparable coverage', () => {
+  it('does not let historical exercises expand the current-session roster', () => {
     const current = normalizePayload({
       exercises: [
         { name: 'Incline Bench Press', sets: [{ weight: 225, reps: 3 }] },
         { name: 'Bench Press', sets: [{ weight: 275, reps: 1 }] },
       ],
     });
-    const previous = normalizePayload({
+    const historyThatMustNotControlSelection = normalizePayload({
       exercises: [
-        { name: 'bench press', sets: [{ weight: 275, reps: 1 }] },
+        { name: 'Bench Press', sets: [{ weight: 270, reps: 2 }] },
         { name: 'Chest Dip', sets: [{ weight: 70, reps: 5 }] },
+        { name: 'Shoulder Press', sets: [{ weight: 135, reps: 5 }] },
       ],
     });
 
-    expect(buildWorkoutCoverageReference(current, [previous]).requiredExercises).toEqual([
+    expect(historyThatMustNotControlSelection.exercises).toHaveLength(3);
+    expect(buildExerciseSelectionReference(current).requiredExercises).toEqual([
       'Incline Bench Press',
       'Bench Press',
-      'Chest Dip',
     ]);
   });
 });
