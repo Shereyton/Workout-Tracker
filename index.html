@@ -21,7 +21,7 @@
         <div class="brand-copy">
           <div class="brand-row">
             <div class="header-kicker">Train • Track • Progress</div>
-            <span class="version-badge">v1.7</span>
+            <span class="version-badge">v1.8</span>
             <button id="themePackButton" class="theme-pack-trigger" type="button" aria-haspopup="dialog" aria-controls="themePackSheet" aria-label="Choose visual theme">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1.2a1.8 1.8 0 0 0 0-3.6h-.8a1.6 1.6 0 0 1 0-3.2H15A6 6 0 0 0 21 8.3C19.5 5.1 16.1 3 12 3Z"/><circle cx="7.5" cy="10" r="1"/><circle cx="10" cy="6.8" r="1"/><circle cx="15" cy="7" r="1"/></svg>
               <span id="themePackLabel">Aurora</span>
@@ -163,7 +163,7 @@
           <input type="number" id="restSecsInput" class="field" placeholder="Rest (sec)" value="90" min="5" max="3600" inputmode="numeric">
         </div>
 
-        <div id="restBox" class="rest-timer hidden">
+        <div id="restBox" class="rest-timer hidden" role="button" tabindex="0" aria-label="Finish rest timer">
           <div>Rest Time</div>
           <div id="restDisplay" class="timer-display">01:30</div>
           <div class="timer-hint">Tap to cancel</div>
@@ -185,13 +185,15 @@
         </div>
         <div id="supersetInputs" class="superset-inputs hidden"></div>
 
+        <p id="autoSetNote" class="auto-set-note"><strong>Set type: Automatic.</strong> Log weight and reps normally. The app separates warm-ups, build-up sets, work sets, top sets, and back-off sets from the full loading sequence.</p>
         <details id="accuracyDetails" class="accuracy-details">
-          <summary>Something different happened? <span>Optional — leave this closed for normal work sets</span></summary>
-          <p class="accuracy-help">Only open this to mark a warm-up, failed attempt, pain, form problem, or how hard a set felt. If it was a normal set, simply log the weight and reps.</p>
+          <summary>Set details or corrections <span>Optional — Auto-detect is recommended</span></summary>
+          <p class="accuracy-help">The app classifies each set automatically and recalculates earlier sets as your loading pattern becomes clear. Open this only to correct the type, record pain or form, mark a failed attempt, or add reps-in-reserve.</p>
           <div id="setAccuracyFields" class="accuracy-grid">
             <label class="field-label" for="setRole">What kind of set was it?</label>
             <select id="setRole" class="field">
-              <option value="working">Normal work set</option>
+              <option value="auto">Auto-detect (recommended)</option>
+              <option value="working">Work set — manual correction</option>
               <option value="warmup">Warm-up</option>
               <option value="ramp">Build-up set before heavy work</option>
               <option value="top_set">Heaviest planned set</option>
@@ -398,10 +400,11 @@
         <button id="resetDay" class="btn btn-reset mt-8">Reset Day</button>
       </div>
       <div class="history-actions">
-        <button id="saveTodaySession" class="btn btn-secondary">Save Today from Session</button>
+        <button id="saveTodaySession" class="btn btn-secondary">Save Active Session to Today</button>
         <button id="exportHistory" class="btn btn-secondary">Export History</button>
         <input type="file" id="importHistoryFile" class="hidden-input" accept="application/json">
         <button id="importHistory" class="btn btn-secondary">Import History</button>
+        <label class="sr-only" for="titleExportSelect">Choose a workout title to export</label>
         <select id="titleExportSelect" class="field field--compact history-title-select">
           <option value="">Export by title…</option>
         </select>

@@ -31,7 +31,7 @@ function formatDuration(seconds){
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const secs = total % 60;
-  if(hours) return `${hours}h ${minutes}m`;
+  if(hours) return `${hours}h ${minutes}m ${secs}s`;
   if(minutes) return `${minutes}m ${secs}s`;
   return `${secs}s`;
 }
@@ -68,24 +68,40 @@ function parseAiText(text, selectedDate){
       currentExercise = exHeader[1].trim();
       return;
     }
-    const cardioMatch = trimmed.match(/^(?:Set\s+(\d+)\s*[-–:]?\s*)?(?:([^:]+):\s*)?(?:(\d+(?:\.\d+)?)\s*mi(?:\s+in)?\s*)?((?:\d+\s*h(?:\s+\d+\s*m)?)|(?:\d+\s*m(?:\s+\d+\s*s)?)|(?:\d+\s*s))/i);
-    if(cardioMatch && cardioMatch[1]){
-      const name = (cardioMatch[2] || currentExercise || '').trim();
-      if(name){
-        const setNumber = Number(cardioMatch[1]) || out.length + 1;
-        out.push(cardioHistoryLine(name, setNumber, cardioMatch[3] ?? null, parseDurationText(cardioMatch[4])));
+    if(!/^Set\s+\d+/i.test(trimmed)) return;
+    const lineSet = Number((trimmed.match(/^Set\s+(\d+)/i) || [])[1]) || out.length + 1;
+    const segments = trimmed.split(/\s*\|\s*/);
+    let parsedSegment = false;
+    segments.forEach(segment => {
+      const cleaned = segment.replace(/^Set\s+\d+\s*[-–:]?\s*/i, '').trim();
+      const failedMatch = cleaned.match(/^(?:([^:]+):\s*)?Failed attempt at\s+(\d+(?:\.\d+)?)\s*(lbs|kg)/i);
+      if(failedMatch){
+        const name = String(failedMatch[1] || currentExercise || '').trim();
+        if(name){
+          out.push(`${name}: Set ${lineSet} - Failed attempt at ${failedMatch[2]} ${failedMatch[3].toLowerCase()}`);
+          parsedSegment = true;
+        }
         return;
       }
-    }
-    const setMatch = trimmed.match(/^(?:Set\s+(\d+)\s*[-–:]?\s*)?(?:([^:]+):\s*)?(\d+(?:\.\d+)?)\s*(lbs|kg)\s*[×xX]\s*(\d+)\s*reps/i);
-    if(setMatch){
-      let name = String(setMatch[2] || '').trim();
-      if(!name && currentExercise) name = currentExercise;
-      if(name){
-        const setNumber = Number(setMatch[1]) || out.length + 1;
-        out.push(`${name}: Set ${setNumber} - ${setMatch[3]} ${setMatch[4].toLowerCase()} × ${setMatch[5]} reps`);
+      const setMatch = cleaned.match(/^(?:([^:]+):\s*)?(\d+(?:\.\d+)?)\s*(lbs|kg)\s*[×xX]\s*(\d+)\s*reps/i);
+      if(setMatch){
+        const name = String(setMatch[1] || currentExercise || '').trim();
+        if(name){
+          out.push(`${name}: Set ${lineSet} - ${setMatch[2]} ${setMatch[3].toLowerCase()} × ${setMatch[4]} reps`);
+          parsedSegment = true;
+        }
+        return;
       }
-    }
+      const cardioMatch = cleaned.match(/^(?:([^:]+):\s*)?(?:(\d+(?:\.\d+)?)\s*mi(?:\s+in)?\s*)?((?:\d+\s*h(?:\s+\d+\s*m)?(?:\s+\d+\s*s)?)|(?:\d+\s*m(?:\s+\d+\s*s)?)|(?:\d+\s*s))/i);
+      if(cardioMatch){
+        const name = String(cardioMatch[1] || currentExercise || '').trim();
+        if(name){
+          out.push(cardioHistoryLine(name, lineSet, cardioMatch[2] ?? null, parseDurationText(cardioMatch[3])));
+          parsedSegment = true;
+        }
+      }
+    });
+    if(parsedSegment) return;
   });
   if(out.length){
     return {[target]: out};
@@ -107,6 +123,8 @@ function parseCsv(text, selectedDate){
   const repsIndex = indexOf('Reps');
   const distanceIndex = indexOf('Distance');
   const durationIndex = indexOf('Duration');
+  const roleIndex = indexOf('SetRole');
+  const outcomeIndex = indexOf('Outcome');
   const out = [];
   lines.slice(headerIndex + 1).forEach(l=>{
     const cols = parseCsvRow(l);
@@ -117,7 +135,11 @@ function parseCsv(text, selectedDate){
     const reps = repsIndex >= 0 ? String(cols[repsIndex] || '').trim() : '';
     const distance = distanceIndex >= 0 ? String(cols[distanceIndex] || '').trim() : '';
     const duration = durationIndex >= 0 ? String(cols[durationIndex] || '').trim() : '';
-    if(weight !== '' && reps !== ''){
+    const role = roleIndex >= 0 ? String(cols[roleIndex] || '').trim().toLowerCase() : '';
+    const outcome = outcomeIndex >= 0 ? String(cols[outcomeIndex] || '').trim().toLowerCase() : '';
+    if(weight !== '' && (role === 'failed_attempt' || outcome === 'failed' || reps === '0')){
+      out.push(`${name}: Set ${setNumber} - Failed attempt at ${weight} lbs`);
+    } else if(weight !== '' && reps !== ''){
       out.push(`${name}: Set ${setNumber} - ${weight} lbs × ${reps} reps`);
     } else if(duration !== ''){
       out.push(cardioHistoryLine(name, setNumber, distance, Number(duration)));
@@ -136,7 +158,12 @@ function snapshotToLines(snapshot){
     if(ex.isSuperset){
       ex.sets.forEach((set, setIdx) => {
         set.exercises.forEach(sub => {
-          lines.push(`${sub.name}: Set ${setIdx+1} - ${sub.weight} lbs × ${sub.reps} reps`);
+          const setNumber = set.set || setIdx + 1;
+          const failed = (sub.role || set.role) === 'failed_attempt'
+            || (sub.outcome || set.outcome) === 'failed';
+          lines.push(failed
+            ? `${sub.name}: Set ${setNumber} - Failed attempt at ${sub.weight} lbs`
+            : `${sub.name}: Set ${setNumber} - ${sub.weight} lbs × ${sub.reps} reps`);
         });
       });
     } else if(ex.isCardio){
@@ -145,7 +172,11 @@ function snapshotToLines(snapshot){
       });
     } else {
       ex.sets.forEach((set, setIdx) => {
-        lines.push(`${ex.name}: Set ${setIdx+1} - ${set.weight} lbs × ${set.reps} reps`);
+        const setNumber = set.set || setIdx + 1;
+        const failed = set.role === 'failed_attempt' || set.outcome === 'failed';
+        lines.push(failed
+          ? `${ex.name}: Set ${setNumber} - Failed attempt at ${set.weight} lbs`
+          : `${ex.name}: Set ${setNumber} - ${set.weight} lbs × ${set.reps} reps`);
       });
     }
   });
@@ -311,9 +342,17 @@ if (typeof document !== 'undefined') {
     }
 
     function mergeHistory(raw){
-      const incomingHistory = raw && typeof raw === 'object' && !Array.isArray(raw) && raw.history && typeof raw.history === 'object'
-        ? raw.history
-        : raw;
+      let incomingHistory;
+      if(raw && typeof raw === 'object' && !Array.isArray(raw) && raw.history && typeof raw.history === 'object'){
+        incomingHistory = raw.history;
+      } else if(raw && typeof raw === 'object' && !Array.isArray(raw) && raw.dates && typeof raw.dates === 'object'){
+        incomingHistory = raw.dates;
+      } else if(raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray(raw.exercises)){
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(String(raw.date || '')) ? raw.date : selectedDate;
+        incomingHistory = {[date]: snapshotToLines(raw.exercises)};
+      } else {
+        incomingHistory = raw;
+      }
       const incomingTitles = raw && typeof raw === 'object' && !Array.isArray(raw) && raw.titles && typeof raw.titles === 'object'
         ? raw.titles
         : null;
@@ -333,11 +372,25 @@ if (typeof document !== 'undefined') {
           }
           if(!history[date]) history[date] = [];
           entries.forEach(line => {
-            if(!history[date].includes(line)){
+            const match = String(line || '').match(/^(.+?):\s*Set\s+(\d+)\s*-/i);
+            const identity = match ? `${match[1].trim().toLowerCase().replace(/\s+/g,' ')}::${Number(match[2])}` : null;
+            const existingIndex = identity
+              ? history[date].findIndex(existingLine => {
+                const existingMatch = String(existingLine || '').match(/^(.+?):\s*Set\s+(\d+)\s*-/i);
+                if(!existingMatch) return false;
+                return `${existingMatch[1].trim().toLowerCase().replace(/\s+/g,' ')}::${Number(existingMatch[2])}` === identity;
+              })
+              : history[date].indexOf(line);
+            if(existingIndex === -1){
               history[date].push(line);
-              added++; dates.add(date);
-            } else {
+              added++;
+              dates.add(date);
+            } else if(history[date][existingIndex] === line){
               skipped++;
+            } else {
+              history[date][existingIndex] = line;
+              added++;
+              dates.add(date);
             }
           });
           if(label){
@@ -781,7 +834,15 @@ if (typeof document !== 'undefined') {
           return;
         }
         const lines = snapshotToLines(snapshot);
-        const res = mergeHistory({[selectedDate]: lines});
+        if(!lines.length){
+          alert('No logged sets to save');
+          return;
+        }
+        const today = formatDate(new Date());
+        selectedDate = today;
+        current = new Date();
+        current.setDate(1);
+        const res = mergeHistory({[today]: lines});
         save();
         renderDay();
         renderCalendar();

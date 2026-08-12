@@ -157,6 +157,18 @@ body.dark .edit-form{background:#29374a;}
 .edit-form .row2{display:flex;gap:6px;}
 .edit-form .row2 button{flex:1;}
 
+.auto-set-note{
+  margin:8px 0 10px;
+  padding:10px 12px;
+  border:1px solid rgba(54,190,149,.3);
+  border-radius:12px;
+  background:rgba(54,190,149,.1);
+  color:var(--muted-fg);
+  font-size:12px;
+  line-height:1.45;
+}
+.auto-set-note strong{color:var(--ink);}
+
 .accuracy-details{
   margin:2px 0 14px;
   border:1px solid var(--input-border);

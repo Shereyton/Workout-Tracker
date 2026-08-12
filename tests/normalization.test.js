@@ -1,7 +1,11 @@
-const { normalizeSet, normalizePayload } = require('../script');
+const {
+  normalizeSet,
+  normalizePayload,
+  normalizeSessionStartedAt,
+} = require('../script');
 
 describe('normalizeSet - superset internals', () => {
-  it('normalizes inner exercises weight/reps', () => {
+  it('marks invalid inner exercise values instead of fabricating a completed rep', () => {
     const input = {
       set: 1,
       exercises: [
@@ -12,8 +16,8 @@ describe('normalizeSet - superset internals', () => {
       restActual: 'NaN',
     };
     const out = normalizeSet(input);
-    expect(out.exercises[0].weight).toBe(0);
-    expect(out.exercises[0].reps).toBe(1);
+    expect(out.exercises[0].weight).toBeNull();
+    expect(out.exercises[0].reps).toBeNull();
     expect(out.exercises[1].weight).toBe(10);
     expect(out.exercises[1].reps).toBe(3);
     expect(out.restPlanned).toBe(30);
@@ -21,8 +25,23 @@ describe('normalizeSet - superset internals', () => {
   });
 });
 
+describe('normalizeSessionStartedAt', () => {
+  const now = new Date('2026-08-11T16:00:00.000Z').getTime();
+
+  it('keeps a recent active session', () => {
+    const startedAt = '2026-08-11T15:00:00.000Z';
+    expect(normalizeSessionStartedAt(startedAt, now)).toBe(startedAt);
+  });
+
+  it('pauses stale, invalid, and future session timers', () => {
+    expect(normalizeSessionStartedAt('2026-08-07T12:00:00.000Z', now)).toBeNull();
+    expect(normalizeSessionStartedAt('not-a-date', now)).toBeNull();
+    expect(normalizeSessionStartedAt('2026-08-11T16:02:00.000Z', now)).toBeNull();
+  });
+});
+
 describe('normalizePayload - mixed exercises', () => {
-  it('coerces values for strength/cardio/superset', () => {
+  it('coerces valid values and removes invalid imported efforts', () => {
     const payload = {
       date: '2025-01-01',
       timestamp: '2025-01-01T10:00:00.000Z',
@@ -36,28 +55,20 @@ describe('normalizePayload - mixed exercises', () => {
     const [squat, jog, sup] = norm.exercises;
     expect(squat.sets[0].weight).toBe(200.7);
     expect(squat.sets[0].reps).toBe(5);
-    expect(squat.sets[1].weight).toBe(0);
-    expect(squat.sets[1].reps).toBe(1);
+    expect(squat.sets).toHaveLength(1);
 
-    // cardio: first set invalid distance becomes null, duration min 0 stays 0 but our normalizer floors; canLogCardio enforces later
-    expect(jog.sets[0].distance).toBeNull();
-    expect(jog.sets[0].duration).toBe(0);
-    expect(jog.sets[1].distance).toBe(2.5);
-    expect(jog.sets[1].duration).toBe(601);
+    expect(jog.sets).toHaveLength(1);
+    expect(jog.sets[0].distance).toBe(2.5);
+    expect(jog.sets[0].duration).toBe(601);
 
-    // superset inner normalization
-    expect(Array.isArray(sup.sets[0].exercises)).toBe(true);
-    expect(sup.sets[0].exercises[0].weight).toBe(0);
-    expect(sup.sets[0].exercises[0].reps).toBe(1);
-    expect(sup.sets[0].exercises[1].weight).toBe(50.4);
-    expect(sup.sets[0].exercises[1].reps).toBe(10);
+    expect(sup.sets).toEqual([]);
 
     // totals
     expect(norm.totalExercises).toBe(3);
     expect(norm.totalSets).toBe(
       squat.sets.length + jog.sets.length + sup.sets.length
     );
-    expect(norm.schema).toBe(8);
+    expect(norm.schema).toBe(9);
   });
 
   it('preserves structured session planning context in exported payloads', () => {
