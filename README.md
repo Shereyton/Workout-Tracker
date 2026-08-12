@@ -1,25 +1,31 @@
 # Workout Tracker
 
-This is a lightweight web-based workout tracker. Log sets with any weight (including zero for bodyweight exercises) and export data as JSON, CSV, or AI-ready text. Finished sessions are saved locally so you can export even after closing the workout.
+This is a lightweight web-based workout tracker. Log sets with any weight (including zero for bodyweight exercises) and export data as JSON, CSV, or AI-ready text. Finished sessions, exercise-specific goals, and coaching profiles are saved locally so you can continue where you left off.
+
+## Automatic Set Classification
+
+Normal strength sets default to **Auto-detect**. As a complete exercise develops, the app deterministically separates warm-ups, ramp sets, productive work, top sets, and back-off sets. The user can override any classification, but does not need to configure set terminology just to log a workout.
+
+Only completed working, top, and back-off sets can drive progression volume, strength estimates, goal bests, or an increase recommendation. Warm-ups, technique sets, failed attempts, unknown sets, invalid imports, pain-stopped sets, and poor-technique sets stay visible without becoming evidence to add weight.
 
 ## Data Integrity Guarantees
 
 To keep logs accurate and exports clean, the app enforces the following at input, edit, and export time:
 
-- Strength sets: weight coerced to non-negative number; reps coerced to integer ≥ 1.
-- Supersets: each inner exercise weight/reps normalized with the same rules as strength.
-- Cardio sets: distance is null or non-negative number; duration is integer seconds ≥ 0.
-- Rest fields: `restPlanned` and `restActual` are integers ≥ 0 when present, else null.
-- Exports: JSON/CSV/AI are built from a normalized snapshot with correct totals.
+- Strength sets: weight must be a finite number from 0–9,999 and completed reps an integer from 1–999; invalid imported efforts are rejected instead of being fabricated as one rep.
+- Supersets: each inner exercise is validated and classified independently, with distinct exercises required.
+- Cardio sets: distance and duration are validated against finite domain limits, with time-only exercises handled separately.
+- Rest fields: `restPlanned` and `restActual` are bounded integer seconds when present, otherwise null; timers use real elapsed time and remain accurate after backgrounding.
+- Exports: JSON/CSV/AI are built from the same normalized, classified snapshot so role labels and progression math agree.
 
 These guardrails apply when logging, editing, merging current exercise into session, importing JSON, creating snapshots for the calendar, and exporting.
 
 ## Export Formats
 
 - JSON: `workout_YYYY-MM-DD.json` includes the normalized session plus context fields:
-  - Core fields: `date`, `timestamp`, `totalExercises`, `totalSets`, `exercises[]`, `schema` (currently `8`).
+  - Core fields: `date`, `timestamp`, `totalExercises`, `totalSets`, `exercises[]`, `schema` (currently `9`).
   - Optional extras saved when provided: `session{ sessionStart, sessionEnd, sessionDurationSec }`, `workoutNotes[]`, `goals[]`, `constraints`, `exerciseHighlights`, and `exerciseSelection{ source, currentExercises[], requiredExercises[] }`.
-- CSV: header `Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec)`. If session time is included, metadata rows are prepended.
+- CSV: includes exercise/set performance, effective role, role source and confidence, outcome, quality/safety context, and rest fields. If session time is included, metadata rows are prepended.
 - AI Text: structured summary with session snapshot, goals, constraints, exercise highlights (including PR flags/trends), optional freeform notes, and an optional “Progression Guard” directive to prevent stagnation. Historical workouts may guide progression calculations only; the current exported session exclusively controls which exercises appear in the next workout. Time limits may change priority and the stopping point, but never add exercises from another workout day.
 
 ## Context Panels

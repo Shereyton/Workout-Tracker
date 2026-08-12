@@ -3,6 +3,7 @@ const WT_KEYS = {
   session: 'wt_session',
   current: 'wt_currentExercise',
   last: 'wt_lastWorkout',
+  lastMeta: 'wt_lastWorkoutMeta',
   history: 'wt_history',
   custom: 'wt_customExercises',
   theme: 'wt_theme',
@@ -35,7 +36,21 @@ function getThemePack(value) {
   return THEME_PACKS[value] || THEME_PACKS.aurora;
 }
 
-const WT_SCHEMA_VERSION = 8;
+const WT_SCHEMA_VERSION = 9;
+const MAX_ACTIVE_SESSION_AGE_MS = 24 * 60 * 60 * 1000;
+
+function normalizeSessionStartedAt(value, nowMs = Date.now()) {
+  if (!value) return null;
+  const startedAtMs = new Date(value).getTime();
+  if (
+    !Number.isFinite(startedAtMs)
+    || startedAtMs > nowMs + 60000
+    || nowMs - startedAtMs > MAX_ACTIVE_SESSION_AGE_MS
+  ) {
+    return null;
+  }
+  return value;
+}
 
 const EXERCISE_GOAL_TYPES = Object.freeze({
   weight: Object.freeze({ label: 'Weight', unit: 'lbs', step: 0.5 }),
@@ -46,6 +61,7 @@ const EXERCISE_GOAL_TYPES = Object.freeze({
 });
 
 const SET_ROLE_OPTIONS = Object.freeze({
+  auto: 'Auto-detect',
   unknown: 'Not classified',
   warmup: 'Warm-up',
   ramp: 'Ramp set',
@@ -54,6 +70,13 @@ const SET_ROLE_OPTIONS = Object.freeze({
   back_off: 'Back-off set',
   technique: 'Technique set',
   failed_attempt: 'Failed attempt',
+});
+
+const SET_ROLE_SOURCES = Object.freeze({
+  auto: 'Automatically classified',
+  manual: 'Marked by user',
+  legacy_default: 'Automatically reclassified from an older default',
+  system: 'Determined from the logged outcome',
 });
 
 const TECHNIQUE_OPTIONS = Object.freeze({
@@ -111,6 +134,11 @@ function normalizeSetRole(value) {
   return Object.prototype.hasOwnProperty.call(SET_ROLE_OPTIONS, value)
     ? value
     : 'unknown';
+}
+
+function normalizeSetRoleSource(value, role = 'unknown') {
+  if (Object.prototype.hasOwnProperty.call(SET_ROLE_SOURCES, value)) return value;
+  return normalizeSetRole(role) === 'auto' ? 'auto' : 'manual';
 }
 
 function normalizeRir(value) {
@@ -222,9 +250,10 @@ function sanitizeExerciseProfiles(value) {
 }
 
 function isProgressionSet(set) {
-  if (!set || set.completed === false || Number(set.reps) <= 0) return false;
+  const reps = Number(set?.reps);
+  if (!set || set.completed === false || !Number.isFinite(reps) || reps <= 0) return false;
   const role = normalizeSetRole(set.role);
-  return !['warmup', 'ramp', 'technique', 'failed_attempt'].includes(role);
+  return ['working', 'top_set', 'back_off'].includes(role);
 }
 
 function exerciseGoalKey(name) {
@@ -282,6 +311,7 @@ function sanitizeExerciseGoals(value) {
 
 function getGoalPerformanceFromExercise(exercise, goalType, exerciseName = '') {
   if (!exercise || !Array.isArray(exercise.sets)) return 0;
+  const classifiedExercise = classifyExerciseSets(exercise);
   const values = [];
   const record = (set) => {
     if (!set) return;
@@ -289,7 +319,9 @@ function getGoalPerformanceFromExercise(exercise, goalType, exerciseName = '') {
       set.completed === false
       || normalizeSetRole(set.role) === 'failed_attempt'
       || normalizePain(set.pain) === 'stopped'
+      || normalizeTechnique(set.technique) === 'poor'
     ) return;
+    if (['weight', 'reps'].includes(goalType) && !isProgressionSet(set)) return;
     let value = null;
     if (goalType === 'weight') value = Number(set.weight);
     else if (goalType === 'reps') value = Number(set.reps);
@@ -298,21 +330,20 @@ function getGoalPerformanceFromExercise(exercise, goalType, exerciseName = '') {
     else if (goalType === 'performance') value = Number(set.performance);
     if (Number.isFinite(value) && value >= 0) values.push(value);
   };
-  if (exercise.isSuperset) {
-    exercise.sets.forEach((set) => {
+  if (classifiedExercise.isSuperset) {
+    classifiedExercise.sets.forEach((set) => {
       (set.exercises || []).forEach((inner) => {
         if (exerciseGoalKey(inner.name) === exerciseGoalKey(exerciseName)) {
           record({
+            ...set,
             ...inner,
-            role: set.role,
-            completed: set.completed,
-            pain: set.pain,
+            exercises: undefined,
           });
         }
       });
     });
   } else {
-    exercise.sets.forEach(record);
+    classifiedExercise.sets.forEach(record);
   }
   return values.length ? Math.max(...values) : 0;
 }
@@ -441,40 +472,76 @@ function coercePositiveNumber(n) {
 
 function normalizeSet(s) {
   // supports strength set and cardio set
-  const out = { ...s };
+  const out = s && typeof s === 'object' ? { ...s } : {};
   const isStrengthSet = 'weight' in out || 'reps' in out || Array.isArray(out.exercises);
   if (isStrengthSet) {
-    const requestedRole = out.role ?? out.setRole;
+    const requestedRole = out.role ?? out.setRole ?? 'auto';
+    const normalizedRequestedRole = normalizeSetRole(requestedRole);
+    const hasExplicitReps = out.reps !== '' && out.reps !== null && out.reps !== undefined;
     const hasZeroCompletedReps = !Array.isArray(out.exercises)
+      && hasExplicitReps
       && Number(out.reps) === 0;
-    out.role = normalizeSetRole(
-      out.outcome === 'failed' || hasZeroCompletedReps
-        ? 'failed_attempt'
-        : requestedRole,
-    );
+    const outcomeForcesFailure = out.outcome === 'failed'
+      || out.completed === false
+      || hasZeroCompletedReps;
+    out.role = outcomeForcesFailure ? 'failed_attempt' : normalizedRequestedRole;
+    out.roleSource = outcomeForcesFailure && normalizedRequestedRole !== 'failed_attempt'
+      ? 'system'
+      : normalizeSetRoleSource(out.roleSource, out.role);
+    if (out.role === 'auto' && out.roleSource !== 'legacy_default') {
+      out.roleSource = 'auto';
+    }
+    if (out.roleSource === 'auto' || out.roleSource === 'legacy_default') {
+      out.recordedRole = normalizeSetRole(
+        out.recordedRole || (out.roleSource === 'legacy_default' ? 'working' : 'auto'),
+      );
+    } else {
+      delete out.recordedRole;
+    }
     out.completed = out.role !== 'failed_attempt' && out.completed !== false;
     out.outcome = out.completed ? 'completed' : 'failed';
     out.rir = out.completed ? normalizeRir(out.rir) : null;
     out.technique = normalizeTechnique(out.technique);
     out.pain = normalizePain(out.pain);
+    if (!['high', 'moderate', 'low'].includes(out.roleConfidence)) {
+      delete out.roleConfidence;
+    }
+    if (out.roleReason) out.roleReason = trimString(out.roleReason, 180);
+    else delete out.roleReason;
+    if (Number(out.classificationVersion) !== 1) delete out.classificationVersion;
     delete out.setRole;
   }
-  if ('weight' in out) out.weight = coercePositiveNumber(out.weight);
+  if ('weight' in out) {
+    const weight = Number(out.weight);
+    out.weight = Number.isFinite(weight) && weight >= 0 && weight <= 9999
+      ? weight
+      : null;
+  }
   if ('reps' in out) {
+    const reps = Number(out.reps);
     out.reps = out.role === 'failed_attempt'
       ? 0
-      : Math.max(1, Math.floor(coercePositiveNumber(out.reps)));
+      : Number.isFinite(reps) && reps >= 1 && reps <= 999
+        ? Math.floor(reps)
+        : null;
   }
   // Normalize superset inner exercises if present
   if (Array.isArray(out.exercises)) {
     out.exercises = out.exercises.map((sub) => {
       const subOut = { ...sub };
-      if ('weight' in subOut)
-        subOut.weight = coercePositiveNumber(subOut.weight);
+      if ('weight' in subOut) {
+        const weight = Number(subOut.weight);
+        subOut.weight = Number.isFinite(weight) && weight >= 0 && weight <= 9999
+          ? weight
+          : null;
+      }
       if ('reps' in subOut) {
+        const reps = Number(subOut.reps);
         subOut.reps = out.role === 'failed_attempt'
           ? 0
-          : Math.max(1, Math.floor(coercePositiveNumber(subOut.reps)));
+          : Number.isFinite(reps) && reps >= 1 && reps <= 999
+            ? Math.floor(reps)
+            : null;
       }
       if ('name' in subOut) subOut.name = String(subOut.name || 'Unknown');
       return subOut;
@@ -482,26 +549,320 @@ function normalizeSet(s) {
   }
   if ('distance' in out && out.distance !== null) {
     const d = Number(out.distance);
-    out.distance = Number.isFinite(d) && d >= 0 ? d : null;
+    out.distance = Number.isFinite(d) && d >= 0 && d <= 100000 ? d : null;
   }
   if ('duration' in out)
-    out.duration = Math.max(0, Math.floor(coercePositiveNumber(out.duration)));
+    {
+      const duration = Number(out.duration);
+      out.duration = Number.isFinite(duration) && duration >= 0 && duration <= 604800
+        ? Math.floor(duration)
+        : null;
+    }
   if ('restPlanned' in out && out.restPlanned !== null) {
     const rp = Number(out.restPlanned);
-    out.restPlanned = Number.isFinite(rp) && rp >= 0 ? rp : null;
+    out.restPlanned = Number.isFinite(rp) && rp >= 0 && rp <= 86400 ? rp : null;
   }
   if ('restActual' in out && out.restActual !== null) {
     const ra = Number(out.restActual);
-    out.restActual = Number.isFinite(ra) && ra >= 0 ? ra : null;
+    out.restActual = Number.isFinite(ra) && ra >= 0 && ra <= 86400 ? ra : null;
   }
   return out;
+}
+
+function isValidNormalizedSet(set, exercise = {}) {
+  if (!set || typeof set !== 'object') return false;
+  if (exercise.isCardio) {
+    const duration = Number(set.duration);
+    if (!Number.isFinite(duration) || duration <= 0 || duration > 604800) return false;
+    const allowsNoDistance = ['jump rope', 'plank'].includes(
+      String(exercise.name || '').trim().toLowerCase(),
+    );
+    if (allowsNoDistance && (set.distance === null || set.distance === undefined)) return true;
+    const distance = Number(set.distance);
+    return Number.isFinite(distance) && distance >= 0 && distance <= 100000;
+  }
+  const isValidStrengthEntry = (entry, role) => {
+    if (entry?.weight === null || entry?.weight === undefined || entry?.weight === '') return false;
+    if (entry?.reps === null || entry?.reps === undefined || entry?.reps === '') return false;
+    const weight = Number(entry?.weight);
+    const reps = Number(entry?.reps);
+    if (!Number.isFinite(weight) || weight < 0 || weight > 9999) return false;
+    if (normalizeSetRole(role) === 'failed_attempt') return reps === 0;
+    return Number.isFinite(reps) && reps >= 1 && reps <= 999;
+  };
+  if (exercise.isSuperset || Array.isArray(set.exercises)) {
+    return Array.isArray(set.exercises)
+      && set.exercises.length >= 2
+      && set.exercises.every((inner) => isValidStrengthEntry(
+        inner,
+        inner.role ?? set.role,
+      ));
+  }
+  return isValidStrengthEntry(set, set.role);
+}
+
+function representativeSetLoad(set) {
+  if (Array.isArray(set?.exercises)) {
+    const weights = set.exercises
+      .map((inner) => Number(inner?.weight))
+      .filter((weight) => Number.isFinite(weight) && weight >= 0);
+    return weights.length ? weights.reduce((sum, weight) => sum + weight, 0) : 0;
+  }
+  const weight = Number(set?.weight);
+  return Number.isFinite(weight) && weight >= 0 ? weight : 0;
+}
+
+function representativeSetReps(set) {
+  if (Array.isArray(set?.exercises)) {
+    const reps = set.exercises
+      .map((inner) => Number(inner?.reps))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    return reps.length ? Math.min(...reps) : 0;
+  }
+  const reps = Number(set?.reps);
+  return Number.isFinite(reps) && reps > 0 ? reps : 0;
+}
+
+function isAutomaticRole(set) {
+  const role = normalizeSetRole(set?.role);
+  const source = normalizeSetRoleSource(set?.roleSource, role);
+  return role === 'auto' || source === 'auto' || source === 'legacy_default';
+}
+
+function medianNumber(values) {
+  const sorted = values
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  if (!sorted.length) return 0;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/**
+ * Resolve automatic set roles from the complete loading sequence for one exercise.
+ * Manual labels always win. The classifier deliberately uses only transparent
+ * loading-pattern rules; inferred labels retain their source, confidence, and reason.
+ */
+function classifyExerciseSets(exercise) {
+  if (!exercise || !Array.isArray(exercise.sets)) {
+    return exercise && typeof exercise === 'object'
+      ? { ...exercise, sets: Array.isArray(exercise.sets) ? exercise.sets.map(normalizeSet) : [] }
+      : exercise;
+  }
+
+  if (exercise.isCardio) {
+    const sets = exercise.sets
+      .map((set) => normalizeSet(set))
+      .filter((set) => isValidNormalizedSet(set, exercise));
+    return { ...exercise, sets };
+  }
+
+  if (exercise.isSuperset) {
+    const parentSets = exercise.sets
+      .map((set) => normalizeSet(set))
+      .filter((set) => isValidNormalizedSet(set, exercise));
+    const childSeries = new Map();
+    parentSets.forEach((parentSet, parentIndex) => {
+      (parentSet.exercises || []).forEach((inner, innerIndex) => {
+        const name = trimString(inner?.name || `Exercise ${innerIndex + 1}`, 80);
+        const key = exerciseGoalKey(name);
+        if (!childSeries.has(key)) childSeries.set(key, { name, entries: [] });
+        childSeries.get(key).entries.push({
+          parentIndex,
+          innerIndex,
+          set: {
+            ...inner,
+            set: parentSet.set,
+            role: inner.role ?? parentSet.role,
+            roleSource: inner.roleSource ?? parentSet.roleSource,
+            recordedRole: inner.recordedRole ?? parentSet.recordedRole,
+            completed: inner.completed ?? parentSet.completed,
+            outcome: inner.outcome ?? parentSet.outcome,
+            rir: inner.rir ?? parentSet.rir,
+            technique: inner.technique ?? parentSet.technique,
+            pain: inner.pain ?? parentSet.pain,
+          },
+        });
+      });
+    });
+
+    childSeries.forEach(({ name, entries }) => {
+      const classified = classifyExerciseSets({
+        name,
+        progressionProfile: exercise.progressionProfiles?.[exerciseGoalKey(name)]
+          || exercise.progressionProfile,
+        sets: entries.map((entry) => entry.set),
+      });
+      classified.sets.forEach((childSet, childIndex) => {
+        const entry = entries[childIndex];
+        const inner = parentSets[entry.parentIndex].exercises[entry.innerIndex];
+        [
+          'role',
+          'roleSource',
+          'recordedRole',
+          'roleConfidence',
+          'roleReason',
+          'classificationVersion',
+          'completed',
+          'outcome',
+          'rir',
+          'technique',
+          'pain',
+        ].forEach((field) => {
+          if (childSet[field] === undefined) delete inner[field];
+          else inner[field] = childSet[field];
+        });
+      });
+    });
+
+    parentSets.forEach((parentSet) => {
+      if (!isAutomaticRole(parentSet)) return;
+      const roles = [...new Set(
+        (parentSet.exercises || []).map((inner) => normalizeSetRole(inner.role)),
+      )];
+      if (roles.length === 1) {
+        parentSet.role = roles[0];
+        parentSet.roleConfidence = (parentSet.exercises || []).every(
+          (inner) => inner.roleConfidence === 'high',
+        ) ? 'high' : 'moderate';
+        parentSet.roleReason = 'Every exercise in this superset received the same automatic role.';
+      } else {
+        parentSet.role = 'auto';
+        parentSet.roleConfidence = 'low';
+        parentSet.roleReason = 'Superset exercises were classified separately because their loading patterns differ.';
+      }
+      parentSet.recordedRole = normalizeSetRole(parentSet.recordedRole || 'auto');
+      parentSet.classificationVersion = 1;
+    });
+
+    return { ...exercise, sets: parentSets };
+  }
+
+  const sets = exercise.sets
+    .map((set) => normalizeSet(set))
+    .filter((set) => isValidNormalizedSet(set, exercise));
+  const profile = normalizeExerciseProfile(exercise.progressionProfile);
+  const analysis = sets
+    .map((set, index) => ({
+      set,
+      index,
+      load: representativeSetLoad(set),
+      reps: representativeSetReps(set),
+    }))
+    .filter(({ set, reps }) => {
+      if (set.completed === false || reps <= 0) return false;
+      const role = normalizeSetRole(set.role);
+      return isAutomaticRole(set) || ['working', 'top_set', 'back_off'].includes(role);
+    });
+
+  const automatic = analysis.filter(({ set }) => isAutomaticRole(set));
+  if (!automatic.length) return { ...exercise, sets };
+
+  const maxLoad = analysis.length
+    ? Math.max(...analysis.map(({ load }) => load))
+    : 0;
+  const loadTolerance = Math.max(0.01, maxLoad * 0.005);
+  const sameLoad = (a, b) => Math.abs(a - b) <= loadTolerance;
+  const peakCandidates = analysis.filter(({ load }) => sameLoad(load, maxLoad));
+  const peakIndex = peakCandidates.length ? peakCandidates[0].index : automatic[0].index;
+  const peakReps = medianNumber(peakCandidates.map(({ reps }) => reps));
+  const distinctLoads = new Set(
+    analysis.map(({ load }) => Number(load.toFixed(4))),
+  );
+  const hasLoadSequence = maxLoad > 0 && distinctLoads.size > 1;
+  const occurrencesAt = (load) => analysis.filter((item) => sameLoad(item.load, load)).length;
+  const hasLowerAfterPeak = analysis.some(
+    ({ index, load }) => index > peakIndex && load < maxLoad - loadTolerance,
+  );
+
+  const resolvedSets = sets.map((set, index) => {
+    if (!isAutomaticRole(set)) return set;
+    const load = representativeSetLoad(set);
+    const reps = representativeSetReps(set);
+    const source = normalizeSetRoleSource(set.roleSource, set.role);
+    const recordedRole = source === 'legacy_default'
+      ? 'working'
+      : normalizeSetRole(set.recordedRole || 'auto');
+    let role = 'working';
+    let confidence = 'moderate';
+    let reason = 'Repeated at one load, so it is treated as productive work.';
+
+    if (!set.completed || reps <= 0) {
+      role = 'failed_attempt';
+      confidence = 'high';
+      reason = 'Zero completed repetitions cannot count as successful work.';
+    } else if (!hasLoadSequence) {
+      role = 'working';
+      confidence = maxLoad > 0 && automatic.length > 1 ? 'moderate' : 'low';
+      reason = maxLoad > 0 && automatic.length > 1
+        ? 'All logged sets used the same load.'
+        : maxLoad > 0
+          ? 'A single completed set is treated as baseline work until more sets are logged.'
+        : 'No comparable external load was available, so completed sets are treated as work.';
+    } else if (sameLoad(load, maxLoad)) {
+      const isFirstPeak = index === peakIndex;
+      role = isFirstPeak ? 'top_set' : 'working';
+      confidence = hasLowerAfterPeak || peakCandidates.length > 1 ? 'high' : 'moderate';
+      reason = isFirstPeak
+        ? 'This is the first set at the session’s heaviest load.'
+        : 'This repeats the session’s heaviest load after the first top set.';
+    } else if (index > peakIndex && load < maxLoad - loadTolerance) {
+      role = 'back_off';
+      confidence = load <= maxLoad * 0.9 ? 'high' : 'moderate';
+      reason = 'The load decreased after the session’s heaviest set.';
+    } else if (index < peakIndex) {
+      const loadRatio = maxLoad > 0 ? load / maxLoad : 1;
+      const repeatedLoad = occurrencesAt(load) > 1;
+      const looksLikeProductivePyramidWork = loadRatio >= 0.85
+        && reps >= Math.max(profile.repMin, peakReps)
+        && !repeatedLoad;
+      if (loadRatio <= 0.5) {
+        role = 'warmup';
+        confidence = 'high';
+        reason = 'This early load was at most half of the session’s heaviest load.';
+      } else if (repeatedLoad && reps >= profile.repMin) {
+        role = 'working';
+        confidence = 'moderate';
+        reason = 'This load was repeated in the exercise’s productive rep range.';
+      } else if (looksLikeProductivePyramidWork) {
+        role = 'working';
+        confidence = 'low';
+        reason = 'This near-peak set fits the productive rep range; it may be pyramid work.';
+      } else {
+        role = 'ramp';
+        confidence = loadRatio < 0.75 ? 'high' : 'moderate';
+        reason = 'This was an earlier, lighter exposure before the session’s heaviest load.';
+      }
+    }
+
+    return {
+      ...set,
+      role,
+      roleSource: source,
+      recordedRole,
+      roleConfidence: confidence,
+      roleReason: reason,
+      classificationVersion: 1,
+    };
+  });
+
+  return { ...exercise, sets: resolvedSets };
 }
 
 function formatSetContext(set, { includeRole = true } = {}) {
   if (!set || typeof set !== 'object') return '';
   const parts = [];
   const role = normalizeSetRole(set.role);
-  if (includeRole && role !== 'unknown') parts.push(SET_ROLE_OPTIONS[role]);
+  if (includeRole && role !== 'unknown') {
+    const source = normalizeSetRoleSource(set.roleSource, role);
+    if (role === 'auto') parts.push('Auto-detecting');
+    else if (source === 'auto' || source === 'legacy_default') {
+      parts.push(`Auto: ${SET_ROLE_OPTIONS[role]}`);
+    } else parts.push(SET_ROLE_OPTIONS[role]);
+  }
   const rir = normalizeRir(set.rir);
   if (rir != null) parts.push(`${formatGoalNumber(rir)} RIR`);
   const technique = normalizeTechnique(set.technique);
@@ -512,30 +873,46 @@ function formatSetContext(set, { includeRole = true } = {}) {
 }
 
 function normalizeExercise(e) {
-  const isSuperset = !!e.isSuperset;
-  const isCardio = !!e.isCardio;
-  const sets = Array.isArray(e.sets)
-    ? e.sets.map((set, index) => normalizeSet({ ...set, set: index + 1 }))
+  const source = e && typeof e === 'object' ? e : {};
+  const isSuperset = !!source.isSuperset;
+  const isCardio = !!source.isCardio;
+  const exerciseShape = {
+    name: String(source.name || 'Unknown'),
+    isSuperset,
+    isCardio,
+  };
+  const sets = Array.isArray(source.sets)
+    ? source.sets
+      .map((set, index) => normalizeSet({ ...(set || {}), set: index + 1 }))
+      .filter((set) => isValidNormalizedSet(set, exerciseShape))
+      .map((set, index) => ({ ...set, set: index + 1 }))
     : [];
   const base = {
-    name: String(e.name || 'Unknown'),
+    name: exerciseShape.name,
     isSuperset,
     isCardio,
     exercises: isSuperset
-      ? Array.isArray(e.exercises)
-        ? e.exercises.slice(0, 10)
+      ? Array.isArray(source.exercises)
+        ? source.exercises.slice(0, 10).map((name) => trimString(name, 80)).filter(Boolean)
         : []
       : undefined,
     sets,
     nextSet: sets.length + 1,
   };
   base.progressionProfile = normalizeExerciseProfile(
-    e.progressionProfile || e.profile,
+    source.progressionProfile || source.profile,
   );
-  const goal = normalizeExerciseGoal(e.goal, e.name);
+  if (isSuperset && source.progressionProfiles && typeof source.progressionProfiles === 'object') {
+    base.progressionProfiles = {};
+    Object.entries(source.progressionProfiles).forEach(([name, profile]) => {
+      const key = exerciseGoalKey(name);
+      if (key) base.progressionProfiles[key] = normalizeExerciseProfile(profile);
+    });
+  }
+  const goal = normalizeExerciseGoal(source.goal, source.name);
   if (goal) base.goal = goal;
-  if (Array.isArray(e.exerciseGoals)) {
-    const exerciseGoals = e.exerciseGoals
+  if (Array.isArray(source.exerciseGoals)) {
+    const exerciseGoals = source.exerciseGoals
       .map((item) => normalizeExerciseGoal(item, item && item.exerciseName))
       .filter(Boolean);
     if (exerciseGoals.length) base.exerciseGoals = exerciseGoals;
@@ -547,7 +924,7 @@ function normalizeExercise(e) {
 function normalizePayload(payload) {
   if (!payload)
     return {
-      date: new Date().toISOString().split('T')[0],
+      date: getLocalDateString(),
       timestamp: new Date().toISOString(),
       totalExercises: 0,
       totalSets: 0,
@@ -555,10 +932,12 @@ function normalizePayload(payload) {
       schema: WT_SCHEMA_VERSION,
     };
   if (Array.isArray(payload)) {
-    const exs = payload.map(normalizeExercise);
+    const exs = payload
+      .filter((exercise) => exercise && typeof exercise === 'object')
+      .map(normalizeExercise);
     const totalSets = exs.reduce((s, e) => s + e.sets.length, 0);
     return {
-      date: new Date().toISOString().split('T')[0],
+      date: getLocalDateString(),
       timestamp: new Date().toISOString(),
       totalExercises: exs.length,
       totalSets,
@@ -567,11 +946,17 @@ function normalizePayload(payload) {
     };
   }
   // v1/v2 exported object
+  const declaredSchema = Number(payload.schema);
+  if (Number.isFinite(declaredSchema) && declaredSchema > 0 && declaredSchema < 9) {
+    payload = migrateSetRoleProvenance(payload).value;
+  }
   const exs = Array.isArray(payload.exercises)
-    ? payload.exercises.map(normalizeExercise)
+    ? payload.exercises
+      .filter((exercise) => exercise && typeof exercise === 'object')
+      .map(normalizeExercise)
     : [];
   const totalSets = exs.reduce((s, e) => s + e.sets.length, 0);
-  const date = String(payload.date || new Date().toISOString().split('T')[0]);
+  const date = String(payload.date || getLocalDateString());
   const ts = String(payload.timestamp || new Date().toISOString());
   const normalized = {
     date,
@@ -961,9 +1346,12 @@ function estimateE1rmFromSet(set) {
 
 function computeSessionStats(payload) {
   const date = payload && payload.date ? String(payload.date) : null;
-  const exercises = Array.isArray(payload && payload.exercises)
+  const rawExercises = Array.isArray(payload && payload.exercises)
     ? payload.exercises
     : [];
+  const exercises = rawExercises
+    .filter((exercise) => exercise && typeof exercise === 'object')
+    .map((exercise) => classifyExerciseSets(exercise));
   const map = new Map();
   const totalSets = exercises.reduce(
     (sum, exercise) => sum + (Array.isArray(exercise?.sets) ? exercise.sets.length : 0),
@@ -972,6 +1360,7 @@ function computeSessionStats(payload) {
   let totalVolume = 0;
   let totalCardioDuration = 0;
   const roleCounts = {
+    auto: 0,
     warmup: 0,
     ramp: 0,
     working: 0,
@@ -981,11 +1370,25 @@ function computeSessionStats(payload) {
     failed_attempt: 0,
     unknown: 0,
   };
+  const roleSourceCounts = {
+    auto: 0,
+    manual: 0,
+    legacy_default: 0,
+    system: 0,
+  };
 
   exercises.forEach((exercise) => {
     (exercise?.sets || []).forEach((set) => {
       if (exercise.isCardio) return;
-      roleCounts[normalizeSetRole(set.role)] += 1;
+      const strengthEntries = exercise.isSuperset
+        ? (set.exercises || []).map((inner) => ({ ...set, ...inner, exercises: undefined }))
+        : [set];
+      strengthEntries.forEach((strengthSet) => {
+        const role = normalizeSetRole(strengthSet.role);
+        const source = normalizeSetRoleSource(strengthSet.roleSource, role);
+        roleCounts[role] += 1;
+        roleSourceCounts[source] += 1;
+      });
     });
   });
 
@@ -999,6 +1402,7 @@ function computeSessionStats(payload) {
         progressionSetCount: 0,
         failedAttemptCount: 0,
         unknownSetCount: 0,
+        autoClassifiedSetCount: 0,
         totalVolume: 0,
         workingVolume: 0,
         totalDuration: 0,
@@ -1025,6 +1429,9 @@ function computeSessionStats(payload) {
     totalVolume += volume;
     if (normalizeSetRole(set.role) === 'failed_attempt') entry.failedAttemptCount += 1;
     if (normalizeSetRole(set.role) === 'unknown') entry.unknownSetCount += 1;
+    if (['auto', 'legacy_default'].includes(normalizeSetRoleSource(set.roleSource, set.role))) {
+      entry.autoClassifiedSetCount += 1;
+    }
 
     const validPerformance = isProgressionSet(set)
       && normalizePain(set.pain) !== 'stopped'
@@ -1069,7 +1476,9 @@ function computeSessionStats(payload) {
           recordStrengthSet(
             trimString(inner.name || exercise.name || 'Exercise', 80),
             { ...set, ...inner, exercises: undefined },
-            exercise.progressionProfile,
+            exercise.progressionProfiles?.[exerciseGoalKey(inner.name)]
+              || inner.progressionProfile
+              || exercise.progressionProfile,
           );
         });
       });
@@ -1100,7 +1509,8 @@ function computeSessionStats(payload) {
     totalVolume,
     totalCardioDuration,
     roleCounts,
-    progressionSetCount: roleCounts.working + roleCounts.top_set + roleCounts.back_off + roleCounts.unknown,
+    roleSourceCounts,
+    progressionSetCount: roleCounts.working + roleCounts.top_set + roleCounts.back_off,
     warmupSetCount: roleCounts.warmup + roleCounts.ramp,
     failedAttemptCount: roleCounts.failed_attempt,
     exercises: Array.from(map.values()).map((entry) => ({
@@ -1108,6 +1518,16 @@ function computeSessionStats(payload) {
       sessionContext: payload?.sessionContext || null,
     })),
   };
+}
+
+function getProgressionVolume(exerciseStats) {
+  if (!exerciseStats || typeof exerciseStats !== 'object') return 0;
+  if (Object.prototype.hasOwnProperty.call(exerciseStats, 'workingVolume')) {
+    const workingVolume = Number(exerciseStats.workingVolume);
+    return Number.isFinite(workingVolume) && workingVolume >= 0 ? workingVolume : 0;
+  }
+  const legacyTotal = Number(exerciseStats.totalVolume);
+  return Number.isFinite(legacyTotal) && legacyTotal >= 0 ? legacyTotal : 0;
 }
 
 function buildStrengthDecisionSupport(
@@ -1175,8 +1595,9 @@ function buildStrengthDecisionSupport(
   const hasComparablePrevious = previousStatus !== 'pain_limited'
     && Number.isFinite(previousTopWeight)
     && Number.isFinite(previousTopReps);
-  const volumeRatio = hasComparablePrevious && Number(previous.totalVolume) > 0
-    ? Number(current.workingVolume) / Number(previous.workingVolume || previous.totalVolume)
+  const previousProgressionVolume = getProgressionVolume(previous);
+  const volumeRatio = hasComparablePrevious && previousProgressionVolume > 0
+    ? getProgressionVolume(current) / previousProgressionVolume
     : null;
 
   const failedAttempts = strengthSets.filter(
@@ -1187,15 +1608,23 @@ function buildStrengthDecisionSupport(
     (set) => normalizePain(set.pain) === 'discomfort',
   );
   const poorTechnique = strengthSets.some((set) => normalizeTechnique(set.technique) === 'poor');
+  const minorTechnique = strengthSets.some((set) => normalizeTechnique(set.technique) === 'minor');
   const rirValues = validSets
     .map((set) => normalizeRir(set.rir))
     .filter((value) => value != null)
     .sort((a, b) => a - b);
-  const medianRir = rirValues.length
-    ? rirValues[Math.floor(rirValues.length / 2)]
-    : null;
+  const medianRir = rirValues.length ? medianNumber(rirValues) : null;
+  const knownBelowTargetRir = rirValues.some((rir) => rir < profile.targetRir);
+  const hasLowConfidenceAutomaticRole = validSets.some(
+    (set) => ['auto', 'legacy_default'].includes(normalizeSetRoleSource(set.roleSource, set.role))
+      && set.roleConfidence === 'low',
+  );
   const allRolesKnown = validSets.length > 0
     && validSets.every((set) => normalizeSetRole(set.role) !== 'unknown');
+  const allRolesConfirmed = validSets.length > 0
+    && validSets.every(
+      (set) => normalizeSetRoleSource(set.roleSource, set.role) === 'manual',
+    );
   const allTechniqueGood = validSets.length > 0
     && validSets.every((set) => normalizeTechnique(set.technique) === 'good');
   const allRirKnown = validSets.length > 0 && rirValues.length === validSets.length;
@@ -1232,7 +1661,7 @@ function buildStrengthDecisionSupport(
     .filter((value) => value != null)
     .sort((a, b) => a - b);
   const previousMedianRir = previousRirValues.length
-    ? previousRirValues[Math.floor(previousRirValues.length / 2)]
+    ? medianNumber(previousRirValues)
     : null;
   const previousQualityKnown = previousSets.length > 0
     && previousSets.every(
@@ -1241,6 +1670,16 @@ function buildStrengthDecisionSupport(
         && normalizeTechnique(set.technique) === 'good'
         && normalizePain(set.pain) !== 'unknown',
     );
+  const previousKnownTechniqueIssue = previousSets.some(
+    (set) => ['minor', 'poor'].includes(normalizeTechnique(set.technique)),
+  );
+  const previousKnownBelowTargetRir = previousRirValues.some(
+    (rir) => rir < profile.targetRir,
+  );
+  const previousHasLowConfidenceAutomaticRole = previousSets.some(
+    (set) => ['auto', 'legacy_default'].includes(normalizeSetRoleSource(set.roleSource, set.role))
+      && set.roleConfidence === 'low',
+  );
   const olderComparableSessions = Array.isArray(additionalHistory)
     ? additionalHistory
     : [];
@@ -1261,6 +1700,15 @@ function buildStrengthDecisionSupport(
     return sets.length > 0
       && sets.every((set) => Number(set.reps) >= profile.repMax)
       && sets.every((set) => normalizePain(set.pain) !== 'discomfort')
+      && sets.every((set) => normalizeTechnique(set.technique) !== 'minor')
+      && sets.every((set) => {
+        const rir = normalizeRir(set.rir);
+        return rir == null || rir >= profile.targetRir;
+      })
+      && sets.every((set) => !(
+        ['auto', 'legacy_default'].includes(normalizeSetRoleSource(set.roleSource, set.role))
+        && set.roleConfidence === 'low'
+      ))
       && !session.strengthSets.some(
         (set) => normalizeSetRole(set.role) === 'failed_attempt' || set.completed === false,
       );
@@ -1270,7 +1718,7 @@ function buildStrengthDecisionSupport(
     && previousAllAtTop
     && olderTopRangeCount >= 1;
   const shortRestLikely = repeatedTopSets.some((set, index) => {
-    if (index === 0) return false;
+    if (index >= repeatedTopSets.length - 1) return false;
     return Number.isFinite(Number(set.restActual))
       && Number.isFinite(Number(set.restPlanned))
       && Number(set.restActual) < Number(set.restPlanned) * 0.85;
@@ -1280,6 +1728,7 @@ function buildStrengthDecisionSupport(
   if (
     hasComparablePrevious
     && allRolesKnown
+    && allRolesConfirmed
     && allTechniqueGood
     && allRirKnown
     && allPainKnown
@@ -1311,6 +1760,12 @@ function buildStrengthDecisionSupport(
   } else if (failedAttempts.length) {
     decision = 'HOLD';
     reason = `${failedAttempts.length} failed attempt${failedAttempts.length === 1 ? ' was' : 's were'} recorded. A failed attempt is not a completed set, PR, or reason to add weight; base the next session on the heaviest successful high-quality work.`;
+  } else if (minorTechnique) {
+    decision = 'HOLD';
+    reason = `a form breakdown was recorded. Keep load and sets stable until every progression set meets the required technique standard.`;
+  } else if (knownBelowTargetRir) {
+    decision = 'HOLD';
+    reason = `at least one progression set finished below the saved ${formatGoalNumber(profile.targetRir)} RIR target. Keep load and sets stable until the prescribed effort is repeatable.`;
   } else if ((hasLargeRepDrop || possibleRepeatedSetFatigue) && shortRestLikely) {
     decision = 'INCREASE REST';
     const repSequence = repeatedReps.join('→');
@@ -1362,7 +1817,13 @@ function buildStrengthDecisionSupport(
     && !nextLoadFeasibility.preservesRepMinimum
   ) {
     reason = `three comparable successful workouts reached the top of the automatic ${profile.repMin}–${profile.repMax} range, but the saved ${formatGoalNumber(step)} lb jump predicts fewer than ${profile.repMin} reps. Hold this weight and keep building clean reps; the equipment jump is too large for the current range.`;
-  } else if (outcomeBasedProgressionReady) {
+  } else if (
+    outcomeBasedProgressionReady
+    && !previousKnownTechniqueIssue
+    && !previousKnownBelowTargetRir
+    && !hasLowConfidenceAutomaticRole
+    && !previousHasLowConfidenceAutomaticRole
+  ) {
     decision = 'ADD LOAD';
     confidence = allPainKnown && allTechniqueGood ? 'HIGH' : 'MODERATE';
     reason = `three comparable successful workouts at ${formatGoalNumber(topWeight)} lbs reached the top of the automatic ${profile.repMin}–${profile.repMax} range. Add only the saved ${formatGoalNumber(step)} lb increment, return to the lower end of the range, and keep sets unchanged. This outcome-based rule lets automatic coaching progress without requiring technical effort ratings.`;
@@ -1478,11 +1939,13 @@ function buildExerciseHighlightsForExport(currentStats, previousStats) {
         : `${exercise.totalSets} sets completed`;
       highlight.today = `${description} (${exercise.totalSets} set${exercise.totalSets === 1 ? '' : 's'})`;
 
-      const currentProgressionVolume = exercise.workingVolume || exercise.totalVolume || 0;
-      const volumes = recent.map(
-        (entry) => entry.stats.workingVolume || entry.stats.totalVolume || 0,
-      );
-      if (volumes.length) {
+      const currentProgressionVolume = getProgressionVolume(exercise);
+      const volumes = recent
+        .map((entry) => getProgressionVolume(entry.stats))
+        .filter((volume) => volume > 0);
+      if (exercise.progressionSetCount === 0) {
+        highlight.trend = 'No classified progression sets; trend withheld.';
+      } else if (volumes.length) {
         const avgVolume =
           volumes.reduce((sum, value) => sum + value, 0) / volumes.length;
         if (avgVolume > 0) {
@@ -1581,6 +2044,38 @@ function getWorkoutExerciseRoster(payload) {
   return names;
 }
 
+function mergeWorkoutExercises(exercises) {
+  const merged = [];
+  (Array.isArray(exercises) ? exercises : [])
+    .filter((exercise) => exercise && typeof exercise === 'object')
+    .forEach((exercise) => {
+      const normalized = normalizeExercise(exercise);
+      if (!normalized.sets.length) return;
+      const key = exerciseGoalKey(normalized.name);
+      const existing = merged.find(
+        (candidate) => exerciseGoalKey(candidate.name) === key
+          && candidate.isSuperset === normalized.isSuperset
+          && candidate.isCardio === normalized.isCardio,
+      );
+      if (!existing) {
+        merged.push(normalized);
+        return;
+      }
+      existing.progressionProfile = normalized.progressionProfile;
+      if (normalized.progressionProfiles) {
+        existing.progressionProfiles = {
+          ...(existing.progressionProfiles || {}),
+          ...normalized.progressionProfiles,
+        };
+      }
+      normalized.sets.forEach((set) => {
+        existing.sets.push({ ...set, set: existing.sets.length + 1 });
+      });
+      existing.nextSet = existing.sets.length + 1;
+    });
+  return merged.map((exercise) => classifyExerciseSets(exercise));
+}
+
 function buildExerciseSelectionReference(currentPayload) {
   const currentExercises = getWorkoutExerciseRoster(currentPayload);
   return {
@@ -1599,9 +2094,11 @@ function computeConsistencyMetricsFromStats(allStats, referenceDate) {
   const totalsByDate = new Map();
   allStats.forEach((session) => {
     if (!session || !session.date) return;
+    const sessionSets = Number(session.totalSets);
+    if (!Number.isFinite(sessionSets) || sessionSets <= 0) return;
     const key = session.date;
     const entry = totalsByDate.get(key) || { totalSets: 0 };
-    entry.totalSets += session.totalSets || 0;
+    entry.totalSets += sessionSets;
     totalsByDate.set(key, entry);
   });
 
@@ -1669,6 +2166,24 @@ function appendUniqueHistoryLines(existing, incoming) {
   return merged;
 }
 
+function upsertStructuredHistoryLines(existing, incoming) {
+  const merged = Array.isArray(existing) ? [...existing] : [];
+  const identity = (line) => {
+    const match = String(line || '').match(/^(.+?):\s*Set\s+(\d+)\s*-/i);
+    return match ? `${exerciseGoalKey(match[1])}::${Number(match[2])}` : null;
+  };
+  (Array.isArray(incoming) ? incoming : []).forEach((line) => {
+    const key = identity(line);
+    if (key) {
+      for (let index = merged.length - 1; index >= 0; index -= 1) {
+        if (identity(merged[index]) === key) merged.splice(index, 1);
+      }
+    } else if (merged.includes(line)) return;
+    merged.push(line);
+  });
+  return merged;
+}
+
 function csvCell(value) {
   const str = value == null ? "" : String(value);
   return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
@@ -1700,7 +2215,8 @@ function mergeIntoHistory(payload) {
       for (const [setIdx, s] of ex.sets.entries()) {
         const setNumber = s.set || setIdx + 1;
         for (const sub of s.exercises || []) {
-          lines.push(normalizeSetRole(s.role) === 'failed_attempt'
+          const role = normalizeSetRole(sub.role ?? s.role);
+          lines.push(role === 'failed_attempt'
             ? `${sub.name}: Set ${setNumber} - Failed attempt at ${coercePositiveNumber(sub.weight)} lbs`
             : `${sub.name}: Set ${setNumber} - ${coercePositiveNumber(sub.weight)} lbs × ${Math.max(
               1,
@@ -1725,7 +2241,7 @@ function mergeIntoHistory(payload) {
     }
   }
   const curr = Array.isArray(hist[day]) ? hist[day] : [];
-  hist[day] = appendUniqueHistoryLines(curr, lines);
+  hist[day] = upsertStructuredHistoryLines(curr, lines);
   wtStorage.set(WT_KEYS.history, hist);
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event('wt-history-updated'));
@@ -1754,16 +2270,25 @@ function lsSetRaw(k, v) {
 
 function backupKey(k, n) { return `${k}.backup${n}`; } // .backup1..3
 
-function writeWithBackups(key, valueStr) {
+function writeWithBackups(key, valueStr, keepBackups = true) {
   // roll backups: 3 <- 2 <- 1 <- current
   const cur = lsGetRaw(key);
-  if (cur !== null) {
-    lsSetRaw(backupKey(key,3), lsGetRaw(backupKey(key,2)));
-    lsSetRaw(backupKey(key,2), lsGetRaw(backupKey(key,1)));
+  if (keepBackups && cur !== null) {
+    const backup2 = lsGetRaw(backupKey(key, 2));
+    const backup1 = lsGetRaw(backupKey(key, 1));
+    if (backup2 !== null) lsSetRaw(backupKey(key, 3), backup2);
+    if (backup1 !== null) lsSetRaw(backupKey(key, 2), backup1);
     lsSetRaw(backupKey(key,1), cur);
   }
   // atomic-ish: write new value last
   lsSetRaw(key, valueStr);
+}
+
+function reportStorageFailure(error) {
+  if (typeof console !== 'undefined') console.error('Workout Tracker could not save data.', error);
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('wt-storage-error'));
+  }
 }
 
 const wtStorage = {
@@ -1773,15 +2298,28 @@ const wtStorage = {
     return safeParse(raw, fallback);
   },
   set(key, obj) {
-    const str = JSON.stringify(obj);
-    writeWithBackups(key, str);
+    try {
+      const str = JSON.stringify(obj);
+      // The archive is already a bounded derived history. Replicating it four times
+      // can exhaust localStorage and prevent an active set from being saved.
+      writeWithBackups(key, str, key !== WT_KEYS.archive);
+      return true;
+    } catch (error) {
+      reportStorageFailure(error);
+      return false;
+    }
   },
   getRaw(key) { return lsGetRaw(key); },
-  restoreBackup(key) {
+  restoreBackup(key, validator = () => true) {
     // try newest → oldest
     for (let i=1;i<=3;i++) {
       const b = lsGetRaw(backupKey(key,i));
-      if (b !== null) { lsSetRaw(key, b); return true; }
+      if (b === null) continue;
+      const parsed = safeParse(b, undefined);
+      if (parsed !== undefined && validator(parsed)) {
+        lsSetRaw(key, b);
+        return true;
+      }
     }
     return false;
   },
@@ -1792,11 +2330,66 @@ const wtStorage = {
   }
 };
 
+function migrateSetRoleProvenance(value) {
+  let changed = false;
+  const visit = (input) => {
+    if (Array.isArray(input)) return input.map(visit);
+    if (!input || typeof input !== 'object') return input;
+    const out = {};
+    Object.entries(input).forEach(([key, child]) => {
+      out[key] = visit(child);
+    });
+    const setLike = Object.prototype.hasOwnProperty.call(out, 'set')
+      || Object.prototype.hasOwnProperty.call(out, 'weight')
+      || Object.prototype.hasOwnProperty.call(out, 'reps')
+      || (Array.isArray(out.exercises) && out.exercises.some(
+        (inner) => inner && typeof inner === 'object' && 'weight' in inner,
+      ));
+    if (!setLike || out.roleSource) return out;
+    const role = out.role == null ? 'auto' : normalizeSetRole(out.role);
+    if (role === 'working') {
+      out.roleSource = 'legacy_default';
+      out.recordedRole = 'working';
+      changed = true;
+    } else if (role === 'auto' || out.role == null) {
+      out.role = 'auto';
+      out.roleSource = 'auto';
+      out.recordedRole = 'auto';
+      changed = true;
+    } else {
+      out.roleSource = role === 'failed_attempt' ? 'system' : 'manual';
+      changed = true;
+    }
+    if (out.roleSource === 'legacy_default' && Array.isArray(out.exercises)) {
+      out.exercises = out.exercises.map((inner) => {
+        if (!inner || typeof inner !== 'object' || !('weight' in inner)) return inner;
+        return {
+          ...inner,
+          role: 'working',
+          roleSource: 'legacy_default',
+          recordedRole: 'working',
+        };
+      });
+    }
+    return out;
+  };
+  return { value: visit(value), changed };
+}
+
 // schema versioning (simple bootstrap)
 (function ensureSchema() {
   const v = Number(lsGetRaw(WT_KEYS.schema)) || 0;
   if (v < WT_SCHEMA_VERSION) {
-    // future migrations go here; for now, just set the version
+    if (v < 9) {
+      [WT_KEYS.session, WT_KEYS.current, WT_KEYS.last, WT_KEYS.archive].forEach((key) => {
+        const raw = lsGetRaw(key);
+        if (raw === null) return;
+        const parsed = safeParse(raw, null);
+        if (parsed === null) return;
+        const migrated = migrateSetRoleProvenance(parsed);
+        if (migrated.changed) wtStorage.set(key, migrated.value);
+      });
+    }
     lsSetRaw(WT_KEYS.schema, String(WT_SCHEMA_VERSION));
   }
 })();
@@ -1804,7 +2397,8 @@ const wtStorage = {
 /* ------------------ STATE ------------------ */
 let session = { exercises: [], startedAt: null };
 let currentExercise = null;
-let needsRecover = false;
+let needsRecoverSession = false;
+let needsRecoverCurrent = false;
 let needsSaveAfterNormalize = false;
 let goals = sanitizeGoals(wtStorage.get(WT_KEYS.goals, []));
 let constraints = sanitizeConstraints(wtStorage.get(WT_KEYS.constraints, DEFAULT_CONSTRAINTS));
@@ -1844,14 +2438,26 @@ let exerciseProfiles = sanitizeExerciseProfiles(
 if (typeof localStorage !== "undefined") {
   const s = wtStorage.get(WT_KEYS.session, null);
   const c = wtStorage.get(WT_KEYS.current, null);
-  if (!s || typeof s !== 'object' || !Array.isArray(s.exercises)) {
-    needsRecover = true;
-  }
+  if (!s || typeof s !== 'object' || !Array.isArray(s.exercises)) needsRecoverSession = true;
+  const currentRaw = wtStorage.getRaw(WT_KEYS.current);
+  if (
+    currentRaw !== null
+    && c !== null
+    && (typeof c !== 'object' || !Array.isArray(c.sets))
+  ) needsRecoverCurrent = true;
+  if (currentRaw !== null && c === null && currentRaw.trim() !== 'null') needsRecoverCurrent = true;
   session = s && typeof s === 'object' ? s : { exercises: [], startedAt: null };
   currentExercise = c || null;
 
   // sanity shape
   if (!Array.isArray(session.exercises)) session.exercises = [];
+  if (session.startedAt) {
+    const normalizedStartedAt = normalizeSessionStartedAt(session.startedAt);
+    if (!normalizedStartedAt) {
+      session.startedAt = null;
+      needsSaveAfterNormalize = true;
+    }
+  }
 
   const normSession = session.exercises.map(normalizeExercise);
   if (JSON.stringify(normSession) !== JSON.stringify(session.exercises)) {
@@ -1870,13 +2476,15 @@ if (typeof localStorage !== "undefined") {
 let restTimer = null;
 let restSecondsRemaining = 0;
 let restStartMs = 0;
+let restDeadlineMs = 0;
 let restSetIndex = null;
+let restTargetSet = null;
 
 function canLogSet(w, r) {
   return !Number.isNaN(w) && !Number.isNaN(r) && w >= 0 && w <= 9999 && r > 0 && r <= 999;
 }
 
-function canLogStrengthEntry(w, r, role = 'working') {
+function canLogStrengthEntry(w, r, role = 'auto') {
   if (normalizeSetRole(role) === 'failed_attempt') {
     return Number.isFinite(w) && w >= 0 && w <= 9999 && Number(r) === 0;
   }
@@ -1884,12 +2492,12 @@ function canLogStrengthEntry(w, r, role = 'working') {
 }
 
 function canLogCardio(distance, duration, name) {
-  const durationOk = Number.isFinite(duration) && duration > 0;
+  const durationOk = Number.isFinite(duration) && duration > 0 && duration <= 604800;
   const distanceMissing = distance === null || Number.isNaN(distance);
   const allowsNoDistance = name === "Jump Rope" || name === "Plank";
   const distanceOk = allowsNoDistance
-    ? distanceMissing || distance >= 0
-    : !distanceMissing && distance >= 0;
+    ? distanceMissing || (distance >= 0 && distance <= 100000)
+    : !distanceMissing && distance >= 0 && distance <= 100000;
   return distanceOk && durationOk;
 }
 
@@ -1956,6 +2564,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const progressionGuardToggle = document.getElementById('progressionGuardToggle');
   const sessionStatusSelect = document.getElementById('sessionStatus');
   const nextWorkoutMinutesInput = document.getElementById('nextWorkoutMinutes');
+  const autoSetNote = document.getElementById('autoSetNote');
   const accuracyDetails = document.getElementById('accuracyDetails');
   const setAccuracyFields = document.getElementById('setAccuracyFields');
   const setRoleInput = document.getElementById('setRole');
@@ -2011,7 +2620,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         const previousFocus = doc.activeElement;
         const modal = doc.createElement('div');
         modal.style.cssText = `
-          position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000;
+          position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 14000;
           display: flex; align-items: center; justify-content: center; padding: 12px;
         `;
         const dialog = doc.createElement('div');
@@ -2022,14 +2631,30 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           background: #fff; color: #000; padding: 16px 20px; border-radius: 8px; width: 100%;
           max-width: 420px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
         `;
-        dialog.innerHTML = `
-          <h3 style="margin:0 0 10px 0; font-size:18px;">${title}</h3>
-          <p style="margin:0 0 16px 0; line-height:1.4;">${message}</p>
-          <div style="display:flex; gap:8px; justify-content:flex-end;">
-            <button id="cmCancel" class="btn btn-secondary">${noText}</button>
-            <button id="cmOk" class="btn">${yesText}</button>
-          </div>
-        `;
+        modal.dataset.wtModal = 'true';
+        const heading = doc.createElement('h3');
+        heading.style.cssText = 'margin:0 0 10px 0; font-size:18px;';
+        heading.textContent = String(title);
+        const body = doc.createElement('p');
+        body.style.cssText = 'margin:0 0 16px 0; line-height:1.4;';
+        body.textContent = String(message);
+        const actions = doc.createElement('div');
+        actions.style.cssText = 'display:flex; gap:8px; justify-content:flex-end;';
+        const cancelButton = doc.createElement('button');
+        cancelButton.id = 'cmCancel';
+        cancelButton.type = 'button';
+        cancelButton.className = 'btn btn-secondary';
+        cancelButton.textContent = String(noText);
+        const okButton = doc.createElement('button');
+        okButton.id = 'cmOk';
+        okButton.type = 'button';
+        okButton.className = 'btn';
+        okButton.textContent = String(yesText);
+        actions.appendChild(cancelButton);
+        actions.appendChild(okButton);
+        dialog.appendChild(heading);
+        dialog.appendChild(body);
+        dialog.appendChild(actions);
         modal.appendChild(dialog);
         doc.body.appendChild(modal);
         const cleanup = () => {
@@ -2044,8 +2669,19 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         const handleKeydown = (event) => {
           if (event.key === 'Escape') {
             event.preventDefault();
+            event.stopImmediatePropagation();
             cleanup();
             resolve(false);
+          } else if (event.key === 'Tab') {
+            const first = cancelButton;
+            const last = okButton;
+            if (event.shiftKey && doc.activeElement === first) {
+              event.preventDefault();
+              last.focus();
+            } else if (!event.shiftKey && doc.activeElement === last) {
+              event.preventDefault();
+              first.focus();
+            }
           }
         };
         doc.addEventListener('keydown', handleKeydown);
@@ -2055,15 +2691,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
             resolve(false);
           }
         });
-        dialog.querySelector('#cmCancel').addEventListener('click', () => {
+        cancelButton.addEventListener('click', () => {
           cleanup();
           resolve(false);
         });
-        dialog.querySelector('#cmOk').addEventListener('click', () => {
+        okButton.addEventListener('click', () => {
           cleanup();
           resolve(true);
         });
-        dialog.querySelector('#cmCancel').focus();
+        cancelButton.focus();
       });
     };
   }
@@ -2099,8 +2735,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      handleImportText(ev.target.result);
+    reader.onload = async (ev) => {
+      await handleImportText(ev.target.result);
     };
     reader.onerror = () => showToast('Import failed: invalid file');
     reader.readAsText(file);
@@ -2147,28 +2783,35 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   // Paste dialog overlay
   const pasteOverlay = document.createElement('div');
   pasteOverlay.id = 'wt-paste-overlay';
+  pasteOverlay.setAttribute('role', 'dialog');
+  pasteOverlay.setAttribute('aria-modal', 'true');
+  pasteOverlay.setAttribute('aria-labelledby', 'wt-paste-title');
   pasteOverlay.innerHTML =
-    '<div class="wt-paste-box"><textarea id="wt-paste-area"></textarea><div class="wt-paste-actions"><button id="wt-paste-import" class="btn btn-secondary">Import</button><button id="wt-paste-cancel" class="btn btn-secondary">Cancel</button></div></div>';
+    '<div class="wt-paste-box"><h3 id="wt-paste-title">Paste workout JSON</h3><label for="wt-paste-area">Workout data</label><textarea id="wt-paste-area" aria-describedby="wt-paste-error"></textarea><p id="wt-paste-error" role="alert"></p><div class="wt-paste-actions"><button id="wt-paste-import" class="btn btn-secondary">Import</button><button id="wt-paste-cancel" class="btn btn-secondary">Cancel</button></div></div>';
   document.body.appendChild(pasteOverlay);
 
   if (!document.getElementById('wt-import-style')) {
     const style = document.createElement('style');
     style.id = 'wt-import-style';
     style.textContent =
-      '#wt-paste-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:1000;}#wt-paste-overlay.show{display:flex;}#wt-paste-overlay .wt-paste-box{background:#fff;color:#222;padding:16px;border-radius:8px;width:90%;max-width:500px;box-shadow:0 2px 8px rgba(0,0,0,.3);}#wt-paste-overlay textarea{width:100%;height:150px;}#wt-paste-overlay .wt-paste-actions{margin-top:8px;display:flex;gap:8px;justify-content:flex-end;}body.dark #wt-paste-overlay .wt-paste-box{background:#333;color:#f5f6fa;}';
+      '#wt-paste-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:13000;padding:12px;}#wt-paste-overlay.show{display:flex;}#wt-paste-overlay .wt-paste-box{background:#fff;color:#222;padding:16px;border-radius:8px;width:90%;max-width:500px;box-shadow:0 2px 8px rgba(0,0,0,.3);}#wt-paste-overlay h3{margin:0 0 10px;}#wt-paste-overlay label{display:block;font-weight:700;margin-bottom:6px;}#wt-paste-overlay textarea{width:100%;height:150px;}#wt-paste-error{min-height:1.25em;margin:6px 0;color:#b42318;font-size:13px;}#wt-paste-overlay .wt-paste-actions{margin-top:8px;display:flex;gap:8px;justify-content:flex-end;}body.dark #wt-paste-overlay .wt-paste-box{background:#333;color:#f5f6fa;}';
     document.head.appendChild(style);
   }
 
   function openPasteImport() {
     pasteOverlay.classList.add('show');
+    pasteOverlay.dataset.wtModal = 'true';
     const ta = document.getElementById('wt-paste-area');
     ta.value = '';
+    document.getElementById('wt-paste-error').textContent = '';
     ta.focus();
   }
   if (typeof window !== 'undefined') window.openPasteImport = openPasteImport;
 
   function closePasteImport() {
     pasteOverlay.classList.remove('show');
+    delete pasteOverlay.dataset.wtModal;
+    pasteBtn.focus();
   }
 
   pasteOverlay.addEventListener('click', (e) => {
@@ -2178,6 +2821,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   pasteOverlay.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
       closePasteImport();
     } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
@@ -2189,10 +2833,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     .getElementById('wt-paste-cancel')
     .addEventListener('click', closePasteImport);
 
-  document.getElementById('wt-paste-import').addEventListener('click', () => {
+  document.getElementById('wt-paste-import').addEventListener('click', async () => {
     const text = document.getElementById('wt-paste-area').value;
-    handleImportText(text);
-    closePasteImport();
+    const imported = await handleImportText(text);
+    if (imported) closePasteImport();
+    else document.getElementById('wt-paste-error').textContent = 'The workout could not be imported. Check the JSON and try again.';
   });
 
   /* ------------------ GOALS, RECOVERY, CONSTRAINTS ------------------ */
@@ -2577,6 +3222,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       if (!ok) return;
       goals = [];
       constraints = { ...DEFAULT_CONSTRAINTS };
+      exerciseGoals = {};
+      exerciseProfiles = {};
       dayType = '';
       dayCompare = 'none';
       progressionGuard = false;
@@ -2584,7 +3231,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       nextWorkoutMinutes = null;
       wtStorage.set(WT_KEYS.goals, goals);
       wtStorage.set(WT_KEYS.constraints, constraints);
-      wtStorage.set(WT_KEYS.dayType, dayType);
+      wtStorage.set(WT_KEYS.exerciseGoals, exerciseGoals);
+      wtStorage.set(WT_KEYS.exerciseProfiles, exerciseProfiles);
+      persistDayType();
       wtStorage.set(WT_KEYS.dayCompare, dayCompare);
       wtStorage.set(WT_KEYS.progressionGuard, progressionGuard);
       wtStorage.clear(WT_KEYS.sessionStatus);
@@ -2650,7 +3299,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (!document.getElementById("wt-toast-style")) {
       const style = document.createElement("style");
       style.id = "wt-toast-style";
-      style.textContent = `#wt-toast-root{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#fff;color:#222;padding:10px 16px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.2);display:none;align-items:center;gap:12px;z-index:1000;font-size:15px;}#wt-toast-root.show{display:flex;}#wt-toast-root button{background:none;border:none;color:#007bff;font-weight:600;cursor:pointer;}body.dark #wt-toast-root{background:#333;color:#f5f6fa;}body.dark #wt-toast-root button{color:#8ab4ff;}`;
+      style.textContent = `#wt-toast-root{position:fixed;bottom:calc(94px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100vw - 24px);background:#fff;color:#222;padding:10px 16px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.2);display:none;align-items:center;gap:12px;z-index:12000;font-size:15px;}#wt-toast-root.show{display:flex;}#wt-toast-root button{background:none;border:none;color:#007bff;font-weight:600;cursor:pointer;}body.dark #wt-toast-root{background:#333;color:#f5f6fa;}body.dark #wt-toast-root button{color:#8ab4ff;}`;
       document.head.appendChild(style);
     }
   }
@@ -2672,7 +3321,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       toastRoot.appendChild(btn);
     }
     toastRoot.classList.add("show");
-    toastRestoreFocus = document.activeElement;
+    toastRestoreFocus = null;
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(hideToast, duration);
 
@@ -2703,15 +3352,56 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       toastRoot.classList.remove("show");
       toastRoot.innerHTML = "";
     }
-    const refocus = toastRestoreFocus || (logBtn && !logBtn.disabled ? logBtn : null);
     toastRestoreFocus = null;
-    if (refocus && typeof refocus.focus === "function") {
-      try { refocus.focus(); } catch {}
-    }
   }
+
+  window.addEventListener('wt-storage-error', () => {
+    showToast('Storage is full. Export your workout now; the latest change may not be saved.');
+  });
 
   // --- Undo Stack ---
   let lastAction = null; // {type,payload,timestamp}
+
+  const undoStorageKeys = [
+    WT_KEYS.last,
+    WT_KEYS.lastMeta,
+    WT_KEYS.history,
+    WT_KEYS.archive,
+    WT_KEYS.exerciseGoals,
+    WT_KEYS.exerciseProfiles,
+    WT_KEYS.goals,
+    WT_KEYS.constraints,
+    WT_KEYS.sessionStatus,
+    WT_KEYS.nextWorkoutMinutes,
+  ];
+
+  function captureUndoStorage() {
+    return Object.fromEntries(undoStorageKeys.map((key) => [key, wtStorage.getRaw(key)]));
+  }
+
+  function restoreUndoStorage(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return;
+    undoStorageKeys.forEach((key) => {
+      const raw = snapshot[key];
+      if (raw === null || raw === undefined) wtStorage.clear(key);
+      else lsSetRaw(key, raw);
+    });
+    archivedSessions = wtStorage.get(WT_KEYS.archive, {});
+    exerciseGoals = sanitizeExerciseGoals(wtStorage.get(WT_KEYS.exerciseGoals, {}));
+    exerciseProfiles = sanitizeExerciseProfiles(wtStorage.get(WT_KEYS.exerciseProfiles, {}));
+    goals = sanitizeGoals(wtStorage.get(WT_KEYS.goals, []));
+    constraints = sanitizeConstraints(wtStorage.get(WT_KEYS.constraints, DEFAULT_CONSTRAINTS));
+    const restoredStatus = wtStorage.get(WT_KEYS.sessionStatus, null);
+    sessionStatus = normalizeSessionStatus(restoredStatus?.status || restoredStatus);
+    nextWorkoutMinutes = normalizeWorkoutMinutes(
+      wtStorage.get(WT_KEYS.nextWorkoutMinutes, restoredStatus?.nextWorkoutMinutes),
+    );
+    renderGoals();
+    renderConstraintsList();
+    renderAvoidAreas();
+    renderSessionStatus();
+    window.dispatchEvent(new Event('wt-history-updated'));
+  }
 
   function pushUndo(action) {
     lastAction = { ...action, timestamp: Date.now() };
@@ -2749,6 +3439,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           }
           updateSummary();
           updateSetsToday();
+          refreshExerciseGoalProgress(target);
+          renderExerciseGoalPanel();
           saveState();
         }
         break;
@@ -2756,6 +3448,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       case "finish":
       case "reset":
       case "import": {
+        restoreUndoStorage(payload.storageSnapshot);
         session = payload.prevSession;
         currentExercise = payload.prevCurrent;
         if (session.startedAt) startSessionTimer(); else stopSessionTimer();
@@ -2776,32 +3469,112 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
   }
 
-  function handleImportText(text) {
+  async function handleImportText(text) {
     let parsed;
     try {
       parsed = JSON.parse(text);
     } catch {
       showToast('Import failed: invalid JSON');
-      return;
+      return false;
     }
-    const normalized = normalizePayload(parsed);
-    if (normalized.totalExercises === 0) {
-      showToast('Nothing to import');
-      return;
+    let normalized;
+    try {
+      normalized = normalizePayload(parsed);
+    } catch {
+      showToast('Import failed: unsupported workout data');
+      return false;
+    }
+    if (normalized.totalSets === 0) {
+      showToast('Nothing to import: no valid logged sets were found');
+      return false;
+    }
+    const hasActiveWorkout = session.exercises.some((exercise) => exercise.sets?.length)
+      || !!currentExercise?.sets?.length;
+    if (hasActiveWorkout) {
+      const replace = await confirmModal(
+        'Importing this file will replace the active workout. Continue?',
+        { title: 'Replace Active Workout?', yesText: 'Import', noText: 'Cancel' },
+      );
+      if (!replace) return false;
     }
     const prevSession = deepClone(session);
     const prevCurrent = deepClone(currentExercise);
-    pushUndo({ type: 'import', payload: { prevSession, prevCurrent } });
-    stopRest();
-    restSetIndex = null;
-    restSecondsRemaining = 0;
-    restStartMs = 0;
-    restBox.classList.add('hidden');
+    pushUndo({
+      type: 'import',
+      payload: {
+        prevSession,
+        prevCurrent,
+        storageSnapshot: captureUndoStorage(),
+      },
+    });
+    finishRest({ announceCompletion: false, hide: true });
     restDisplay.textContent = '00:00';
     stopSessionTimer();
     session = { exercises: normalized.exercises, startedAt: null };
     currentExercise = null;
     wtStorage.set(WT_KEYS.last, normalized.exercises);
+    wtStorage.set(WT_KEYS.lastMeta, {
+      date: normalized.date,
+      timestamp: normalized.timestamp,
+      sessionContext: normalized.sessionContext || null,
+    });
+    normalized.exercises.forEach((exercise) => {
+      const goalSnapshots = [
+        ...(exercise.goal ? [exercise.goal] : []),
+        ...(exercise.exerciseGoals || []),
+      ];
+      goalSnapshots.forEach((goal) => {
+        const importedGoal = normalizeExerciseGoal(goal, goal?.exerciseName);
+        if (!importedGoal) return;
+        const key = exerciseGoalKey(importedGoal.exerciseName);
+        const existing = exerciseGoals[key];
+        if (!existing || String(importedGoal.lastUpdated) >= String(existing.lastUpdated)) {
+          exerciseGoals[key] = importedGoal;
+        }
+      });
+      if (exercise.isSuperset && exercise.progressionProfiles) {
+        Object.assign(exerciseProfiles, exercise.progressionProfiles);
+      } else if (!exercise.isCardio && exercise.name) {
+        exerciseProfiles[exerciseGoalKey(exercise.name)] = normalizeExerciseProfile(
+          exercise.progressionProfile,
+        );
+      }
+    });
+    if (Array.isArray(normalized.goals)) {
+      goals = sanitizeGoals([
+        ...goals,
+        ...normalized.goals.map((text) => ({ text, active: true })),
+      ]);
+      wtStorage.set(WT_KEYS.goals, goals);
+      renderGoals();
+    }
+    if (normalized.constraints) {
+      const importedConstraints = sanitizeConstraints(normalized.constraints);
+      constraints = sanitizeConstraints({
+        scheduleNotes: [
+          ...(constraints.scheduleNotes || []),
+          ...(importedConstraints.scheduleNotes || []),
+        ],
+        avoidAreas: [
+          ...(constraints.avoidAreas || []),
+          ...(importedConstraints.avoidAreas || []),
+        ],
+      });
+      wtStorage.set(WT_KEYS.constraints, constraints);
+      renderConstraintsList();
+      renderAvoidAreas();
+    }
+    persistExerciseGoals();
+    wtStorage.set(WT_KEYS.exerciseProfiles, exerciseProfiles);
+    if (normalized.sessionContext) {
+      sessionStatus = normalizeSessionStatus(normalized.sessionContext.status);
+      nextWorkoutMinutes = normalizeWorkoutMinutes(normalized.sessionContext.nextWorkoutMinutes);
+      persistSessionStatus();
+      renderSessionStatus();
+    }
+    archivedSessions[normalized.date] = normalized;
+    archivedSessions = pruneArchive(archivedSessions, 120);
+    wtStorage.set(WT_KEYS.archive, archivedSessions);
     mergeIntoHistory(normalized);
     interfaceBox.classList.add('hidden');
     document.body.classList.remove('workout-active', 'resting');
@@ -2812,6 +3585,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     saveState();
     showToast('Imported workout', { actionLabel: 'Undo', onAction: performUndo });
     announce('Imported workout');
+    return true;
   }
 
   // Button aria-labels
@@ -2848,7 +3622,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function startSessionTimer() {
     if (!session.startedAt) return;
-    const startMs = new Date(session.startedAt).getTime();
+    const normalizedStartedAt = normalizeSessionStartedAt(session.startedAt);
+    if (!normalizedStartedAt) {
+      session.startedAt = null;
+      stopSessionTimer();
+      saveState();
+      return;
+    }
+    const startMs = new Date(normalizedStartedAt).getTime();
     const tick = () => {
       const secs = Math.floor((Date.now() - startMs) / 1000);
       sessionTimerEl.textContent = `Session: ${formatHMS(secs)}`;
@@ -2876,7 +3657,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function updateSetsToday() {
     const total = computeTotalSets();
-    setsTodayEl.textContent = `${total} set${total === 1 ? '' : 's'} today`;
+    setsTodayEl.textContent = `${total} set${total === 1 ? '' : 's'} this session`;
     if (heroSetCountEl) heroSetCountEl.textContent = String(total);
     if (sessionPulseEl) {
       const degrees = Math.min(total / 12, 1) * 360;
@@ -2892,17 +3673,33 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   let allExercises = [];
 
   function tryRecoverState() {
-    const ok = wtStorage.restoreBackup(WT_KEYS.session);
-    const ok2 = wtStorage.restoreBackup(WT_KEYS.current);
-    if (ok || ok2) {
-      const s = wtStorage.get(WT_KEYS.session, {exercises:[], startedAt:null});
-      const c = wtStorage.get(WT_KEYS.current, null);
-      session = s; currentExercise = c;
-      // Functions will be called after recovery is complete
+    if (needsRecoverSession) {
+      wtStorage.restoreBackup(
+        WT_KEYS.session,
+        (value) => value && typeof value === 'object' && Array.isArray(value.exercises),
+      );
     }
+    if (needsRecoverCurrent) {
+      wtStorage.restoreBackup(
+        WT_KEYS.current,
+        (value) => value === null
+          || (value && typeof value === 'object' && Array.isArray(value.sets)),
+      );
+    }
+    const recoveredSession = wtStorage.get(WT_KEYS.session, { exercises: [], startedAt: null });
+    const recoveredCurrent = wtStorage.get(WT_KEYS.current, null);
+    session = recoveredSession && Array.isArray(recoveredSession.exercises)
+      ? {
+        ...recoveredSession,
+        exercises: recoveredSession.exercises.map(normalizeExercise),
+      }
+      : { exercises: [], startedAt: null };
+    currentExercise = recoveredCurrent && Array.isArray(recoveredCurrent.sets)
+      ? normalizeExercise(recoveredCurrent)
+      : null;
   }
 
-  if (needsRecover) {
+  if (needsRecoverSession || needsRecoverCurrent) {
     // Delay recovery until functions are defined
     setTimeout(() => {
       tryRecoverState();
@@ -3317,13 +4114,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   /* ------------------ CUSTOM EXERCISE ------------------ */
   addExerciseBtn.addEventListener("click", () => {
-    const name = customExerciseInput.value.trim();
+    const name = trimString(customExerciseInput.value, 80).replace(/\s+/g, ' ');
     if (!name) return;
-    if (
-      !allExercises.some((e) => e.name.toLowerCase() === name.toLowerCase())
-    ) {
+    const existingExercise = allExercises.find(
+      (exercise) => exerciseGoalKey(exercise.name) === exerciseGoalKey(name),
+    );
+    const canonicalName = existingExercise?.name || name;
+    if (!existingExercise) {
       allExercises.push({
-        name,
+        name: canonicalName,
         category: "Custom",
         equipment: "",
         custom: true,
@@ -3335,15 +4134,22 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     exerciseSearch.value = "";
     muscleFilter.value = "";
     renderExerciseOptions();
-    exerciseSelect.value = name;
+    exerciseSelect.value = canonicalName;
     customExerciseInput.value = "";
-    startExercise(name);
+    startExercise(canonicalName);
   });
 
   /* ------------------ SUPERSET ------------------ */
   function populateSupersetSelects() {
     [supersetSelect1, supersetSelect2].forEach((sel) => {
       sel.innerHTML = exerciseSelect.innerHTML;
+      Array.from(sel.options).forEach((option) => {
+        if (!option.value) return;
+        const meta = allExercises.find((exercise) => exercise.name === option.value);
+        if ((meta && meta.category === 'Cardio') || option.value === 'Plank') {
+          option.disabled = true;
+        }
+      });
       sel.value = "";
     });
   }
@@ -3363,6 +4169,18 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const n2 = supersetSelect2.value;
     if (!n1 || !n2) {
       showToast("Choose two exercises");
+      return;
+    }
+    if (exerciseGoalKey(n1) === exerciseGoalKey(n2)) {
+      showToast('Choose two different exercises');
+      return;
+    }
+    const unsupported = [n1, n2].some((name) => {
+      const meta = allExercises.find((exercise) => exercise.name === name);
+      return (meta && meta.category === 'Cardio') || name === 'Plank';
+    });
+    if (unsupported) {
+      showToast('Supersets currently support strength exercises only');
       return;
     }
     supersetBuilder.classList.add("hidden");
@@ -3389,6 +4207,25 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       return exerciseGoalExercise.value;
     }
     return names[0];
+  }
+
+  function getAllowedGoalTypes(exerciseName = getSelectedExerciseGoalName()) {
+    const normalizedName = exerciseGoalKey(exerciseName);
+    if (['jump rope', 'plank'].includes(normalizedName)) return ['duration'];
+    if (currentExercise?.isCardio && !currentExercise?.isSuperset) {
+      return ['distance', 'duration'];
+    }
+    return ['weight', 'reps'];
+  }
+
+  function syncExerciseGoalTypeOptions(preferredType = exerciseGoalType.value) {
+    const allowed = getAllowedGoalTypes();
+    Array.from(exerciseGoalType.options).forEach((option) => {
+      const enabled = allowed.includes(option.value);
+      option.disabled = !enabled;
+      option.hidden = !enabled;
+    });
+    exerciseGoalType.value = allowed.includes(preferredType) ? preferredType : allowed[0];
   }
 
   function updateExerciseGoalValueField() {
@@ -3426,12 +4263,27 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function refreshExerciseGoalProgress(exercise = currentExercise) {
     if (!exercise) return;
-    const snapshots = buildExerciseGoalSnapshots(exercise, exerciseGoals);
     let changed = false;
-    snapshots.forEach((snapshot) => {
-      const key = exerciseGoalKey(snapshot.exerciseName);
+    const names = exercise.isSuperset ? exercise.exercises || [] : [exercise.name];
+    names.filter(Boolean).forEach((name) => {
+      const key = exerciseGoalKey(name);
       const previous = exerciseGoals[key];
-      if (!previous || JSON.stringify(previous) !== JSON.stringify(snapshot)) {
+      if (!previous) return;
+      const currentPerformance = getGoalPerformanceFromExercise(
+        exercise,
+        previous.goalType,
+        name,
+      );
+      const historicalBest = getBestHistoricalGoalPerformance(name, previous.goalType);
+      const best = Math.max(currentPerformance, historicalBest);
+      const snapshot = normalizeExerciseGoal({
+        ...previous,
+        currentBestPerformance: best,
+        lastUpdated: best !== previous.currentBestPerformance
+          ? new Date().toISOString()
+          : previous.lastUpdated,
+      }, name);
+      if (snapshot && JSON.stringify(previous) !== JSON.stringify(snapshot)) {
         exerciseGoals[key] = snapshot;
         changed = true;
       }
@@ -3458,7 +4310,6 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     Object.values(archivedSessions || {}).forEach((workout) => {
       inspectExercises(workout && workout.exercises);
     });
-    inspectExercises(wtStorage.get(WT_KEYS.last, []));
     inspectExercises(session.exercises);
     return best;
   }
@@ -3501,7 +4352,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       track.setAttribute('aria-valuenow', String(Math.round(goal.progressPercentage)));
       exerciseGoalInsight.textContent = buildGoalInsight(goal);
       exerciseGoalCoachPlan.textContent = `Automatic plan: ${goal.goalPathLabel}. Log the workout, export it, and follow the next prescription.`;
-      exerciseGoalType.value = goal.goalType;
+      syncExerciseGoalTypeOptions(goal.goalType);
       exerciseGoalPath.value = goal.goalPath === 'performance'
         ? 'balanced'
         : goal.goalPath;
@@ -3511,7 +4362,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       exerciseGoalTarget.textContent = '—';
       exerciseGoalRemaining.textContent = '—';
       exerciseGoalProgressBar.style.width = '0%';
-      exerciseGoalType.value = currentExercise.isCardio ? 'distance' : 'weight';
+      syncExerciseGoalTypeOptions();
       exerciseGoalPath.value = currentExercise.isCardio ? 'balanced' : 'strength';
       exerciseGoalValue.value = '';
       exerciseGoalCoachPlan.textContent = '';
@@ -3551,7 +4402,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const goalType = exerciseGoalType.value;
     const goalPath = normalizeGoalPath(exerciseGoalPath.value, goalType);
     const goalValue = Number(exerciseGoalValue.value);
-    if (!exerciseName || !EXERCISE_GOAL_TYPES[goalType] || !Number.isFinite(goalValue) || goalValue <= 0) {
+    if (
+      !exerciseName
+      || !EXERCISE_GOAL_TYPES[goalType]
+      || !getAllowedGoalTypes(exerciseName).includes(goalType)
+      || !Number.isFinite(goalValue)
+      || goalValue <= 0
+    ) {
       showToast('Enter a valid goal value');
       return;
     }
@@ -3581,7 +4438,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       previousProfile,
     );
     exerciseProfiles[key] = automaticProfile;
-    if (!currentExercise.isSuperset) currentExercise.progressionProfile = automaticProfile;
+    if (currentExercise.isSuperset) {
+      currentExercise.progressionProfiles = currentExercise.progressionProfiles || {};
+      currentExercise.progressionProfiles[key] = automaticProfile;
+    } else currentExercise.progressionProfile = automaticProfile;
     wtStorage.set(WT_KEYS.exerciseProfiles, exerciseProfiles);
     progressionGuard = true;
     wtStorage.set(WT_KEYS.progressionGuard, true);
@@ -3621,6 +4481,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   function renderAccuracyDetails() {
     if (!accuracyDetails || !currentExercise) return;
     const isCardio = !!currentExercise.isCardio;
+    if (autoSetNote) autoSetNote.classList.toggle('hidden', isCardio);
     accuracyDetails.classList.toggle('hidden', isCardio);
     if (isCardio) return;
 
@@ -3647,14 +4508,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const failedOption = setRoleInput.querySelector('option[value="failed_attempt"]');
     if (failedOption) failedOption.disabled = !!currentExercise.isSuperset;
     if (currentExercise.isSuperset && setRoleInput.value === 'failed_attempt') {
-      setRoleInput.value = 'working';
+      setRoleInput.value = 'auto';
     }
   }
 
   function getPendingSetContext() {
-    const role = normalizeSetRole(setRoleInput?.value || 'working');
+    const role = normalizeSetRole(setRoleInput?.value || 'auto');
     return {
       role,
+      roleSource: role === 'auto' ? 'auto' : 'manual',
+      ...(role === 'auto' ? { recordedRole: 'auto' } : {}),
       outcome: role === 'failed_attempt' ? 'failed' : 'completed',
       completed: role !== 'failed_attempt',
       rir: role === 'failed_attempt' ? null : normalizeRir(setRirInput?.value),
@@ -3677,6 +4540,21 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       setRirInput.disabled = false;
     }
     updateLogButtonState();
+  }
+
+  function resetPendingSetContext({ clearMeasurements = false } = {}) {
+    if (setRoleInput) setRoleInput.value = 'auto';
+    if (setRirInput) setRirInput.value = '';
+    if (setTechniqueInput) setTechniqueInput.value = 'unknown';
+    if (setPainInput) setPainInput.value = 'unknown';
+    if (clearMeasurements) {
+      weightInput.value = '';
+      repsInput.value = '';
+      distanceInput.value = '';
+      durationMinInput.value = '';
+      durationSecInput.value = '';
+    }
+    updateSetContextControls();
   }
 
   if (setRoleInput) setRoleInput.addEventListener('change', updateSetContextControls);
@@ -3784,6 +4662,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
 
   function startExercise(name) {
+    finishRest({ announceCompletion: false, hide: true });
     if (!session.startedAt) session.startedAt = new Date().toISOString();
     startSessionTimer();
     if (currentExercise && currentExercise.sets.length) {
@@ -3803,6 +4682,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       isCardio,
       progressionProfile: resolvedProfile,
     };
+    resetPendingSetContext({ clearMeasurements: true });
     supersetInputs.classList.add("hidden");
     if (currentExercise.isCardio) {
       standardInputs.classList.add("hidden");
@@ -3824,6 +4704,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     showInterface();
     rebuildSetsList();
     updateSetCounter();
+    updateSummary();
+    updateSetsToday();
     if (!currentExercise.isCardio) {
       weightInput.focus();
     }
@@ -3831,22 +4713,41 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   function startSuperset(namesArr) {
+    finishRest({ announceCompletion: false, hide: true });
     if (!session.startedAt) session.startedAt = new Date().toISOString();
     startSessionTimer();
     if (currentExercise && currentExercise.sets.length) {
       pushOrMergeExercise(currentExercise);
     }
-    const clean = namesArr.filter(Boolean);
+    const clean = namesArr
+      .map((name) => trimString(name, 80))
+      .filter((name, index, names) => name && names.findIndex(
+        (candidate) => exerciseGoalKey(candidate) === exerciseGoalKey(name),
+      ) === index);
+    if (clean.length < 2) {
+      showToast('Choose two different strength exercises');
+      return;
+    }
+    const progressionProfiles = {};
+    clean.forEach((name) => {
+      const key = exerciseGoalKey(name);
+      const saved = normalizeExerciseProfile(exerciseProfiles[key]);
+      progressionProfiles[key] = saved.mode === 'auto'
+        ? buildAutomaticExerciseProfile(name, exerciseGoals[key], saved)
+        : saved;
+    });
     currentExercise = {
       name: clean.join(" + "),
       isSuperset: true,
       exercises: [...clean],
       sets: [],
       nextSet: 1,
+      progressionProfiles,
       progressionProfile: normalizeExerciseProfile(
         exerciseProfiles[exerciseGoalKey(clean.join(" + "))],
       ),
     };
+    resetPendingSetContext({ clearMeasurements: true });
     setupSupersetInputs(clean);
     standardInputs.classList.add("hidden");
     cardioInputs.classList.add("hidden");
@@ -3856,6 +4757,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     showInterface();
     rebuildSetsList();
     updateSetCounter();
+    updateSummary();
+    updateSetsToday();
     document.querySelector("#weight0").focus();
     updateLogButtonState();
   }
@@ -3949,11 +4852,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         ...setContext,
       });
       currentExercise.sets.push(supersetSet);
-      addSetElement(
-        currentExercise.sets[currentExercise.sets.length - 1],
-        currentExercise.sets.length - 1,
-      );
       currentExercise.nextSet++;
+      rebuildSetsList();
       updateSetCounter();
       pulseExerciseStage();
 
@@ -3961,6 +4861,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         document.getElementById(`weight${i}`).value = "";
         document.getElementById(`reps${i}`).value = "";
       });
+      resetPendingSetContext();
       if (planned != null) {
         startRest(planned, currentExercise.sets.length - 1);
       }
@@ -4054,25 +4955,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       ...setContext,
     });
     currentExercise.sets.push(strengthSet);
-
-    addSetElement(
-      currentExercise.sets[currentExercise.sets.length - 1],
-      currentExercise.sets.length - 1,
-    );
     currentExercise.nextSet++;
+    rebuildSetsList();
     updateSetCounter();
     pulseExerciseStage();
 
     weightInput.focus();
     weightInput.select();
     repsInput.value = "";
-    setRirInput.value = '';
-    setTechniqueInput.value = 'unknown';
-    setPainInput.value = 'unknown';
-    if (setContext.role === 'failed_attempt') {
-      setRoleInput.value = 'working';
-      updateSetContextControls();
-    }
+    resetPendingSetContext();
 
     if (planned != null) {
       startRest(planned, currentExercise.sets.length - 1);
@@ -4101,13 +4992,17 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           ? ` • Rest planned: ${formatSec(setObj.restPlanned)}`
           : "";
     const setContextInfo = formatSetContext(setObj, {
-      includeRole: normalizeSetRole(setObj.role) !== 'failed_attempt',
+      includeRole: !currentExercise.isSuperset
+        && normalizeSetRole(setObj.role) !== 'failed_attempt',
     });
 
     let meta = "";
     if (currentExercise.isSuperset) {
       meta = setObj.exercises
-        .map((e) => `${e.name}: ${e.weight}×${e.reps}`)
+        .map((e) => {
+          const innerContext = formatSetContext({ ...setObj, ...e, exercises: undefined });
+          return `${e.name}: ${e.weight}×${e.reps}${innerContext ? ` (${innerContext})` : ''}`;
+        })
         .join(" |");
     } else if (currentExercise.isCardio) {
       const dist = setObj.distance != null ? `${setObj.distance} mi` : "";
@@ -4166,14 +5061,18 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (!currentExercise.sets.length) {
       const hint = document.createElement("div");
       hint.className = "empty-hint";
-      hint.textContent =
-        "No sets yet. Enter weight & reps, then press Log Set.";
+      hint.textContent = currentExercise.isCardio
+        ? 'No efforts yet. Enter duration and distance when applicable, then press Log Set.'
+        : currentExercise.isSuperset
+          ? 'No rounds yet. Enter weight and reps for both exercises, then press Log Set.'
+          : 'No sets yet. Enter weight & reps, then press Log Set.';
       hint.style.color = "#888";
       hint.style.fontSize = "0.9em";
       setsList.appendChild(hint);
       return;
     }
-    currentExercise.sets.forEach((s, i) => addSetElement(s, i));
+    const displayExercise = classifyExerciseSets(currentExercise);
+    displayExercise.sets.forEach((s, i) => addSetElement(s, i));
   }
 
   /* ------------------ EDIT / DELETE ------------------ */
@@ -4182,6 +5081,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (!btn) return;
     const action = btn.dataset.action;
     const item = btn.closest(".set-item");
+    if (!action || !item) return;
     const idx = parseInt(item.dataset.index, 10);
     if (action === "del") deleteSet(idx);
     else if (action === "edit") openEditForm(item, idx);
@@ -4190,6 +5090,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   async function deleteSet(idx) {
     const ok = await confirmModal("Delete this set?", { yesText: 'Delete', noText: 'Cancel' });
     if (!ok) return;
+    if (restTargetSet === currentExercise?.sets?.[idx]) {
+      finishRest({ announceCompletion: false, hide: true });
+    }
     pushUndo({
       type: "deleteSet",
       payload: {
@@ -4206,6 +5109,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateSetCounter();
     updateSummary();
     updateSetsToday();
+    refreshExerciseGoalProgress();
+    renderExerciseGoalPanel();
     saveState();
     showToast("Set deleted", {
       actionLabel: "Undo",
@@ -4217,11 +5122,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   function addSetContextEditor(form, set) {
     if (!form || !set) return;
     const role = normalizeSetRole(set.role);
+    const selectedRole = isAutomaticRole(set) ? 'auto' : role;
     const technique = normalizeTechnique(set.technique);
     const pain = normalizePain(set.pain);
     const roleOptions = Object.entries(SET_ROLE_OPTIONS)
       .filter(([value]) => !(currentExercise?.isSuperset && value === 'failed_attempt'))
-      .map(([value, label]) => `<option value="${value}"${value === role ? ' selected' : ''}>${label}</option>`)
+      .map(([value, label]) => `<option value="${value}"${value === selectedRole ? ' selected' : ''}>${label}</option>`)
       .join('');
     const techniqueOptions = Object.entries(TECHNIQUE_OPTIONS)
       .map(([value, label]) => `<option value="${value}"${value === technique ? ' selected' : ''}>${label}</option>`)
@@ -4243,6 +5149,19 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     `;
     const actions = form.querySelector('.row2');
     form.insertBefore(context, actions || null);
+    const roleInput = context.querySelector('.editRole');
+    roleInput.addEventListener('change', () => {
+      const failed = roleInput.value === 'failed_attempt';
+      form.querySelectorAll('[class^="editR"]').forEach((input) => {
+        if (!(input instanceof HTMLInputElement) || input.classList.contains('editRestPlanned') || input.classList.contains('editRestActual') || input.classList.contains('editRir')) return;
+        input.min = failed ? '0' : '1';
+        if (failed) input.value = '0';
+        else if (input.value === '0') input.value = '';
+      });
+      const rirInput = context.querySelector('.editRir');
+      rirInput.disabled = failed;
+      if (failed) rirInput.value = '';
+    });
   }
 
   function openEditForm(item, idx) {
@@ -4350,21 +5269,23 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (firstField) firstField.focus();
 
     form.addEventListener("click", (ev) => {
+      ev.stopPropagation();
       if (ev.target.hasAttribute("data-edit-save")) {
         if (currentExercise.isSuperset) {
-          let bad = false;
-          s.exercises.forEach((ex, i) => {
+          const updates = s.exercises.map((ex, i) => {
             const w = parseFloat(form.querySelector(`.editW${i}`).value);
             const r = parseInt(form.querySelector(`.editR${i}`).value, 10);
-            if (!canLogSet(w, r)) bad = true;
+            return { ex, w, r };
+          });
+          if (updates.some(({ w, r }) => !canLogSet(w, r))) {
+            showToast("Enter valid numbers for all exercises");
+            return;
+          }
+          updates.forEach(({ ex, w, r }) => {
             const norm = normalizeSet({ name: ex.name, weight: w, reps: r });
             ex.weight = norm.weight;
             ex.reps = norm.reps;
           });
-          if (bad) {
-            showToast("Enter valid numbers for all exercises");
-            return;
-          }
         } else if (currentExercise.isCardio) {
           const dField = form.querySelector(".editD");
           const rawD = dField ? parseFloat(dField.value) : null;
@@ -4423,6 +5344,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
             restPlanned: newPlanned,
             restActual: newActual,
             role: editRole,
+            roleSource: editRole === 'auto' ? 'auto' : 'manual',
+            ...(editRole === 'auto' ? { recordedRole: 'auto' } : {}),
             outcome: editRole === 'failed_attempt' ? 'failed' : 'completed',
             rir: form.querySelector('.editRir')?.value,
             technique: form.querySelector('.editTechnique')?.value,
@@ -4433,6 +5356,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           s.restPlanned = norm.restPlanned;
           s.restActual = norm.restActual;
           s.role = norm.role;
+          s.roleSource = norm.roleSource;
+          if (norm.recordedRole) s.recordedRole = norm.recordedRole;
+          else delete s.recordedRole;
+          delete s.roleConfidence;
+          delete s.roleReason;
+          delete s.classificationVersion;
           s.completed = norm.completed;
           s.outcome = norm.outcome;
           s.rir = norm.rir;
@@ -4444,16 +5373,35 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           const contextNorm = normalizeSet({
             exercises: s.exercises,
             role: form.querySelector('.editRole')?.value,
+            roleSource: form.querySelector('.editRole')?.value === 'auto' ? 'auto' : 'manual',
+            ...(form.querySelector('.editRole')?.value === 'auto'
+              ? { recordedRole: 'auto' }
+              : {}),
             rir: form.querySelector('.editRir')?.value,
             technique: form.querySelector('.editTechnique')?.value,
             pain: form.querySelector('.editPain')?.value,
           });
           s.role = contextNorm.role;
+          s.roleSource = contextNorm.roleSource;
+          if (contextNorm.recordedRole) s.recordedRole = contextNorm.recordedRole;
+          else delete s.recordedRole;
+          delete s.roleConfidence;
+          delete s.roleReason;
+          delete s.classificationVersion;
           s.completed = contextNorm.completed;
           s.outcome = contextNorm.outcome;
           s.rir = contextNorm.rir;
           s.technique = contextNorm.technique;
           s.pain = contextNorm.pain;
+          s.exercises.forEach((inner) => {
+            inner.role = contextNorm.role;
+            inner.roleSource = contextNorm.roleSource;
+            if (contextNorm.recordedRole) inner.recordedRole = contextNorm.recordedRole;
+            else delete inner.recordedRole;
+            delete inner.roleConfidence;
+            delete inner.roleReason;
+            delete inner.classificationVersion;
+          });
         }
 
         saveState();
@@ -4493,6 +5441,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   /* ------------------ NEXT EXERCISE ------------------ */
   nextExerciseBtn.addEventListener("click", () => {
+    finishRest({ announceCompletion: false, hide: true });
     const finishedName = currentExercise ? currentExercise.name : "";
     if (currentExercise && currentExercise.sets.length) {
       pushOrMergeExercise(currentExercise);
@@ -4506,12 +5455,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     distanceInput.value = "";
     durationMinInput.value = "";
     durationSecInput.value = "";
+    resetPendingSetContext();
     cardioInputs.classList.add("hidden");
-
-    if (restTimer) {
-      clearInterval(restTimer);
-      restBox.classList.add("hidden");
-    }
 
     updateSummary();
     updateSetsToday();
@@ -4521,9 +5466,19 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
 
   function pushOrMergeExercise(ex) {
-    const existing = session.exercises.find((e) => e.name === ex.name);
+    const existing = session.exercises.find(
+      (candidate) => exerciseGoalKey(candidate.name) === exerciseGoalKey(ex.name)
+        && !!candidate.isSuperset === !!ex.isSuperset
+        && !!candidate.isCardio === !!ex.isCardio,
+    );
     if (existing) {
       existing.progressionProfile = normalizeExerciseProfile(ex.progressionProfile);
+      if (ex.progressionProfiles) {
+        existing.progressionProfiles = {
+          ...(existing.progressionProfiles || {}),
+          ...ex.progressionProfiles,
+        };
+      }
       ex.sets.forEach((s) => {
         const norm = normalizeSet({ ...s, set: existing.sets.length + 1 });
         existing.sets.push(norm);
@@ -4534,6 +5489,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         isSuperset: ex.isSuperset || false,
         isCardio: ex.isCardio || false,
         exercises: ex.exercises ? [...ex.exercises] : undefined,
+        progressionProfiles: ex.progressionProfiles
+          ? deepClone(ex.progressionProfiles)
+          : undefined,
         progressionProfile: normalizeExerciseProfile(ex.progressionProfile),
         sets: ex.sets.map((s) => normalizeSet({ ...s })),
       });
@@ -4542,26 +5500,27 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   /* ------------------ REST TIMER ------------------ */
   function startRest(seconds, setIndex) {
+    if (restTargetSet) finishRest({ announceCompletion: false, hide: true });
     stopRest();
     document.body.classList.add("resting");
     restSecondsRemaining = seconds;
     restStartMs = Date.now();
+    restDeadlineMs = restStartMs + (seconds * 1000);
     restSetIndex = setIndex;
+    restTargetSet = currentExercise?.sets?.[setIndex] || null;
     updateRestDisplay();
     restBox.classList.remove("hidden");
     announce(`Rest started for ${formatSec(seconds)}`);
-    restTimer = setInterval(() => {
-      restSecondsRemaining--;
+    const tick = () => {
+      restSecondsRemaining = Math.max(0, Math.ceil((restDeadlineMs - Date.now()) / 1000));
       updateRestDisplay();
       if (restSecondsRemaining <= 0) {
         finishRest();
         restDisplay.textContent = "Ready!";
         setTimeout(() => restBox.classList.add("hidden"), 1500);
       }
-    }, 1000);
-    
-    // Cleanup timer on page unload
-    window.addEventListener('beforeunload', stopRest, { once: true });
+    };
+    restTimer = setInterval(tick, 250);
   }
 
   function stopRest() {
@@ -4572,20 +5531,26 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     document.body.classList.remove("resting");
   }
 
-  function finishRest() {
+  function finishRest({ announceCompletion = true, hide = false } = {}) {
+    if (!restTargetSet && !restStartMs) {
+      stopRest();
+      if (hide) restBox.classList.add('hidden');
+      return;
+    }
     stopRest();
-    announce("Rest finished");
-    const elapsed = Math.round((Date.now() - restStartMs) / 1000);
-    if (
-      currentExercise &&
-      restSetIndex != null &&
-      currentExercise.sets[restSetIndex]
-    ) {
-      currentExercise.sets[restSetIndex].restActual = elapsed;
+    if (announceCompletion) announce("Rest finished");
+    const elapsed = Math.min(86400, Math.max(0, Math.round((Date.now() - restStartMs) / 1000)));
+    if (restTargetSet) {
+      restTargetSet.restActual = elapsed;
       saveState();
-      rebuildSetsList();
+      if (currentExercise) rebuildSetsList();
     }
     restSetIndex = null;
+    restTargetSet = null;
+    restStartMs = 0;
+    restDeadlineMs = 0;
+    restSecondsRemaining = 0;
+    if (hide) restBox.classList.add('hidden');
   }
 
   function updateRestDisplay() {
@@ -4595,8 +5560,22 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   restBox.addEventListener("click", function () {
-    finishRest();
-    restBox.classList.add("hidden");
+    finishRest({ hide: true });
+  });
+  restBox.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    finishRest({ hide: true });
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && restTargetSet && restDeadlineMs) {
+      restSecondsRemaining = Math.max(0, Math.ceil((restDeadlineMs - Date.now()) / 1000));
+      updateRestDisplay();
+      if (restSecondsRemaining <= 0) finishRest({ hide: false });
+    }
+  });
+  window.addEventListener('beforeunload', () => {
+    if (restTargetSet) finishRest({ announceCompletion: false, hide: true });
   });
 
   /* ------------------ CALENDAR SAVE ------------------ */
@@ -4609,7 +5588,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         ex.sets.forEach((set, setIdx) => {
           set.exercises.forEach(sub => {
             const setNumber = set.set || setIdx + 1;
-            lines.push(normalizeSetRole(set.role) === 'failed_attempt'
+            const role = normalizeSetRole(sub.role ?? set.role);
+            lines.push(role === 'failed_attempt'
               ? `${sub.name}: Set ${setNumber} - Failed attempt at ${sub.weight} lbs`
               : `${sub.name}: Set ${setNumber} - ${sub.weight} lbs × ${sub.reps} rep${Number(sub.reps) === 1 ? '' : 's'}`);
           });
@@ -4630,49 +5610,21 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const d = new Date();
     const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     const history = wtStorage.get(WT_KEYS.history, {});
-    history[dateStr] = appendUniqueHistoryLines(history[dateStr], lines);
+    history[dateStr] = upsertStructuredHistoryLines(history[dateStr], lines);
     wtStorage.set(WT_KEYS.history, history);
     window.dispatchEvent(new Event('wt-history-updated'));
   }
 
   // Build a deep copy of all exercises including the in-progress one
   function buildExportExercises() {
-    const exportExercises = session.exercises.map((e) => ({
-      ...e,
-      progressionProfile: normalizeExerciseProfile(e.progressionProfile),
-      sets: e.sets.map((s) => normalizeSet({ ...s })),
-    }));
-    if (currentExercise && currentExercise.sets.length) {
-      const exExisting = exportExercises.find(
-        (e) => e.name === currentExercise.name,
-      );
-      if (exExisting) {
-        exExisting.progressionProfile = normalizeExerciseProfile(
-          currentExercise.progressionProfile,
-        );
-        currentExercise.sets.forEach((s) => {
-          const norm = normalizeSet({ ...s, set: exExisting.sets.length + 1 });
-          exExisting.sets.push(norm);
-        });
-      } else {
-        exportExercises.push({
-          name: currentExercise.name,
-          isSuperset: currentExercise.isSuperset || false,
-          isCardio: currentExercise.isCardio || false,
-          exercises: currentExercise.exercises
-            ? [...currentExercise.exercises]
-            : undefined,
-          progressionProfile: normalizeExerciseProfile(
-            currentExercise.progressionProfile,
-          ),
-          sets: currentExercise.sets.map((s) => normalizeSet({ ...s })),
-        });
-      }
-    }
-    return exportExercises;
+    return mergeWorkoutExercises([
+      ...session.exercises,
+      ...(currentExercise && currentExercise.sets.length ? [currentExercise] : []),
+    ]);
   }
 
   function endWorkout({ persistCompleted = true } = {}) {
+    finishRest({ announceCompletion: false, hide: true });
     const date = getLocalDateString();
     const snapshot = attachExerciseGoalSnapshots(
       buildExportExercises(),
@@ -4681,11 +5633,19 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     );
     if (persistCompleted && snapshot.length) {
       wtStorage.set(WT_KEYS.last, snapshot);
+      wtStorage.set(WT_KEYS.lastMeta, {
+        date,
+        timestamp: new Date().toISOString(),
+        sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
+      });
       saveSessionLinesToHistory();
       const completed = normalizePayload({
         date,
         timestamp: new Date().toISOString(),
         exercises: snapshot,
+        goals: sanitizeGoals(goals).filter((goal) => goal.active).map((goal) => goal.text),
+        constraints: sanitizeConstraints(constraints),
+        sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
       });
       if (session.startedAt) {
         const startMs = new Date(session.startedAt).getTime();
@@ -4698,14 +5658,20 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           };
         }
       }
-      archivedSessions[date] = completed;
+      archivedSessions[date] = {
+        ...(archivedSessions[date] || {}),
+        ...completed,
+        sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
+      };
       archivedSessions = pruneArchive(archivedSessions, 120);
       wtStorage.set(WT_KEYS.archive, archivedSessions);
     }
     stopRest();
     restSetIndex = null;
+    restTargetSet = null;
     restSecondsRemaining = 0;
     restStartMs = 0;
+    restDeadlineMs = 0;
     restBox.classList.add("hidden");
     restDisplay.textContent = "00:00";
     stopSessionTimer();
@@ -4720,6 +5686,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     distanceInput.value = "";
     durationMinInput.value = "";
     durationSecInput.value = "";
+    resetPendingSetContext();
     updateSummary();
     updateSetsToday();
     saveState();
@@ -4744,7 +5711,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (!ok) return;
     const prevSession = deepClone(session);
     const prevCurrent = deepClone(currentExercise);
-    pushUndo({ type: "finish", payload: { prevSession, prevCurrent } });
+    pushUndo({
+      type: "finish",
+      payload: {
+        prevSession,
+        prevCurrent,
+        storageSnapshot: captureUndoStorage(),
+      },
+    });
     endWorkout({ persistCompleted: true });
     announce("Workout finished");
     showToast("Workout finished", { actionLabel: "Undo", onAction: performUndo });
@@ -4791,10 +5765,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const btn = e.target.closest("button[data-summary-edit]");
     if (!btn) return;
     const idx = parseInt(btn.dataset.summaryEdit, 10);
+    finishRest({ announceCompletion: false, hide: true });
     if (currentExercise && currentExercise.sets.length) {
       pushOrMergeExercise(currentExercise);
     }
     currentExercise = session.exercises.splice(idx, 1)[0];
+    resetPendingSetContext({ clearMeasurements: true });
     showInterface();
     if (currentExercise.isSuperset) {
       setupSupersetInputs(currentExercise.exercises);
@@ -4818,14 +5794,33 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
 
   /* ------------------ EXPORT (JSON + AI + CSV) ------------------ */
-  exportBtn.addEventListener("click", () => {
+  exportBtn.addEventListener("click", async () => {
     let exportExercises = buildExportExercises();
+    let exportDate = getLocalDateString();
     if (exportExercises.length) {
       wtStorage.set(WT_KEYS.last, exportExercises);
+      wtStorage.set(WT_KEYS.lastMeta, {
+        date: exportDate,
+        timestamp: new Date().toISOString(),
+        sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
+      });
       saveSessionLinesToHistory();
     } else {
       const last = wtStorage.get(WT_KEYS.last, null);
       if (last && last.length) {
+        const lastMeta = wtStorage.get(WT_KEYS.lastMeta, {});
+        exportDate = /^\d{4}-\d{2}-\d{2}$/.test(String(lastMeta?.date || ''))
+          ? lastMeta.date
+          : getLocalDateString();
+        const reExport = await confirmModal(
+          `There is no active workout. Re-export the saved workout from ${formatShortDate(exportDate)}?`,
+          {
+            yesText: 'Re-export',
+            noText: 'Cancel',
+            title: 'Re-export Saved Workout',
+          },
+        );
+        if (!reExport) return;
         exportExercises = last;
       } else {
         showToast("No workout data yet.");
@@ -4841,12 +5836,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }).then((includeNotes) => {
       // Honor preference: if ON include without asking; if OFF exclude without asking
       const alwaysSession = !!wtStorage.get(WT_KEYS.prefSessionTime, false);
-      performExport(exportExercises, includeNotes, alwaysSession);
+      performExport(exportExercises, includeNotes, alwaysSession, exportDate);
     });
   });
   
-  function performExport(exportExercises, includeNotes, includeSessionTime) {
-    const currentDate = getLocalDateString();
+  function performExport(
+    exportExercises,
+    includeNotes,
+    includeSessionTime,
+    currentDate = getLocalDateString(),
+  ) {
     const includeExerciseGoalProgress = !!wtStorage.get(
       WT_KEYS.prefExerciseGoalProgress,
       false,
@@ -4889,8 +5888,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (includeNotes) {
       const history = wtStorage.get(WT_KEYS.history, {});
       workoutNotes = Array.isArray(history[currentDate]) ? history[currentDate] : [];
-      const logLineRe =
-        /^(?:[^:]+:\s*)?(?:Set\s*\d+\s*[-–:]?\s*)?\d+(?:\.\d+)?\s*(?:lbs|kg)\s*[×xX]\s*\d+\s*reps/i;
+      const logLineRe = /^.+:\s*Set\s*\d+\s*[-–]\s*(?:Failed attempt at\b|.*(?:lbs\s*[×xX]|mi\s+in\b|\d+(?:\.\d+)?\s*[hms]\b))/i;
       workoutNotes = workoutNotes.filter((line) =>
         !logLineRe.test(String(line).trim()),
       );
@@ -5026,12 +6024,17 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     (currentStats.exercises || []).forEach((ex) => {
       const prev = prevByName.get(exerciseGoalKey(ex.name));
       if (prev) {
-        const currentProgressionVolume = ex.workingVolume || ex.totalVolume;
-        const previousProgressionVolume = prev.workingVolume || prev.totalVolume;
-        const volChange = formatPercentChange(
-          currentProgressionVolume,
-          previousProgressionVolume,
-        );
+        const currentProgressionVolume = getProgressionVolume(ex);
+        const previousProgressionVolume = getProgressionVolume(prev);
+        if (currentProgressionVolume <= 0) {
+          progressionLines.push(
+            `${ex.name} – No classified progression sets; volume and load progression comparison withheld.`,
+          );
+        } else if (previousProgressionVolume > 0) {
+          const volChange = formatPercentChange(
+            currentProgressionVolume,
+            previousProgressionVolume,
+          );
         const topChange = formatPercentChange(
           ex.topSet?.weight ?? null,
           prev.topSet?.weight ?? null,
@@ -5043,6 +6046,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         progressionLines.push(
           `${ex.name} – Progression volume: ${prevVol} → ${currVol} (${volChange}); Top successful set: ${prevTop} → ${currTop} (${topChange})`,
         );
+        }
       }
 
       const history = prevHistoryByName.get(exerciseGoalKey(ex.name)) || [];
@@ -5077,7 +6081,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     const csvColumns = [
       "Exercise", "Set", "Weight", "Reps", "Distance", "Duration", "Time",
-      "RestPlanned(sec)", "RestActual(sec)", "SetRole", "Outcome", "RIR",
+      "RestPlanned(sec)", "RestActual(sec)", "SetRole", "RoleSource",
+      "RoleConfidence", "RoleReason", "Outcome", "RIR",
       "Technique", "Pain", "GoalType", "GoalValue", "GoalUnit",
     ];
     if (includeExerciseGoalProgress) {
@@ -5113,14 +6118,17 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       ex.sets.forEach((s) => {
         if (ex.isSuperset) {
           s.exercises.forEach((sub) => {
+            const context = { ...s, ...sub, exercises: undefined };
             const goal = (ex.exerciseGoals || []).find(
               (item) => exerciseGoalKey(item.exerciseName) === exerciseGoalKey(sub.name),
             );
             csv += `${csvRow([
               sub.name, s.set, sub.weight, sub.reps, "", "", s.time,
               s.restPlanned ?? "", s.restActual ?? "",
-              s.role ?? "unknown", s.outcome ?? "completed", s.rir ?? "",
-              s.technique ?? "unknown", s.pain ?? "none",
+              context.role ?? "unknown", context.roleSource ?? "manual",
+              context.roleConfidence ?? "", context.roleReason ?? "",
+              context.outcome ?? "completed", context.rir ?? "",
+              context.technique ?? "unknown", context.pain ?? "unknown",
               ...goalCsvCells(goal),
             ])}\n`;
           });
@@ -5129,7 +6137,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           csv += `${csvRow([
             ex.name, s.set, "", "", s.distance ?? "", s.duration ?? "", s.time,
             s.restPlanned ?? "", s.restActual ?? "",
-            "", "", "", "", "",
+            ...Array(8).fill(""),
             ...goalCsvCells(goal),
           ])}\n`;
         } else {
@@ -5137,8 +6145,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           csv += `${csvRow([
             ex.name, s.set, s.weight, s.reps, "", "", s.time,
             s.restPlanned ?? "", s.restActual ?? "",
-            s.role ?? "unknown", s.outcome ?? "completed", s.rir ?? "",
-            s.technique ?? "unknown", s.pain ?? "none",
+            s.role ?? "unknown", s.roleSource ?? "manual",
+            s.roleConfidence ?? "", s.roleReason ?? "",
+            s.outcome ?? "completed", s.rir ?? "",
+            s.technique ?? "unknown", s.pain ?? "unknown",
             ...goalCsvCells(goal),
           ])}\n`;
         }
@@ -5168,14 +6178,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const explicitProgressionSets = currentStats.roleCounts.working
       + currentStats.roleCounts.top_set
       + currentStats.roleCounts.back_off;
-    aiText += `- Set classification: ${currentStats.warmupSetCount} warm-up/ramp; ${explicitProgressionSets} working/top/back-off; ${currentStats.roleCounts.technique} technique; ${currentStats.failedAttemptCount} failed; ${currentStats.roleCounts.unknown} unclassified.\n`;
+    aiText += `- Strength set-entry classification: ${currentStats.warmupSetCount} warm-up/ramp; ${explicitProgressionSets} working/top/back-off; ${currentStats.roleCounts.technique} technique; ${currentStats.failedAttemptCount} failed; ${currentStats.roleCounts.unknown + currentStats.roleCounts.auto} unclassified. (Each exercise inside a superset is counted separately.)\n`;
     const strengthSetCount = Object.values(currentStats.roleCounts)
       .reduce((sum, count) => sum + Number(count || 0), 0);
-    const allStrengthSetsUseDefaultWorkingRole = strengthSetCount >= 4
-      && currentStats.roleCounts.working === strengthSetCount
-      && currentStats.warmupSetCount === 0;
-    if (allStrengthSetsUseDefaultWorkingRole) {
-      aiText += `- Set-role confidence: LOW. Every strength set used the default Working set label and no warm-ups were marked. Inspect low-to-high loading sequences for likely warm-up/ramp sets; label any correction as Inferred, exclude likely ramps from progression proof, and do not pretend the user explicitly classified them.\n`;
+    if (strengthSetCount) {
+      const inferredCount = currentStats.roleSourceCounts.auto
+        + currentStats.roleSourceCounts.legacy_default;
+      aiText += `- Classification source: ${inferredCount} automatically inferred; ${currentStats.roleSourceCounts.manual} user-marked; ${currentStats.roleSourceCounts.system} outcome-determined. Automatic labels are transparent estimates, not claims that the user selected those roles.\n`;
     }
     if (currentStats.totalCardioDuration) {
       aiText += `- Cardio duration: ${formatSecondsHuman(currentStats.totalCardioDuration)}\n`;
@@ -5362,9 +6371,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
                 : "";
           const rest = rp || ra ? (rp ? rp : "") + (ra ? ra : "") : "";
           if (ex.isSuperset) {
-            const parts = (s.exercises || []).map((sub) => `${sub.name}: ${sub.weight} lbs × ${sub.reps} rep${Number(sub.reps) === 1 ? '' : 's'}`).join(" | ");
-            const context = formatSetContext(s);
-            aiText += `  Set ${s.set}: ${parts}${context ? ` [${context}]` : ''}${rest ? rest : ""}\n`;
+            const parts = (s.exercises || []).map((sub) => {
+              const child = { ...s, ...sub, exercises: undefined };
+              const failed = normalizeSetRole(child.role) === 'failed_attempt';
+              const performance = failed
+                ? `Failed attempt at ${sub.weight} lbs`
+                : `${sub.weight} lbs × ${sub.reps} rep${Number(sub.reps) === 1 ? '' : 's'}`;
+              const context = formatSetContext(child, { includeRole: !failed });
+              return `${sub.name}: ${performance}${context ? ` [${context}]` : ''}`;
+            }).join(" | ");
+            aiText += `  Set ${s.set}: ${parts}${rest ? rest : ""}\n`;
           } else if (ex.isCardio) {
             const dist = s.distance != null ? `${s.distance} mi` : "";
             const dur = formatSec(s.duration);
@@ -5456,12 +6472,25 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (e.key === "Enter") durationMinInput.focus();
   });
 
+  function isEditableShortcutTarget(target) {
+    return target instanceof HTMLElement && (
+      ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+      || target.isContentEditable
+    );
+  }
+
   document.addEventListener("keydown", (e) => {
+    if (document.querySelector('[data-wt-modal="true"]')) return;
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      const workoutEntry = e.target === weightInput
+        || e.target === repsInput
+        || e.target === distanceInput
+        || e.target === durationMinInput
+        || e.target === durationSecInput
+        || e.target?.classList?.contains('superset-field');
       if (
         !logBtn.disabled &&
-        document.activeElement &&
-        document.activeElement.tagName === "INPUT"
+        workoutEntry
       ) {
         logBtn.click();
       }
@@ -5480,12 +6509,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
 
   window.addEventListener("keydown", (e) => {
+    if (document.querySelector('[data-wt-modal="true"]')) return;
     const mod = e.ctrlKey || e.metaKey;
-    if (mod && e.key.toLowerCase() === "z") {
+    if (mod && e.key.toLowerCase() === "z" && !isEditableShortcutTarget(e.target)) {
       e.preventDefault();
-      performUndo();
-    }
-    if (!mod && e.key.toLowerCase() === "u") {
       performUndo();
     }
     if (e.key === "Escape") {
@@ -5495,27 +6522,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 }
 
 function getSessionSnapshot() {
-  const snapshot = session.exercises.map((ex) => ({
-    name: ex.name,
-    isSuperset: ex.isSuperset || false,
-    isCardio: ex.isCardio || false,
-    exercises: ex.exercises ? [...ex.exercises] : undefined,
-    progressionProfile: normalizeExerciseProfile(ex.progressionProfile),
-    sets: ex.sets.map((s) => normalizeSet({ ...s })),
-  }));
-  if (currentExercise) {
-    snapshot.push({
-      name: currentExercise.name,
-      isSuperset: currentExercise.isSuperset || false,
-      isCardio: currentExercise.isCardio || false,
-      exercises: currentExercise.exercises
-        ? [...currentExercise.exercises]
-        : undefined,
-      progressionProfile: normalizeExerciseProfile(currentExercise.progressionProfile),
-      sets: currentExercise.sets.map((s) => normalizeSet({ ...s })),
-    });
-  }
-  return snapshot;
+  return mergeWorkoutExercises([
+    ...session.exercises,
+    ...(currentExercise && currentExercise.sets.length ? [currentExercise] : []),
+  ]);
 }
 
 if (typeof window !== "undefined") {
@@ -5528,6 +6538,7 @@ module.exports = {
   EXERCISE_GOAL_TYPES,
   SESSION_STATUS_OPTIONS,
   SET_ROLE_OPTIONS,
+  SET_ROLE_SOURCES,
   TECHNIQUE_OPTIONS,
   PAIN_OPTIONS,
   EXERCISE_PURPOSES,
@@ -5538,6 +6549,7 @@ module.exports = {
   canLogCardio,
   normalizeSet,
   normalizeSetRole,
+  normalizeSetRoleSource,
   normalizeRir,
   normalizeTechnique,
   normalizePain,
@@ -5547,18 +6559,24 @@ module.exports = {
   buildAutomaticExerciseProfile,
   sanitizeExerciseProfiles,
   isProgressionSet,
+  classifyExerciseSets,
+  isValidNormalizedSet,
   formatSetContext,
   normalizePayload,
   computeSessionStats,
+  getProgressionVolume,
   estimateE1rmEnsemble,
   estimateRepsAtLoad,
   estimateNextLoadFeasibility,
   estimateE1rmFromSet,
   buildExerciseHighlightsForExport,
   getWorkoutExerciseRoster,
+  mergeWorkoutExercises,
   buildExerciseSelectionReference,
   computeConsistencyMetricsFromStats,
   appendUniqueHistoryLines,
+  upsertStructuredHistoryLines,
+  migrateSetRoleProvenance,
   csvRow,
   formatCardioHistoryLine,
   parseYMD,
@@ -5578,5 +6596,6 @@ module.exports = {
   normalizeWorkoutMinutes,
   getLocalDateString,
   buildSessionPlanningContext,
+  normalizeSessionStartedAt,
 };
 }

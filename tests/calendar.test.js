@@ -1,4 +1,10 @@
-const { parseDateLocal, parseAiText, parseCsv, snapshotToLines } = require('../calendar');
+const {
+  parseDateLocal,
+  parseAiText,
+  parseCsv,
+  snapshotToLines,
+  formatDuration,
+} = require('../calendar');
 
 test('parseDateLocal returns exact date', () => {
   const d = parseDateLocal('2025-08-01');
@@ -93,4 +99,39 @@ test('snapshotToLines formats cardio sessions without undefined values', () => {
   expect(snapshotToLines(snapshot)).toEqual([
     'Jump Rope: Set 1 - 1m 15s',
   ]);
+});
+
+test('parseAiText preserves every superset component and failed attempt', () => {
+  const sample = `WORKOUT DATA - 2024-07-04\n\nBench + Row:\n  Set 1: Bench: 185 lbs × 5 reps [Auto: Working set] | Row: 100 lbs × 10 reps [Auto: Working set]\n  Set 2: Bench: Failed attempt at 195 lbs | Row: 105 lbs × 8 reps`;
+  expect(parseAiText(sample, '2024-07-04')).toEqual({
+    '2024-07-04': [
+      'Bench: Set 1 - 185 lbs × 5 reps',
+      'Row: Set 1 - 100 lbs × 10 reps',
+      'Bench: Set 2 - Failed attempt at 195 lbs',
+      'Row: Set 2 - 105 lbs × 8 reps',
+    ],
+  });
+});
+
+test('parseCsv preserves failed-attempt semantics', () => {
+  const csv = [
+    'Exercise,Set,Weight,Reps,Distance,Duration,Time,RestPlanned(sec),RestActual(sec),SetRole,RoleSource,RoleConfidence,RoleReason,Outcome,RIR,Technique,Pain',
+    'Bench Press,3,295,0,,,08:15,,,failed_attempt,manual,,,failed,,unknown,unknown',
+  ].join('\n');
+  expect(parseCsv(csv, '2024-07-04')).toEqual({
+    '2024-07-04': ['Bench Press: Set 3 - Failed attempt at 295 lbs'],
+  });
+});
+
+test('snapshotToLines preserves failed attempts', () => {
+  expect(snapshotToLines([{
+    name: 'Bench Press',
+    sets: [{ set: 2, weight: 295, reps: 0, role: 'failed_attempt', outcome: 'failed' }],
+  }])).toEqual([
+    'Bench Press: Set 2 - Failed attempt at 295 lbs',
+  ]);
+});
+
+test('formatDuration keeps seconds in hour-long efforts', () => {
+  expect(formatDuration(3630)).toBe('1h 0m 30s');
 });

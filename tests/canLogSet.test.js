@@ -5,6 +5,7 @@ const {
   normalizeSet,
   normalizePayload,
   appendUniqueHistoryLines,
+  upsertStructuredHistoryLines,
   csvRow,
 } = require('../script');
 
@@ -49,22 +50,21 @@ describe('canLogCardio', () => {
 });
 
 describe('data normalization', () => {
-  it('sanitizes set values', () => {
+  it('quarantines invalid set values instead of fabricating performance', () => {
     const set = normalizeSet({ weight: -5, reps: -2, duration: -10, restActual: 'NaN' });
-    expect(set.weight).toBe(0);
-    expect(set.reps).toBe(1);
-    expect(set.duration).toBe(0);
+    expect(set.weight).toBeNull();
+    expect(set.reps).toBeNull();
+    expect(set.duration).toBeNull();
     expect(set.restActual).toBeNull();
   });
 
-  it('normalizes payload arrays', () => {
+  it('drops invalid imported sets instead of turning them into one rep', () => {
     const norm = normalizePayload([{ name: 'Bench', sets: [{ weight: '20', reps: '-3' }] }]);
     expect(norm.totalExercises).toBe(1);
-    expect(norm.totalSets).toBe(1);
-    expect(norm.exercises[0].sets[0].weight).toBe(20);
-    expect(norm.exercises[0].sets[0].reps).toBe(1);
-    expect(norm.exercises[0].nextSet).toBe(2);
-    expect(norm.schema).toBe(8);
+    expect(norm.totalSets).toBe(0);
+    expect(norm.exercises[0].sets).toEqual([]);
+    expect(norm.exercises[0].nextSet).toBe(1);
+    expect(norm.schema).toBe(9);
   });
 });
 
@@ -86,5 +86,15 @@ describe('history and CSV helpers', () => {
   it('quotes CSV fields that contain commas or quotes', () => {
     expect(csvRow(['Curl, Barbell', 1, 75, 10])).toBe('"Curl, Barbell",1,75,10');
     expect(csvRow(['He said "press"', 1])).toBe('"He said ""press""",1');
+  });
+
+  it('replaces a corrected exercise/set line without leaving stale history', () => {
+    expect(upsertStructuredHistoryLines(
+      ['Bench Press: Set 1 - 185 lbs × 5 reps', 'Felt strong'],
+      ['bench   press: Set 1 - 190 lbs × 5 reps'],
+    )).toEqual([
+      'Felt strong',
+      'bench   press: Set 1 - 190 lbs × 5 reps',
+    ]);
   });
 });

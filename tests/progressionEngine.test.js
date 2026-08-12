@@ -277,4 +277,39 @@ describe('one-variable progression decisions', () => {
 
     expect(buildStrengthDecisionSupport(current, previous).decision).toBe('REDUCE LOAD');
   });
+
+  it('does not add reps when a known RIR is below the saved target', () => {
+    const previous = exerciseStats([qualitySet(100, 10)]);
+    const current = exerciseStats([
+      qualitySet(100, 10, { rir: 0 }),
+      qualitySet(100, 9, { rir: 1 }),
+    ]);
+    const decision = buildStrengthDecisionSupport(current, previous);
+
+    expect(decision.decision).toBe('HOLD');
+    expect(decision.text).toMatch(/below the saved 2 RIR target/);
+  });
+
+  it('does not progress after a recorded minor technique breakdown', () => {
+    const previous = exerciseStats([qualitySet(100, 10)]);
+    const current = exerciseStats([
+      qualitySet(100, 10, { technique: 'minor' }),
+      qualitySet(100, 10),
+    ]);
+    expect(buildStrengthDecisionSupport(current, previous).decision).toBe('HOLD');
+  });
+
+  it('attributes short rest to the following repeated set', () => {
+    const shortBeforeDrop = exerciseStats([
+      qualitySet(100, 10, { restActual: 30, restPlanned: 120 }),
+      qualitySet(100, 6, { restActual: 120, restPlanned: 120 }),
+    ]);
+    const shortAfterDrop = exerciseStats([
+      qualitySet(100, 10, { restActual: 120, restPlanned: 120 }),
+      qualitySet(100, 6, { restActual: 30, restPlanned: 120 }),
+    ]);
+
+    expect(buildStrengthDecisionSupport(shortBeforeDrop).decision).toBe('INCREASE REST');
+    expect(buildStrengthDecisionSupport(shortAfterDrop).decision).toBe('HOLD');
+  });
 });
