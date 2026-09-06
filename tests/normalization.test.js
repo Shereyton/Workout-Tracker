@@ -5,6 +5,11 @@ const {
 } = require('../script');
 
 describe('normalizeSet - superset internals', () => {
+  it('does not turn missing weights into bodyweight sets after repeated normalization', () => {
+    const invalid = normalizeSet({ weight: null, reps: 5 });
+    expect(normalizeSet(invalid).weight).toBeNull();
+    expect(normalizePayload({ exercises: [{ name: 'Bench', sets: [invalid] }] }).totalSets).toBe(0);
+  });
   it('marks invalid inner exercise values instead of fabricating a completed rep', () => {
     const input = {
       set: 1,

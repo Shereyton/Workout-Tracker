@@ -1,5 +1,6 @@
 const {
   canLogSet,
+  parseWorkoutNumber,
   canLogStrengthEntry,
   canLogCardio,
   normalizeSet,
@@ -10,6 +11,13 @@ const {
 } = require('../script');
 
 describe('canLogSet', () => {
+  it('rejects non-numeric values and fractional reps', () => {
+    for (const value of [NaN, Infinity, undefined, null, '100']) expect(canLogSet(value, 5)).toBe(false);
+    expect(canLogSet(100, 2.5)).toBe(false);
+    for (const value of ['', 'NaN', 'Infinity', '10lbs', '5oops']) expect(Number.isNaN(parseWorkoutNumber(value))).toBe(true);
+    expect(parseWorkoutNumber('0')).toBe(0);
+    expect(parseWorkoutNumber('12.5')).toBe(12.5);
+  });
   it('allows zero weight with positive reps', () => {
     expect(canLogSet(0, 5)).toBe(true);
   });
