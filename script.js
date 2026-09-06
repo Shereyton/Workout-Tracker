@@ -4,6 +4,7 @@ const WT_KEYS = {
   current: 'wt_currentExercise',
   last: 'wt_lastWorkout',
   lastMeta: 'wt_lastWorkoutMeta',
+  completed: 'wt_completedWorkouts',
   history: 'wt_history',
   custom: 'wt_customExercises',
   theme: 'wt_theme',
@@ -512,7 +513,7 @@ function normalizeSet(s) {
     delete out.setRole;
   }
   if ('weight' in out) {
-    const weight = Number(out.weight);
+    const weight = out.weight === null || out.weight === '' ? NaN : Number(out.weight);
     out.weight = Number.isFinite(weight) && weight >= 0 && weight <= 9999
       ? weight
       : null;
@@ -530,7 +531,7 @@ function normalizeSet(s) {
     out.exercises = out.exercises.map((sub) => {
       const subOut = { ...sub };
       if ('weight' in subOut) {
-        const weight = Number(subOut.weight);
+        const weight = subOut.weight === null || subOut.weight === '' ? NaN : Number(subOut.weight);
         subOut.weight = Number.isFinite(weight) && weight >= 0 && weight <= 9999
           ? weight
           : null;
@@ -2302,7 +2303,7 @@ const wtStorage = {
       const str = JSON.stringify(obj);
       // The archive is already a bounded derived history. Replicating it four times
       // can exhaust localStorage and prevent an active set from being saved.
-      writeWithBackups(key, str, key !== WT_KEYS.archive);
+      writeWithBackups(key, str, key !== WT_KEYS.archive && key !== WT_KEYS.completed);
       return true;
     } catch (error) {
       reportStorageFailure(error);
@@ -2481,23 +2482,29 @@ let restSetIndex = null;
 let restTargetSet = null;
 
 function canLogSet(w, r) {
-  return !Number.isNaN(w) && !Number.isNaN(r) && w >= 0 && w <= 9999 && r > 0 && r <= 999;
+  return Number.isFinite(w) && Number.isInteger(r) && w >= 0 && w <= 9999 && r > 0 && r <= 999;
+}
+
+function parseWorkoutNumber(value) {
+  if (typeof value !== 'string' || !value.trim()) return NaN;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : NaN;
 }
 
 function canLogStrengthEntry(w, r, role = 'auto') {
   if (normalizeSetRole(role) === 'failed_attempt') {
-    return Number.isFinite(w) && w >= 0 && w <= 9999 && Number(r) === 0;
+    return Number.isFinite(w) && w >= 0 && w <= 9999 && r === 0;
   }
   return canLogSet(w, r);
 }
 
 function canLogCardio(distance, duration, name) {
   const durationOk = Number.isFinite(duration) && duration > 0 && duration <= 604800;
-  const distanceMissing = distance === null || Number.isNaN(distance);
+  const distanceMissing = distance === null;
   const allowsNoDistance = name === "Jump Rope" || name === "Plank";
   const distanceOk = allowsNoDistance
-    ? distanceMissing || (distance >= 0 && distance <= 100000)
-    : !distanceMissing && distance >= 0 && distance <= 100000;
+    ? distanceMissing || (Number.isFinite(distance) && distance >= 0 && distance <= 100000)
+    : Number.isFinite(distance) && distance >= 0 && distance <= 100000;
   return distanceOk && durationOk;
 }
 
@@ -3365,6 +3372,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const undoStorageKeys = [
     WT_KEYS.last,
     WT_KEYS.lastMeta,
+    WT_KEYS.completed,
     WT_KEYS.history,
     WT_KEYS.archive,
     WT_KEYS.exerciseGoals,
@@ -3621,7 +3629,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   function startSessionTimer() {
-    if (!session.startedAt) return;
+    if (!session.startedAt || session.finishedAt) return;
     const normalizedStartedAt = normalizeSessionStartedAt(session.startedAt);
     if (!normalizedStartedAt) {
       session.startedAt = null;
@@ -3719,8 +3727,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     if (currentExercise.isSuperset) {
       const ok = currentExercise.exercises.every((_, i) => {
-        const w = parseFloat(document.getElementById(`weight${i}`).value);
-        const r = parseInt(document.getElementById(`reps${i}`).value, 10);
+        const w = parseWorkoutNumber(document.getElementById(`weight${i}`).value);
+        const r = parseWorkoutNumber(document.getElementById(`reps${i}`).value);
         return canLogSet(w, r);
       });
       logBtn.disabled = !ok;
@@ -3739,8 +3747,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       return;
     }
 
-    const w = parseFloat(weightInput.value);
-    const r = parseInt(repsInput.value, 10);
+    const w = parseWorkoutNumber(weightInput.value);
+    const r = parseWorkoutNumber(repsInput.value);
     logBtn.disabled = !canLogStrengthEntry(w, r, setRoleInput?.value);
   }
 
@@ -4831,8 +4839,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   logBtn.addEventListener("click", function () {
     if (currentExercise.isSuperset) {
       const setGroup = currentExercise.exercises.map((ex, i) => {
-        const w = parseFloat(document.getElementById(`weight${i}`).value);
-        const r = parseInt(document.getElementById(`reps${i}`).value, 10);
+        const w = parseWorkoutNumber(document.getElementById(`weight${i}`).value);
+        const r = parseWorkoutNumber(document.getElementById(`reps${i}`).value);
         return { name: ex, weight: w, reps: r };
       });
       if (setGroup.some((s) => !canLogSet(s.weight, s.reps))) {
@@ -4929,8 +4937,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       return;
     }
 
-    const w = parseFloat(weightInput.value);
-    const r = parseInt(repsInput.value, 10);
+    const w = parseWorkoutNumber(weightInput.value);
+    const r = parseWorkoutNumber(repsInput.value);
     const setContext = getPendingSetContext();
 
     if (!canLogStrengthEntry(w, r, setContext.role)) {
@@ -5273,8 +5281,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       if (ev.target.hasAttribute("data-edit-save")) {
         if (currentExercise.isSuperset) {
           const updates = s.exercises.map((ex, i) => {
-            const w = parseFloat(form.querySelector(`.editW${i}`).value);
-            const r = parseInt(form.querySelector(`.editR${i}`).value, 10);
+            const w = parseWorkoutNumber(form.querySelector(`.editW${i}`).value);
+            const r = parseWorkoutNumber(form.querySelector(`.editR${i}`).value);
             return { ex, w, r };
           });
           if (updates.some(({ w, r }) => !canLogSet(w, r))) {
@@ -5324,8 +5332,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           s.restPlanned = norm.restPlanned;
           s.restActual = norm.restActual;
         } else {
-          const newW = parseFloat(form.querySelector(".editW").value);
-          const newR = parseInt(form.querySelector(".editR").value, 10);
+          const newW = parseWorkoutNumber(form.querySelector(".editW").value);
+          const newR = parseWorkoutNumber(form.querySelector(".editR").value);
           const vPlanned = form.querySelector(".editRestPlanned").value;
           const vActual = form.querySelector(".editRestActual").value;
 
@@ -5632,12 +5640,23 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       date,
     );
     if (persistCompleted && snapshot.length) {
-      wtStorage.set(WT_KEYS.last, snapshot);
-      wtStorage.set(WT_KEYS.lastMeta, {
+      const completedId = session.completedId || `workout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const savedWorkouts = wtStorage.get(WT_KEYS.completed, null) || { ...archivedSessions };
+      const record = normalizePayload({ date, timestamp: new Date().toISOString(), exercises: snapshot,
+        goals: sanitizeGoals(goals).filter(goal => goal.active).map(goal => goal.text),
+        constraints: sanitizeConstraints(constraints),
+        sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes) });
+      if (!wtStorage.set(WT_KEYS.completed, { ...savedWorkouts, [completedId]: record })) {
+        showToast('Could not save the workout. Your sets are still here. Export a backup before trying again.');
+        return false;
+      }
+      session.completedId = completedId;
+      if (!wtStorage.set(WT_KEYS.last, snapshot)) return false;
+      if (!wtStorage.set(WT_KEYS.lastMeta, {
         date,
         timestamp: new Date().toISOString(),
         sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
-      });
+      })) return false;
       saveSessionLinesToHistory();
       const completed = normalizePayload({
         date,
@@ -5664,7 +5683,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
       };
       archivedSessions = pruneArchive(archivedSessions, 120);
-      wtStorage.set(WT_KEYS.archive, archivedSessions);
+      if (!wtStorage.set(WT_KEYS.archive, archivedSessions)) return false;
+      // Finishing saves the workout without clearing the visible or persisted sets.
+      session.finishedAt = new Date().toISOString();
+      stopSessionTimer();
+      saveState();
+      updateSummary();
+      return true;
     }
     stopRest();
     restSetIndex = null;
@@ -5691,6 +5716,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateSetsToday();
     saveState();
     updateLogButtonState();
+    return true;
   }
 
   /* ------------------ RESET WORKOUT ------------------ */
@@ -5707,7 +5733,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   /* ------------------ FINISH WORKOUT ------------------ */
   finishBtn.addEventListener("click", async () => {
-    const ok = await confirmModal("Finish workout?", { yesText: 'Finish', noText: 'Cancel', title: 'Finish Workout' });
+    if (!buildExportExercises().some(ex => ex.sets.length)) {
+      showToast('Log at least one set before finishing.');
+      return;
+    }
+    const ok = await confirmModal("Save this workout as finished? All your sets will stay visible and available to export.", { yesText: 'Save Workout', noText: 'Cancel', title: 'Finish Workout' });
     if (!ok) return;
     const prevSession = deepClone(session);
     const prevCurrent = deepClone(currentExercise);
@@ -5719,15 +5749,27 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         storageSnapshot: captureUndoStorage(),
       },
     });
-    endWorkout({ persistCompleted: true });
+    if (!endWorkout({ persistCompleted: true })) return;
     announce("Workout finished");
-    showToast("Workout finished", { actionLabel: "Undo", onAction: performUndo });
+    showToast("Workout saved. Your sets are still available below.", { actionLabel: "Undo", onAction: performUndo });
   });
 
   /* ------------------ SUMMARY ------------------ */
   function updateSummary() {
     let totalSets = 0;
     summaryText.innerHTML = "";
+    if (session.finishedAt) {
+      const saved = document.createElement('p');
+      saved.textContent = 'Workout saved. Review or export your sets below. If you change any sets, finish again to update the saved copy. Start a new workout when you are ready.';
+      const next = document.createElement('button');
+      next.className = 'btn';
+      next.textContent = 'Start New Workout';
+      next.addEventListener('click', async () => {
+        if (!await confirmModal('Start a new empty workout? This finished workout remains saved.', { title: 'New Workout', yesText: 'Start New', noText: 'Cancel' })) return;
+        endWorkout({ persistCompleted: false });
+      });
+      summaryText.append(saved, next);
+    }
     session.exercises.forEach((ex, i) => {
       totalSets += ex.sets.length;
       const item = document.createElement("div");
@@ -5758,6 +5800,29 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       total.textContent = `Total Sets: ${totalSets}`;
       summaryText.prepend(document.createElement("br"));
       summaryText.prepend(total);
+    }
+    const savedRecords = Object.values(wtStorage.get(WT_KEYS.completed, null) || archivedSessions)
+      .filter(record => record && Array.isArray(record.exercises))
+      .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+    if (savedRecords.length) {
+      const heading = document.createElement('h4');
+      heading.textContent = 'Saved Workouts';
+      summaryText.appendChild(heading);
+      savedRecords.forEach(record => {
+        const row = document.createElement('div');
+        const count = record.exercises.reduce((sum, ex) => sum + ex.sets.length, 0);
+        const label = document.createElement('span');
+        label.textContent = `${record.date} · ${count} sets `;
+        const download = document.createElement('button');
+        download.className = 'btn-mini';
+        download.textContent = 'Download Workout';
+        download.addEventListener('click', () => triggerDownload(
+          new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' }),
+          `workout_${record.date}_${String(record.timestamp).replace(/[^0-9]/g, '')}.json`,
+        ));
+        row.append(label, download);
+        summaryText.appendChild(row);
+      });
     }
   }
 
@@ -6545,6 +6610,7 @@ module.exports = {
   GOAL_PATHS,
   getThemePack,
   canLogSet,
+  parseWorkoutNumber,
   canLogStrengthEntry,
   canLogCardio,
   normalizeSet,
