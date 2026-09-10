@@ -3782,8 +3782,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       try {
         const res = await fetch(p);
         if (res.ok) {
-          allExercises = await res.json();
-          break;
+          const loaded = await res.json();
+          if (Array.isArray(loaded)) {
+            allExercises = loaded;
+            break;
+          }
         }
       } catch (e) {
         console.warn(`Failed to load exercises from ${p}:`, e);
@@ -3805,7 +3808,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       allExercises = [];
       console.warn('No exercise database found, using empty list');
     }
-    const custom = wtStorage.get(WT_KEYS.custom, []);
+    allExercises = allExercises.filter(ex => ex && typeof ex.name === 'string' && ex.name.trim());
+    const storedCustom = wtStorage.get(WT_KEYS.custom, []);
+    const custom = Array.isArray(storedCustom) ? storedCustom.filter(name => typeof name === 'string' && name.trim()) : [];
     custom.forEach((n) =>
       allExercises.push({
         name: n,
@@ -4302,7 +4307,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   function getBestHistoricalGoalPerformance(exerciseName, goalType) {
     let best = 0;
     const inspectExercises = (exercises) => {
-      (exercises || []).forEach((exercise) => {
+      (Array.isArray(exercises) ? exercises : []).forEach((exercise) => {
         if (!exercise) return;
         if (
           exercise.isSuperset ||
@@ -5721,14 +5726,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   /* ------------------ RESET WORKOUT ------------------ */
   resetBtn.addEventListener("click", async () => {
-    const ok = await confirmModal("Reset entire workout?", { yesText: 'Reset', noText: 'Cancel', title: 'Reset Workout' });
+    const ok = await confirmModal("Clear the current workout and start fresh? Saved workouts and goals will stay saved.", { yesText: 'Reset', noText: 'Cancel', title: 'Reset Workout' });
     if (!ok) return;
     const prevSession = deepClone(session);
     const prevCurrent = deepClone(currentExercise);
     pushUndo({ type: "reset", payload: { prevSession, prevCurrent } });
     endWorkout({ persistCompleted: false });
     announce("Workout reset");
-    showToast("Workout reset", { actionLabel: "Undo", onAction: performUndo });
+    document.getElementById('exerciseSelect').scrollIntoView({ block: 'center', behavior: 'smooth' });
+    showToast("Current workout cleared. Choose an exercise to begin.", { actionLabel: "Undo", onAction: performUndo });
   });
 
   /* ------------------ FINISH WORKOUT ------------------ */
@@ -5805,23 +5811,28 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       .filter(record => record && Array.isArray(record.exercises))
       .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
     if (savedRecords.length) {
-      const heading = document.createElement('h4');
-      heading.textContent = 'Saved Workouts';
-      summaryText.appendChild(heading);
+      const savedPanel = document.createElement('details');
+      savedPanel.className = 'saved-workouts';
+      const heading = document.createElement('summary');
+      heading.textContent = `Saved Workouts (${savedRecords.length})`;
+      savedPanel.appendChild(heading);
+      summaryText.appendChild(savedPanel);
       savedRecords.forEach(record => {
         const row = document.createElement('div');
-        const count = record.exercises.reduce((sum, ex) => sum + ex.sets.length, 0);
+        row.className = 'saved-workout-row';
+        const count = record.exercises.reduce((sum, ex) => sum + (Array.isArray(ex?.sets) ? ex.sets.filter(Boolean).length : 0), 0);
         const label = document.createElement('span');
-        label.textContent = `${record.date} · ${count} sets `;
+        label.textContent = `${record.date || 'Undated workout'} · ${count} sets`;
         const download = document.createElement('button');
-        download.className = 'btn-mini';
+        download.type = 'button';
+        download.className = 'saved-workout-download';
         download.textContent = 'Download Workout';
         download.addEventListener('click', () => triggerDownload(
           new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' }),
           `workout_${record.date}_${String(record.timestamp).replace(/[^0-9]/g, '')}.json`,
         ));
         row.append(label, download);
-        summaryText.appendChild(row);
+        savedPanel.appendChild(row);
       });
     }
   }

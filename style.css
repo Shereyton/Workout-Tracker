@@ -362,6 +362,11 @@ body.dark .superset-builder{background:#20242a;border-color:#2d333c;}
 
 .summary-item{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
 .summary-item button{margin-left:8px;}
+.saved-workouts{margin-top:16px;max-width:100%;}
+.saved-workouts>summary{cursor:pointer;font-weight:700;padding:12px 0;}
+.saved-workout-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;border-top:1px solid var(--input-border);}
+.saved-workout-row>span{min-width:0;overflow-wrap:anywhere;}
+.saved-workout-download{width:auto;min-width:150px;min-height:44px;flex:0 0 auto;padding:10px 14px;border:1px solid var(--input-border);border-radius:10px;background:var(--card-bg, #eef0fb);color:var(--ink);font:inherit;font-size:14px;white-space:nowrap;cursor:pointer;}
 
 /* calendar */
 #calendarSection{
