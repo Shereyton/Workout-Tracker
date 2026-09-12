@@ -2271,18 +2271,48 @@ function lsSetRaw(k, v) {
 
 function backupKey(k, n) { return `${k}.backup${n}`; } // .backup1..3
 
-function writeWithBackups(key, valueStr, keepBackups = true) {
-  // roll backups: 3 <- 2 <- 1 <- current
-  const cur = lsGetRaw(key);
-  if (keepBackups && cur !== null) {
-    const backup2 = lsGetRaw(backupKey(key, 2));
-    const backup1 = lsGetRaw(backupKey(key, 1));
-    if (backup2 !== null) lsSetRaw(backupKey(key, 3), backup2);
-    if (backup1 !== null) lsSetRaw(backupKey(key, 2), backup1);
-    lsSetRaw(backupKey(key,1), cur);
+function isStorageQuotaError(error) {
+  return error?.name === 'QuotaExceededError' || error?.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+    || error?.code === 22 || error?.code === 1014;
+}
+
+function removeRaw(key) {
+  if (!hasLocalStorage()) memStore.delete(key);
+  else localStorage.removeItem(key);
+}
+
+// Reclaim only this app's redundant copies. Keep recovery copies when the
+// primary value is missing or corrupt; never evict workouts or other apps' data.
+function reclaimStorageBackups() {
+  for (const key of Object.values(WT_KEYS)) {
+    const raw = lsGetRaw(key);
+    if (raw === null || safeParse(raw, undefined) === undefined) continue;
+    for (let i = 1; i <= 3; i++) removeRaw(backupKey(key, i));
   }
-  // atomic-ish: write new value last
-  lsSetRaw(key, valueStr);
+}
+
+function writeWithBackups(key, valueStr, keepBackups = true) {
+  const cur = lsGetRaw(key);
+  if (cur === valueStr) return;
+  try {
+    lsSetRaw(key, valueStr);
+  } catch (error) {
+    if (!isStorageQuotaError(error)) throw error;
+    reclaimStorageBackups();
+    lsSetRaw(key, valueStr);
+    return; // Do not refill the space just reclaimed.
+  }
+  // Backups are optional: their failure must never block a successful save.
+  // Keep one small recovery copy instead of triplicating large histories.
+  try {
+    for (let i = 2; i <= 3; i++) removeRaw(backupKey(key, i));
+    if (keepBackups && cur !== null && cur.length <= 32768
+        && safeParse(cur, undefined) !== undefined) {
+      lsSetRaw(backupKey(key, 1), cur);
+    } else {
+      removeRaw(backupKey(key, 1));
+    }
+  } catch { /* The primary value is already safely saved. */ }
 }
 
 function reportStorageFailure(error) {
@@ -2377,10 +2407,13 @@ function migrateSetRoleProvenance(value) {
   return { value: visit(value), changed };
 }
 
+if (typeof window !== 'undefined') window.wtStorage = wtStorage;
+
 // schema versioning (simple bootstrap)
 (function ensureSchema() {
   const v = Number(lsGetRaw(WT_KEYS.schema)) || 0;
   if (v < WT_SCHEMA_VERSION) {
+    let migrationSaved = true;
     if (v < 9) {
       [WT_KEYS.session, WT_KEYS.current, WT_KEYS.last, WT_KEYS.archive].forEach((key) => {
         const raw = lsGetRaw(key);
@@ -2388,10 +2421,10 @@ function migrateSetRoleProvenance(value) {
         const parsed = safeParse(raw, null);
         if (parsed === null) return;
         const migrated = migrateSetRoleProvenance(parsed);
-        if (migrated.changed) wtStorage.set(key, migrated.value);
+        if (migrated.changed && !wtStorage.set(key, migrated.value)) migrationSaved = false;
       });
     }
-    lsSetRaw(WT_KEYS.schema, String(WT_SCHEMA_VERSION));
+    if (migrationSaved) wtStorage.set(WT_KEYS.schema, WT_SCHEMA_VERSION);
   }
 })();
 
@@ -3363,7 +3396,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   window.addEventListener('wt-storage-error', () => {
-    showToast('Storage is full. Export your workout now; the latest change may not be saved.');
+    showToast('Unable to save to browser storage. Export your workout now; the latest change may not be saved.');
   });
 
   // --- Undo Stack ---
@@ -5594,7 +5627,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   /* ------------------ CALENDAR SAVE ------------------ */
   function saveSessionLinesToHistory(){
     const snapshot = getSessionSnapshot();
-    if(!snapshot.length) return;
+    if(!snapshot.length) return true;
     const lines = [];
     snapshot.forEach(ex => {
       if(ex.isSuperset){
@@ -5624,8 +5657,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     const history = wtStorage.get(WT_KEYS.history, {});
     history[dateStr] = upsertStructuredHistoryLines(history[dateStr], lines);
-    wtStorage.set(WT_KEYS.history, history);
+    if (!wtStorage.set(WT_KEYS.history, history)) return false;
     window.dispatchEvent(new Event('wt-history-updated'));
+    return true;
   }
 
   // Build a deep copy of all exercises including the in-progress one
@@ -5662,7 +5696,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         timestamp: new Date().toISOString(),
         sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
       })) return false;
-      saveSessionLinesToHistory();
+      if (!saveSessionLinesToHistory()) return false;
       const completed = normalizePayload({
         date,
         timestamp: new Date().toISOString(),
@@ -5690,9 +5724,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       archivedSessions = pruneArchive(archivedSessions, 120);
       if (!wtStorage.set(WT_KEYS.archive, archivedSessions)) return false;
       // Finishing saves the workout without clearing the visible or persisted sets.
+      const previousFinishedAt = session.finishedAt;
       session.finishedAt = new Date().toISOString();
+      if (!saveState()) {
+        session.finishedAt = previousFinishedAt;
+        return false;
+      }
       stopSessionTimer();
-      saveState();
       updateSummary();
       return true;
     }
@@ -6516,8 +6554,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   /* ------------------ SAVE / LOAD ------------------ */
   function saveState() {
-    wtStorage.set(WT_KEYS.session, session);
-    wtStorage.set(WT_KEYS.current, currentExercise);
+    // Persist the active exercise before marking its session complete.
+    if (!wtStorage.set(WT_KEYS.current, currentExercise)) return false;
+    return wtStorage.set(WT_KEYS.session, session);
   }
 
   if (needsSaveAfterNormalize) {
@@ -6610,6 +6649,7 @@ if (typeof window !== "undefined") {
 
 if (typeof module !== "undefined") {
 module.exports = {
+  wtStorage,
   THEME_PACKS,
   EXERCISE_GOAL_TYPES,
   SESSION_STATUS_OPTIONS,

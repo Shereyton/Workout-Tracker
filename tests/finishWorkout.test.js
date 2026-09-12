@@ -68,6 +68,18 @@ describe('finish workout persistence', () => {
     expect(JSON.parse(localStorage.getItem('wt_session')).finishedAt).toBeFalsy();
   });
 
+  it.each(['wt_history', 'wt_session'])('does not report completion when %s fails', async (failedKey) => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const original = Storage.prototype.setItem;
+    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function(key, value) {
+      if (key === failedKey) throw new DOMException('Full', 'QuotaExceededError');
+      return original.call(this, key, value);
+    });
+    await finish();
+    expect(JSON.parse(localStorage.getItem('wt_session')).finishedAt).toBeFalsy();
+    expect(JSON.parse(localStorage.getItem('wt_currentExercise')).sets[0].reps).toBe(8);
+  });
+
   it('starting a new workout preserves the finished download', async () => {
     await finish();
     [...document.querySelectorAll('button')].find(btn => btn.textContent === 'Start New Workout').click();

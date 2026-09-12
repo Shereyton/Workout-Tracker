@@ -243,9 +243,13 @@ if (typeof document !== 'undefined') {
           }
         });
         titles = filtered;
+        if (window.wtStorage) return window.wtStorage.set(TITLE_KEY, filtered);
         localStorage.setItem(TITLE_KEY, JSON.stringify(filtered));
+        return true;
       }catch(err){
         console.error('Failed to save history titles', err);
+        alert('Unable to save history titles. Storage may be full or disabled.');
+        return false;
       }
     }
 
@@ -331,13 +335,16 @@ if (typeof document !== 'undefined') {
 
     function save(){
       try{
+        if (window.wtStorage) return window.wtStorage.set(STORAGE_KEY, history);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+        return true;
       }catch(err){
         console.error('Failed to save workout history', err);
         if(!storageErrorShown){
           alert('Unable to save workout history. Storage may be full or disabled.');
           storageErrorShown = true;
         }
+        return false;
       }
     }
 
@@ -410,9 +417,9 @@ if (typeof document !== 'undefined') {
         });
       }
 
-      saveTitles();
+      const titlesSaved = saveTitles();
       updateTitleSelect();
-      return {dates:[...dates], added, skipped};
+      return {dates:[...dates], added, skipped, titlesSaved};
     }
 
     function renderCalendar(){
@@ -738,7 +745,7 @@ if (typeof document !== 'undefined') {
         if(obj){
           const res = mergeHistory(obj);
           if(res.dates.length) selectedDate = res.dates[0];
-          save();
+          if (!save() || !res.titlesSaved) return;
           renderCalendar();
           renderDay();
           updateTitleSelect();
@@ -762,7 +769,8 @@ if (typeof document !== 'undefined') {
       if(jsonObj && typeof jsonObj === 'object'){
         const res = mergeHistory(jsonObj);
         if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay(); updateTitleSelect();
+        if (!save() || !res.titlesSaved) return false;
+        renderCalendar(); renderDay(); updateTitleSelect();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
       }
@@ -770,7 +778,8 @@ if (typeof document !== 'undefined') {
       if(ai){
         const res = mergeHistory(ai);
         if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay(); updateTitleSelect();
+        if (!save() || !res.titlesSaved) return false;
+        renderCalendar(); renderDay(); updateTitleSelect();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
       }
@@ -778,7 +787,8 @@ if (typeof document !== 'undefined') {
       if(csv){
         const res = mergeHistory(csv);
         if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay(); updateTitleSelect();
+        if (!save() || !res.titlesSaved) return false;
+        renderCalendar(); renderDay(); updateTitleSelect();
         alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
         return true;
       }
@@ -843,7 +853,7 @@ if (typeof document !== 'undefined') {
         current = new Date();
         current.setDate(1);
         const res = mergeHistory({[today]: lines});
-        save();
+        if (!save() || !res.titlesSaved) return;
         renderDay();
         renderCalendar();
         updateTitleSelect();
