@@ -84,10 +84,15 @@
     const sourceLabel=make('label','source-label','Build a plan from'); sourceLabel.htmlFor='planSource';
     const sourceSelect=make('select','field'); sourceSelect.id='planSource';
     const planContent=make('div','plan-content'); planContent.id='planContent';
-    plan.append(sourceLabel,sourceSelect,planContent);
+    const exportSection=$('exportSection');
+    const exportOptions=details('More export and import options',[
+      ...Array.from(exportSection.querySelectorAll('button')).filter(b=>['Import JSON','Paste JSON'].includes(b.textContent.trim())),
+      $('resetContextBtn'),$('toggleSessionPrefBtn'),$('toggleGoalProgressPrefBtn')
+    ],'settings-disclosure');
+    exportSection.append(exportOptions);
+    plan.append(exportSection,sourceLabel,sourceSelect,planContent);
     plan.append(details('How your plan works',[make('div','coach-method',
       '<p><strong>More is not always better.</strong> First build repeatable reps with good form; then earn a small weight increase. A repeat or easier day can be the right next step.</p><p>Only this session’s exercises are used. Earlier sessions help compare the same movements. Unknown effort, technique, or set types lower confidence.</p><p>These are conservative starting targets—not a guarantee or a medical assessment. Stop a movement that hurts. Warm-ups are based on what you logged; add gradual, comfortable preparation if needed.</p><p>Guided by the <a href="https://acsm.org/resistance-training-guidelines-update-2026/" target="_blank" rel="noopener">2026 ACSM guidance</a>. Exact step sizes and readiness rules are app heuristics, not a scientifically proven individual optimum.</p>') ]));
-    plan.append($('exportSection'));
     const context=details('Tell your coach more',[$('dayTypeSection'),$('goalsSection'),$('constraintsSection')]);
     plan.append(context);
     progress.append(heading('Built over time','Proof of progress.','Your goals, your consistency, and the work behind them.'));
@@ -95,7 +100,7 @@
     history.append(heading('Every session matters','Your training story.','Saved workouts and notes, together in one place.'));
     const dataCard=make('div','data-card','<span class="eyebrow">Made to be yours</span><h3>Protect your hard work.</h3><p>Workouts stay in this browser, not in a cloud account. Export your history regularly, especially before changing phones.</p>');
     dataCard.append(button('Export calendar notes',()=> $('exportHistory').click()));
-    dataCard.append(make('p','data-fineprint','This backs up calendar notes only. Download individual saved workouts from Your session, and use Export Workout for the full current workout and its goals.'));
+    dataCard.append(make('p','data-fineprint','This backs up calendar notes only. Download individual saved workouts from Your session, or use Download workout data under Export to your AI for the full workout and its goals.'));
     history.append(dataCard,$('calendarSection'));
     section.replaceChildren(train,plan,progress,history);
     const appearance=$('darkToggle'); doc.querySelector('.brand-row').append(appearance);
@@ -115,6 +120,13 @@
       doc.body.dataset.appView=name;
       if (focus) { root.scrollTo?.({top:0,behavior:'instant'}); panels[name].querySelector('h2')?.focus({preventScroll:true}); }
     }
+    const summaryExport=button('Copy finished workout for AI ↗',()=>{
+      switchView('plan');
+      $('exportBtn').click();
+      exportSection.scrollIntoView({block:'start',behavior:'smooth'});
+    });
+    summaryExport.id='summaryExportBtn'; summaryExport.hidden=true;
+    $('summaryText').after(summaryExport);
     doc.querySelectorAll('.dock-action[data-view]').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
     function currentName(){return state.activeExercise?.name || state.currentExercise?.name || '';}
     async function chooseExercise(name, goal=false) {
@@ -129,6 +141,7 @@
       const exercises=state.current?.exercises || [];
       const count=exercises.reduce((n,e)=>n+(e?.sets?.length||0),0);
       const name=currentName();
+      summaryExport.hidden=!(state.finishedAt&&hasSets(state.current));
       overview.hidden=Boolean(name);
       recent.hidden=Boolean(name);
       doc.body.classList.toggle('has-active-exercise',Boolean(name));
