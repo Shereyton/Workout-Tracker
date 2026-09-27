@@ -4,6 +4,9 @@ const {
   parseCsv,
   snapshotToLines,
   formatDuration,
+  sanitizeHistory,
+  sanitizeHistoryTitles,
+  isValidHistoryDate,
 } = require('../calendar');
 
 test('parseDateLocal returns exact date', () => {
@@ -134,4 +137,137 @@ test('snapshotToLines preserves failed attempts', () => {
 
 test('formatDuration keeps seconds in hour-long efforts', () => {
   expect(formatDuration(3630)).toBe('1h 0m 30s');
+});
+
+test('calendar dates reject impossible dates and malformed values instead of rolling forward', () => {
+  expect(isValidHistoryDate('2024-02-29')).toBe(true);
+  for(const value of ['2025-02-29', '2026-04-31', '2026-13-01', '', null, {}, '2026-9-10']){
+    expect(isValidHistoryDate(value)).toBe(false);
+    expect(Number.isNaN(parseDateLocal(value).getTime())).toBe(true);
+  }
+});
+
+test('malformed stored history cannot become renderable data or unsafe object keys', () => {
+  const history = JSON.parse('{"2026-09-10":[null,{},7,"", " note ", "note"],"2026-09-11":{},"2026-02-30":["wrong date"],"__proto__":["bad"]}');
+  expect(sanitizeHistory(history)).toEqual({ '2026-09-10': ['note'] });
+  expect(sanitizeHistory(null)).toEqual({});
+  expect(sanitizeHistoryTitles({ '2026-09-10': ' Chest ', '2026-09-11': {}, 'invalid': 'label' })).toEqual({ '2026-09-10': 'Chest' });
+});
+
+test('snapshot conversion drops malformed sets without losing the remaining valid workout', () => {
+  expect(snapshotToLines([null, {}, { name: 'Bench', sets: [null, {}, { weight: 'NaN', reps: 5 }, { weight: 135, reps: 5.5 }, { weight: 135, reps: 5 }] },
+    { name: 'Superset', isSuperset: true, sets: [null, { exercises: [null, { name: 'Row', weight: 100, reps: 8 }] }] },
+    { name: 'Run', isCardio: true, sets: [{ duration: Infinity }, { duration: 60, distance: -1 }, { duration: 120 }] },
+  ])).toEqual(['Bench: Set 5 - 135 lbs × 5 reps', 'Row: Set 2 - 100 lbs × 8 reps', 'Run: Set 3 - 2m 0s']);
+  expect(snapshotToLines({})).toEqual([]);
+  expect(formatDuration(Infinity)).toBe('0s');
+});
+
+test('CSV imports reject NaN, overflow, fractional reps, negative values, and invalid set numbers', () => {
+  const text = [
+    'Exercise,Set,Weight,Reps,Distance,Duration',
+    'Bench,1,NaN,5,,', 'Bench,2,100,5.5,,', 'Bench,3,-1,5,,',
+    'Bench,0,100,5,,', 'Bench,5,1e5,5,,', 'Run,1,,,2,Infinity',
+    'Run,2,,,-1,120', 'Bench,6,100,5,,',
+  ].join('\n');
+  expect(parseCsv(text, '2026-09-10')).toEqual({ '2026-09-10': ['Bench: Set 6 - 100 lbs × 5 reps'] });
+});
+
+test('CSV supports quoted reordered headers, explicit workout dates, and kg units', () => {
+  const text = 'WorkoutDate,2026-09-10\n"Reps","Exercise","Weight","Set","Unit"\n5,Bench,60,1,kg';
+  expect(parseCsv(text, '2026-09-11')).toEqual({ '2026-09-10': ['Bench: Set 1 - 60 kg × 5 reps'] });
+  expect(parseCsv(text.replace('2026-09-10', '2026-02-30'), '2026-09-11')).toBeNull();
+});
+
+test('AI history rejects invalid metrics and invalid declared dates', () => {
+  const text = 'WORKOUT DATA - 2026-09-10\nBench:\nSet 1: 135 lbs × 5.5 reps\nSet 2: 99999 lbs × 5 reps\nSet 3: 135 lbs × 5 reps';
+  expect(parseAiText(text, '2026-09-11')).toEqual({ '2026-09-10': ['Bench: Set 3 - 135 lbs × 5 reps'] });
+  expect(parseAiText(text.replace('2026-09-10', '2026-02-30'), '2026-09-11')).toBeNull();
+  expect(parseAiText(null, '2026-09-11')).toBeNull();
+});
+
+describe('calendar interaction reliability', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    document.body.innerHTML = `
+      <div id="calendar"></div><h4 id="dayTitle"></h4><ul id="entries"></ul>
+      <input id="entryInput"><button id="addEntry"></button><button id="exportHistory"></button>
+      <button id="importHistory"></button><input id="importHistoryFile" type="file">
+      <button id="saveTodaySession"></button><button id="calPrev"></button><button id="calNext"></button>
+      <div id="calTitle"></div><button id="calToday"></button><input type="date" id="calGoto"><button id="calGo"></button>
+      <textarea id="pasteJson"></textarea><button id="importFromPaste"></button><button id="resetDay"></button>
+      <input id="dayLabelInput"><button id="saveDayLabel"></button><button id="clearDayLabel"></button>
+      <select id="titleExportSelect"></select><button id="exportTitleHistory"></button>`;
+    window.wtConfirmModal = jest.fn().mockResolvedValue(true);
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    delete window.getSessionSnapshot;
+    delete window.wtConfirmModal;
+  });
+  function start(){ document.dispatchEvent(new Event('DOMContentLoaded')); }
+  function paste(value){
+    document.getElementById('pasteJson').value = typeof value === 'string' ? value : JSON.stringify(value);
+    document.getElementById('importFromPaste').click();
+  }
+
+  test('malformed calendar storage does not prevent startup or adding a new note', () => {
+    const today = new Date();
+    const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    localStorage.setItem('wt_history', JSON.stringify({ [date]: { unexpected: true }, 'bad': [null] }));
+    start();
+    expect(document.querySelectorAll('.calendar-day')).toHaveLength(42);
+    document.getElementById('entryInput').value = 'Felt strong today';
+    document.getElementById('entryInput').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(JSON.parse(localStorage.getItem('wt_history'))[date]).toEqual(['Felt strong today']);
+    expect(document.getElementById('entries').textContent).toContain('Felt strong today');
+  });
+
+  test('import navigates to the imported month and ignores malformed entries', () => {
+    start();
+    paste({ history: { '2024-02-29': [null, 'Bench: Set 1 - 100 lbs × 5 reps'], '2024-02-30': ['invalid'] } });
+    expect(document.getElementById('calTitle').textContent).toBe('February 2024');
+    expect(document.querySelector('[data-date="2024-02-29"]').getAttribute('aria-selected')).toBe('true');
+    expect(JSON.parse(localStorage.getItem('wt_history'))).toEqual({ '2024-02-29': ['Bench: Set 1 - 100 lbs × 5 reps'] });
+    expect(document.querySelector('.calendar-status').textContent).toContain('2 invalid entries ignored');
+  });
+
+  test('unsupported JSON is not reported as an imported workout or removed from the paste field', () => {
+    start();
+    paste({ unexpected: 'format' });
+    expect(document.getElementById('pasteJson').value).not.toBe('');
+    expect(document.querySelector('.calendar-status').textContent).toContain('No valid dated workout entries');
+    expect(localStorage.getItem('wt_history')).toBeNull();
+  });
+
+  test('calendar keyboard navigation crosses month boundaries while preserving focus', () => {
+    start();
+    document.getElementById('calGoto').value = '2026-01-31';
+    document.getElementById('calGoto').dispatchEvent(new Event('input'));
+    document.getElementById('calGo').click();
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(document.activeElement.dataset.date).toBe('2026-02-01');
+    expect(document.getElementById('calTitle').textContent).toBe('February 2026');
+    expect(document.querySelectorAll('.calendar-day[tabindex="0"]')).toHaveLength(1);
+  });
+
+  test('a failed storage write keeps the note input and previously saved history intact', () => {
+    start();
+    const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+    document.getElementById('entryInput').value = 'Do not lose this note';
+    document.getElementById('addEntry').click();
+    expect(document.getElementById('entryInput').value).toBe('Do not lose this note');
+    expect(localStorage.getItem('wt_history')).toBeNull();
+    expect(document.querySelector('.calendar-status').textContent).toContain('could not be saved');
+    expect(error).toHaveBeenCalled();
+  });
+
+  test('saving an unavailable session reports an error without creating an endless retry', () => {
+    start();
+    const timeout = jest.spyOn(window, 'setTimeout');
+    document.getElementById('saveTodaySession').click();
+    expect(document.querySelector('.calendar-status').textContent).toContain('not ready yet');
+    expect(timeout).not.toHaveBeenCalled();
+  });
 });
