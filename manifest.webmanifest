@@ -1,0 +1,11 @@
+{
+  "name": "Workout Tracker Pro",
+  "short_name": "Workout",
+  "description": "Your workout, your goals, and a clear next step.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f5ef",
+  "theme_color": "#f5f5ef",
+  "icons": [{"src": "apple-touch-icon.png", "sizes": "180x180", "type": "image/png"}]
+}

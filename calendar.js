@@ -1,6 +1,43 @@
 function parseDateLocal(str){
+  if(typeof str !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return new Date(NaN);
   const [y,m,d] = str.split('-').map(Number);
-  return new Date(y, m-1, d);
+  const date = new Date(0);
+  date.setHours(0, 0, 0, 0);
+  date.setFullYear(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d
+    ? date : new Date(NaN);
+}
+
+function isValidHistoryDate(value){
+  return Number.isFinite(parseDateLocal(value).getTime());
+}
+
+function sanitizeHistory(raw){
+  const result = {};
+  if(!raw || typeof raw !== 'object' || Array.isArray(raw)) return result;
+  Object.entries(raw).forEach(([date, entries]) => {
+    if(!isValidHistoryDate(date) || !Array.isArray(entries)) return;
+    const clean = entries.filter(line => typeof line === 'string' && line.trim()).map(line => line.trim());
+    if(clean.length) result[date] = [...new Set(clean)];
+  });
+  return result;
+}
+
+function sanitizeHistoryTitles(raw){
+  const result = {};
+  if(!raw || typeof raw !== 'object' || Array.isArray(raw)) return result;
+  Object.entries(raw).forEach(([date, label]) => {
+    if(isValidHistoryDate(date) && typeof label === 'string' && label.trim()) result[date] = label.trim();
+  });
+  return result;
+}
+
+function historyNumber(value, { min = 0, max = Infinity, integer = false } = {}){
+  if(value == null || typeof value === 'boolean' || (typeof value !== 'number' && typeof value !== 'string')) return null;
+  const text = String(value).trim();
+  if(!/^\d+(?:\.\d+)?$/.test(text)) return null;
+  const number = Number(text);
+  return Number.isFinite(number) && number >= min && number <= max && (!integer || Number.isInteger(number)) ? number : null;
 }
 
 function parseCsvRow(row){
@@ -27,7 +64,7 @@ function parseCsvRow(row){
 }
 
 function formatDuration(seconds){
-  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const total = Math.floor(historyNumber(seconds, { max: 604800 }) ?? 0);
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const secs = total % 60;
@@ -45,8 +82,8 @@ function parseDurationText(value){
 }
 
 function cardioHistoryLine(name, setNumber, distance, duration){
-  const distanceNumber = Number(distance);
-  const distanceText = distance !== '' && distance !== null && distance !== undefined && Number.isFinite(distanceNumber)
+  const distanceNumber = historyNumber(distance, { max: 100000 });
+  const distanceText = distanceNumber !== null
     ? `${distanceNumber} mi in `
     : '';
   return `${name}: Set ${setNumber} - ${distanceText}${formatDuration(duration)}`;
@@ -54,10 +91,12 @@ function cardioHistoryLine(name, setNumber, distance, duration){
 
 // Parse AI formatted text or exported AI text into history object
 function parseAiText(text, selectedDate){
+  if(typeof text !== 'string') return null;
   const lines = text.split(/\r?\n/);
   let target = selectedDate;
-  const header = lines[0].match(/WORKOUT DATA - (\d{4}-\d{2}-\d{2})/i);
+  const header = text.match(/WORKOUT DATA - (\d{4}-\d{2}-\d{2})/i);
   if(header) target = header[1];
+  if(!isValidHistoryDate(target)) return null;
   const out = [];
   let currentExercise = null;
   lines.forEach(l => {
@@ -69,7 +108,8 @@ function parseAiText(text, selectedDate){
       return;
     }
     if(!/^Set\s+\d+/i.test(trimmed)) return;
-    const lineSet = Number((trimmed.match(/^Set\s+(\d+)/i) || [])[1]) || out.length + 1;
+    const lineSet = historyNumber((trimmed.match(/^Set\s+(\d+)(?=\s|[-–:])/i) || [])[1], { min: 1, max: 9999, integer: true });
+    if(lineSet === null) return;
     const segments = trimmed.split(/\s*\|\s*/);
     let parsedSegment = false;
     segments.forEach(segment => {
@@ -77,16 +117,16 @@ function parseAiText(text, selectedDate){
       const failedMatch = cleaned.match(/^(?:([^:]+):\s*)?Failed attempt at\s+(\d+(?:\.\d+)?)\s*(lbs|kg)/i);
       if(failedMatch){
         const name = String(failedMatch[1] || currentExercise || '').trim();
-        if(name){
+        if(name && historyNumber(failedMatch[2], { max: 9999 }) !== null){
           out.push(`${name}: Set ${lineSet} - Failed attempt at ${failedMatch[2]} ${failedMatch[3].toLowerCase()}`);
           parsedSegment = true;
         }
         return;
       }
-      const setMatch = cleaned.match(/^(?:([^:]+):\s*)?(\d+(?:\.\d+)?)\s*(lbs|kg)\s*[×xX]\s*(\d+)\s*reps/i);
+      const setMatch = cleaned.match(/^(?:([^:]+):\s*)?(\d+(?:\.\d+)?)\s*(lbs|kg)\s*[×xX]\s*(\d+)\s*reps\b/i);
       if(setMatch){
         const name = String(setMatch[1] || currentExercise || '').trim();
-        if(name){
+        if(name && historyNumber(setMatch[2], { max: 9999 }) !== null && historyNumber(setMatch[4], { min: 1, max: 999, integer: true }) !== null){
           out.push(`${name}: Set ${lineSet} - ${setMatch[2]} ${setMatch[3].toLowerCase()} × ${setMatch[4]} reps`);
           parsedSegment = true;
         }
@@ -95,8 +135,10 @@ function parseAiText(text, selectedDate){
       const cardioMatch = cleaned.match(/^(?:([^:]+):\s*)?(?:(\d+(?:\.\d+)?)\s*mi(?:\s+in)?\s*)?((?:\d+\s*h(?:\s+\d+\s*m)?(?:\s+\d+\s*s)?)|(?:\d+\s*m(?:\s+\d+\s*s)?)|(?:\d+\s*s))/i);
       if(cardioMatch){
         const name = String(cardioMatch[1] || currentExercise || '').trim();
-        if(name){
-          out.push(cardioHistoryLine(name, lineSet, cardioMatch[2] ?? null, parseDurationText(cardioMatch[3])));
+        const duration = parseDurationText(cardioMatch[3]);
+        const distanceValid = cardioMatch[2] == null || historyNumber(cardioMatch[2], { max: 100000 }) !== null;
+        if(name && duration > 0 && duration <= 604800 && distanceValid){
+          out.push(cardioHistoryLine(name, lineSet, cardioMatch[2] ?? null, duration));
           parsedSegment = true;
         }
       }
@@ -111,10 +153,16 @@ function parseAiText(text, selectedDate){
 
 // Parse CSV (export format) into history object
 function parseCsv(text, selectedDate){
-  if(!/Exercise\s*,\s*Set\s*,\s*Weight\s*,\s*Reps/i.test(text)) return null;
+  if(typeof text !== 'string') return null;
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  const headerIndex = lines.findIndex(line => /Exercise\s*,\s*Set\s*,\s*Weight\s*,\s*Reps/i.test(line));
+  const headerIndex = lines.findIndex(line => {
+    const values = parseCsvRow(line).map(value => value.trim().toLowerCase());
+    return ['exercise', 'set', 'weight', 'reps'].every(column => values.includes(column));
+  });
   if(headerIndex === -1) return null;
+  const dateMetadata = lines.slice(0, headerIndex).map(parseCsvRow).find(cols => /^(date|workoutdate|sessiondate)$/i.test(cols[0]?.trim()));
+  const target = dateMetadata ? dateMetadata[1]?.trim() : selectedDate;
+  if(!isValidHistoryDate(target)) return null;
   const headers = parseCsvRow(lines[headerIndex]).map(value => value.trim().toLowerCase());
   const indexOf = name => headers.indexOf(name.toLowerCase());
   const exerciseIndex = indexOf('Exercise');
@@ -125,28 +173,36 @@ function parseCsv(text, selectedDate){
   const durationIndex = indexOf('Duration');
   const roleIndex = indexOf('SetRole');
   const outcomeIndex = indexOf('Outcome');
+  const unitIndex = indexOf('Unit') >= 0 ? indexOf('Unit') : indexOf('WeightUnit');
   const out = [];
   lines.slice(headerIndex + 1).forEach(l=>{
     const cols = parseCsvRow(l);
     const name = String(cols[exerciseIndex] || '').trim();
     if(!name) return;
-    const setNumber = Number(cols[setIndex]) || out.length + 1;
+    const setNumber = historyNumber(cols[setIndex], { min: 1, max: 9999, integer: true });
+    if(setNumber === null) return;
     const weight = weightIndex >= 0 ? String(cols[weightIndex] || '').trim() : '';
     const reps = repsIndex >= 0 ? String(cols[repsIndex] || '').trim() : '';
     const distance = distanceIndex >= 0 ? String(cols[distanceIndex] || '').trim() : '';
     const duration = durationIndex >= 0 ? String(cols[durationIndex] || '').trim() : '';
     const role = roleIndex >= 0 ? String(cols[roleIndex] || '').trim().toLowerCase() : '';
     const outcome = outcomeIndex >= 0 ? String(cols[outcomeIndex] || '').trim().toLowerCase() : '';
+    const unit = unitIndex >= 0 ? String(cols[unitIndex] || '').trim().toLowerCase() : 'lbs';
+    if(!['lbs', 'kg', ''].includes(unit)) return;
+    if(weight !== '' && historyNumber(weight, { max: 9999 }) === null) return;
     if(weight !== '' && (role === 'failed_attempt' || outcome === 'failed' || reps === '0')){
-      out.push(`${name}: Set ${setNumber} - Failed attempt at ${weight} lbs`);
-    } else if(weight !== '' && reps !== ''){
-      out.push(`${name}: Set ${setNumber} - ${weight} lbs × ${reps} reps`);
+      out.push(`${name}: Set ${setNumber} - Failed attempt at ${weight} ${unit || 'lbs'}`);
+    } else if(weight !== '' && historyNumber(reps, { min: 1, max: 999, integer: true }) !== null){
+      out.push(`${name}: Set ${setNumber} - ${weight} ${unit || 'lbs'} × ${reps} reps`);
     } else if(duration !== ''){
-      out.push(cardioHistoryLine(name, setNumber, distance, Number(duration)));
+      const durationNumber = historyNumber(duration, { min: 1, max: 604800, integer: true });
+      if(durationNumber !== null && (distance === '' || historyNumber(distance, { max: 100000 }) !== null)){
+        out.push(cardioHistoryLine(name, setNumber, distance, durationNumber));
+      }
     }
   });
   if(out.length){
-    return {[selectedDate]: out};
+    return {[target]: out};
   }
   return null;
 }
@@ -154,29 +210,39 @@ function parseCsv(text, selectedDate){
 // Convert a session snapshot into history lines with set numbers
 function snapshotToLines(snapshot){
   const lines = [];
+  if(!Array.isArray(snapshot)) return lines;
+  const strengthLine = (name, set, setNumber, context = {}) => {
+    if(typeof name !== 'string' || !name.trim() || !set || typeof set !== 'object') return;
+    const weight = historyNumber(set.weight, { max: 9999 });
+    const reps = historyNumber(set.reps, { max: 999, integer: true });
+    const failed = (set.role || context.role) === 'failed_attempt' || (set.outcome || context.outcome) === 'failed' || reps === 0;
+    if(weight === null || (!failed && (reps === null || reps < 1))) return;
+    lines.push(failed ? `${name.trim()}: Set ${setNumber} - Failed attempt at ${weight} lbs`
+      : `${name.trim()}: Set ${setNumber} - ${weight} lbs × ${reps} reps`);
+  };
   snapshot.forEach(ex => {
+    if(!ex || typeof ex !== 'object' || !Array.isArray(ex.sets)) return;
     if(ex.isSuperset){
       ex.sets.forEach((set, setIdx) => {
+        if(!set || !Array.isArray(set.exercises)) return;
         set.exercises.forEach(sub => {
-          const setNumber = set.set || setIdx + 1;
-          const failed = (sub.role || set.role) === 'failed_attempt'
-            || (sub.outcome || set.outcome) === 'failed';
-          lines.push(failed
-            ? `${sub.name}: Set ${setNumber} - Failed attempt at ${sub.weight} lbs`
-            : `${sub.name}: Set ${setNumber} - ${sub.weight} lbs × ${sub.reps} reps`);
+          const setNumber = historyNumber(set.set, { min: 1, max: 9999, integer: true }) ?? setIdx + 1;
+          strengthLine(sub?.name, sub, setNumber, set);
         });
       });
     } else if(ex.isCardio){
       ex.sets.forEach((set, setIdx) => {
-        lines.push(cardioHistoryLine(ex.name, set.set || setIdx + 1, set.distance, set.duration));
+        if(!set || typeof ex.name !== 'string' || !ex.name.trim()) return;
+        const duration = historyNumber(set.duration, { min: 1, max: 604800, integer: true });
+        const distance = historyNumber(set.distance, { max: 100000 });
+        if(duration === null || (set.distance != null && set.distance !== '' && distance === null)) return;
+        const setNumber = historyNumber(set.set, { min: 1, max: 9999, integer: true }) ?? setIdx + 1;
+        lines.push(cardioHistoryLine(ex.name.trim(), setNumber, distance, duration));
       });
     } else {
       ex.sets.forEach((set, setIdx) => {
-        const setNumber = set.set || setIdx + 1;
-        const failed = set.role === 'failed_attempt' || set.outcome === 'failed';
-        lines.push(failed
-          ? `${ex.name}: Set ${setNumber} - Failed attempt at ${set.weight} lbs`
-          : `${ex.name}: Set ${setNumber} - ${set.weight} lbs × ${set.reps} reps`);
+        const setNumber = historyNumber(set?.set, { min: 1, max: 9999, integer: true }) ?? setIdx + 1;
+        strengthLine(ex.name, set, setNumber);
       });
     }
   });
@@ -214,7 +280,7 @@ if (typeof document !== 'undefined') {
         const raw = localStorage.getItem(STORAGE_KEY);
         if(!raw) return {};
         const parsed = safeParseJson(raw);
-        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        return sanitizeHistory(parsed);
       }catch(err){
         console.warn('Failed to read workout history from storage', err);
         return {};
@@ -226,7 +292,7 @@ if (typeof document !== 'undefined') {
         const raw = localStorage.getItem(TITLE_KEY);
         if(!raw) return {};
         const parsed = safeParseJson(raw);
-        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        return sanitizeHistoryTitles(parsed);
       }catch(err){
         console.warn('Failed to read history titles from storage', err);
         return {};
@@ -234,19 +300,7 @@ if (typeof document !== 'undefined') {
     }
 
     function saveTitles(){
-      try{
-        const filtered = {};
-        Object.keys(titles).forEach(date => {
-          const label = titles[date];
-          if(typeof label === 'string' && label.trim()){
-            filtered[date] = label.trim();
-          }
-        });
-        titles = filtered;
-        localStorage.setItem(TITLE_KEY, JSON.stringify(filtered));
-      }catch(err){
-        console.error('Failed to save history titles', err);
-      }
+      return save();
     }
 
     let history = loadStoredHistory();
@@ -278,6 +332,35 @@ if (typeof document !== 'undefined') {
     const clearDayLabelBtn = document.getElementById('clearDayLabel');
     const titleExportSelect = document.getElementById('titleExportSelect');
     const exportTitleHistoryBtn = document.getElementById('exportTitleHistory');
+    // Avoid one incomplete page/old cached markup taking down the workout app.
+    if(![calendarEl, dayTitle, entriesEl, entryInput, addEntryBtn, exportBtn, importBtn, importFile,
+      saveTodayBtn, calPrev, calNext, calTitle, calToday, calGoto, calGo, pasteJson, importFromPaste].every(Boolean)) return;
+
+    const statusEl = document.createElement('p');
+    statusEl.className = 'calendar-status';
+    statusEl.setAttribute('role', 'status');
+    statusEl.setAttribute('aria-live', 'polite');
+    statusEl.hidden = true;
+    dayTitle.insertAdjacentElement('afterend', statusEl);
+    const entryHelp = document.createElement('p');
+    entryHelp.className = 'calendar-entry-help';
+    entryHelp.textContent = 'Calendar notes and imported logs. Editing these entries does not change your saved workout records.';
+    entriesEl.insertAdjacentElement('beforebegin', entryHelp);
+    entryInput.setAttribute('aria-label', 'Add a note for the selected day');
+    pasteJson.setAttribute('aria-label', 'Workout history to import');
+    if(dayLabelInput) dayLabelInput.setAttribute('aria-label', 'Workout day title');
+    if(resetDayBtn) resetDayBtn.textContent = 'Clear day notes';
+    exportBtn.textContent = 'Export calendar notes';
+    importBtn.textContent = 'Import history';
+    calPrev.setAttribute('aria-label', 'Previous month');
+    calNext.setAttribute('aria-label', 'Next month');
+    calTitle.setAttribute('aria-live', 'polite');
+
+    function reportStatus(message, isError = false){
+      statusEl.hidden = false;
+      statusEl.textContent = message;
+      statusEl.dataset.error = String(isError);
+    }
 
     const confirmModal =
       (typeof window !== 'undefined' && typeof window.wtConfirmModal === 'function')
@@ -321,7 +404,7 @@ if (typeof document !== 'undefined') {
 
     function updateDateInput(){
       calGoto.value = selectedDate;
-      calGo.disabled = !calGoto.value;
+      calGo.disabled = !isValidHistoryDate(calGoto.value);
     }
     updateDateInput();
 
@@ -330,14 +413,38 @@ if (typeof document !== 'undefined') {
     }
 
     function save(){
+      let previousHistory;
+      let previousTitles;
       try{
+        previousHistory = localStorage.getItem(STORAGE_KEY);
+        previousTitles = localStorage.getItem(TITLE_KEY);
+        history = sanitizeHistory(history);
+        titles = sanitizeHistoryTitles(titles);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+        localStorage.setItem(TITLE_KEY, JSON.stringify(titles));
+        storageErrorShown = false;
+        window.dispatchEvent(new Event('wt-history-updated'));
+        return true;
       }catch(err){
         console.error('Failed to save workout history', err);
+        // Keep the old view and stored records together if either write fails.
+        try{
+          if(previousHistory !== undefined){
+            if(previousHistory === null) localStorage.removeItem(STORAGE_KEY);
+            else localStorage.setItem(STORAGE_KEY, previousHistory);
+          }
+          if(previousTitles !== undefined){
+            if(previousTitles === null) localStorage.removeItem(TITLE_KEY);
+            else localStorage.setItem(TITLE_KEY, previousTitles);
+          }
+        }catch(restoreError){ console.warn('Unable to restore calendar storage', restoreError); }
+        history = loadStoredHistory();
+        titles = loadStoredTitles();
+        reportStatus('Changes could not be saved. Your previous calendar entries are still shown. Export a backup, then try again.', true);
         if(!storageErrorShown){
-          alert('Unable to save workout history. Storage may be full or disabled.');
           storageErrorShown = true;
         }
+        return false;
       }
     }
 
@@ -348,7 +455,7 @@ if (typeof document !== 'undefined') {
       } else if(raw && typeof raw === 'object' && !Array.isArray(raw) && raw.dates && typeof raw.dates === 'object'){
         incomingHistory = raw.dates;
       } else if(raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray(raw.exercises)){
-        const date = /^\d{4}-\d{2}-\d{2}$/.test(String(raw.date || '')) ? raw.date : selectedDate;
+        const date = raw.date == null ? selectedDate : raw.date;
         incomingHistory = {[date]: snapshotToLines(raw.exercises)};
       } else {
         incomingHistory = raw;
@@ -359,8 +466,10 @@ if (typeof document !== 'undefined') {
       const dates = new Set();
       let added = 0;
       let skipped = 0;
-      if(incomingHistory && typeof incomingHistory === 'object'){
+      let rejected = 0;
+      if(incomingHistory && typeof incomingHistory === 'object' && !Array.isArray(incomingHistory)){
         Object.keys(incomingHistory).forEach(date => {
+          if(!isValidHistoryDate(date)){ rejected++; return; }
           const payload = incomingHistory[date];
           let entries = [];
           let label = '';
@@ -370,9 +479,11 @@ if (typeof document !== 'undefined') {
             if(Array.isArray(payload.entries)) entries = payload.entries;
             if(typeof payload.title === 'string') label = payload.title.trim();
           }
-          if(!history[date]) history[date] = [];
           entries.forEach(line => {
-            const match = String(line || '').match(/^(.+?):\s*Set\s+(\d+)\s*-/i);
+            if(typeof line !== 'string' || !line.trim()){ rejected++; return; }
+            line = line.trim();
+            if(!Array.isArray(history[date])) history[date] = [];
+            const match = line.match(/^(.+?):\s*Set\s+(\d+)\s*-/i);
             const identity = match ? `${match[1].trim().toLowerCase().replace(/\s+/g,' ')}::${Number(match[2])}` : null;
             const existingIndex = identity
               ? history[date].findIndex(existingLine => {
@@ -395,24 +506,26 @@ if (typeof document !== 'undefined') {
           });
           if(label){
             titles[date] = label;
+            dates.add(date);
           }
         });
       }
 
       if(incomingTitles){
         Object.keys(incomingTitles).forEach(date => {
+          if(!isValidHistoryDate(date)){ rejected++; return; }
           const label = incomingTitles[date];
           if(typeof label === 'string' && label.trim()){
             titles[date] = label.trim();
+            dates.add(date);
           } else if(!label){
             delete titles[date];
+            dates.add(date);
           }
         });
       }
 
-      saveTitles();
-      updateTitleSelect();
-      return {dates:[...dates], added, skipped};
+      return {dates:[...dates], added, skipped, rejected};
     }
 
     function renderCalendar(){
@@ -422,20 +535,31 @@ if (typeof document !== 'undefined') {
       calTitle.textContent = current.toLocaleString('default',{month:'long',year:'numeric'});
 
       const weekDays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      const headerRow = document.createElement('div');
+      headerRow.setAttribute('role', 'row');
+      headerRow.style.display = 'contents';
       weekDays.forEach(d => {
         const head = document.createElement('div');
         head.textContent = d;
         head.className = 'cal-header';
         head.setAttribute('role', 'columnheader');
-        calendarEl.appendChild(head);
+        headerRow.appendChild(head);
       });
+      calendarEl.appendChild(headerRow);
 
       const first = new Date(year, month, 1);
       const start = first.getDay();
       const days = new Date(year, month+1, 0).getDate();
       const prevDays = new Date(year, month, 0).getDate();
       const totalCells = 42;
+      let row;
       for(let i=0;i<totalCells;i++){
+        if(i % 7 === 0){
+          row = document.createElement('div');
+          row.setAttribute('role', 'row');
+          row.style.display = 'contents';
+          calendarEl.appendChild(row);
+        }
         const cell = document.createElement('button');
         cell.type = 'button';
         cell.className = 'calendar-day';
@@ -454,6 +578,7 @@ if (typeof document !== 'undefined') {
           dateObj = new Date(year, month, dayNum);
         }
         const dateStr = formatDate(dateObj);
+        cell.dataset.date = dateStr;
         cell.textContent = dayNum;
         const hasWorkout = !!(history[dateStr] && history[dateStr].length);
         if(hasWorkout){
@@ -466,22 +591,50 @@ if (typeof document !== 'undefined') {
         }
         const isSelected = dateStr === selectedDate;
         if(isSelected) cell.classList.add('selected');
-        cell.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        cell.tabIndex = isSelected ? 0 : -1;
+        cell.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+        if(dateStr === formatDate(new Date())) cell.setAttribute('aria-current', 'date');
         cell.setAttribute(
           'aria-label',
           `${dateObj.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })}${label ? `, ${label}` : ''}, ${hasWorkout ? 'workout logged' : 'no workout logged'}`,
         );
         cell.addEventListener('click', () => {
-          selectedDate = dateStr;
-          current = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1);
-          renderCalendar();
-          renderDay();
+          selectDate(dateStr, true);
         });
-        calendarEl.appendChild(cell);
+        row.appendChild(cell);
       }
     }
 
+    function selectDate(dateStr, focusDay = false){
+      if(!isValidHistoryDate(dateStr)) return;
+      const dateObj = parseDateLocal(dateStr);
+      selectedDate = dateStr;
+      current = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1);
+      renderCalendar();
+      renderDay();
+      if(focusDay) calendarEl.querySelector(`[data-date="${dateStr}"]`)?.focus();
+    }
+
+    calendarEl.addEventListener('keydown', event => {
+      if(!event.target.closest('[data-date]')) return;
+      const date = parseDateLocal(event.target.dataset.date);
+      if(!Number.isFinite(date.getTime())) return;
+      const offsets = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+      if(Object.prototype.hasOwnProperty.call(offsets, event.key)) date.setDate(date.getDate() + offsets[event.key]);
+      else if(event.key === 'Home') date.setDate(date.getDate() - date.getDay());
+      else if(event.key === 'End') date.setDate(date.getDate() + 6 - date.getDay());
+      else if(event.key === 'PageUp' || event.key === 'PageDown'){
+        const day = date.getDate();
+        date.setDate(1);
+        date.setMonth(date.getMonth() + (event.key === 'PageUp' ? -1 : 1));
+        date.setDate(Math.min(day, new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
+      } else return;
+      event.preventDefault();
+      selectDate(formatDate(date), true);
+    });
+
     function renderDay(){
+      const entryDate = selectedDate;
       const dateObj = parseDateLocal(selectedDate);
       const label = getDayLabel(selectedDate);
       dayTitle.textContent = label ? `${dateObj.toDateString()} • ${label}` : dateObj.toDateString();
@@ -493,6 +646,12 @@ if (typeof document !== 'undefined') {
       }
       entriesEl.innerHTML = '';
       const list = history[selectedDate] || [];
+      if(!list.length){
+        const empty = document.createElement('li');
+        empty.className = 'calendar-empty';
+        empty.textContent = 'No notes or logged sets for this day yet.';
+        entriesEl.appendChild(empty);
+      }
       list.forEach((text, idx) => {
         const li = document.createElement('li');
         li.className = 'entry-item';
@@ -507,6 +666,8 @@ if (typeof document !== 'undefined') {
         const editBtn = document.createElement('button');
         editBtn.textContent = 'Edit';
         editBtn.className = 'btn-mini edit';
+        editBtn.type = 'button';
+        editBtn.setAttribute('aria-label', `Edit ${text}`);
         editBtn.addEventListener('click', () => {
           if (li.querySelector('.edit-form')) return;
           const form = document.createElement('div');
@@ -517,6 +678,7 @@ if (typeof document !== 'undefined') {
           input.type = 'text';
           input.className = 'editEntryInput';
           input.value = text;
+          input.setAttribute('aria-label', 'Edit calendar entry');
           row.appendChild(input);
           const actionsRow = document.createElement('div');
           actionsRow.className = 'row2';
@@ -536,19 +698,24 @@ if (typeof document !== 'undefined') {
           form.appendChild(actionsRow);
           li.appendChild(form);
           input.focus();
+          form.addEventListener('keydown', ev => {
+            if(ev.key === 'Enter'){ ev.preventDefault(); saveBtn.click(); }
+            if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); cancelBtn.click(); }
+          });
           form.addEventListener('click', ev => {
             const action = ev.target.getAttribute('data-action');
             if (action === 'save') {
               const updated = input.value.trim();
               if (updated) {
-                history[selectedDate][idx] = updated;
+                history[entryDate][idx] = updated;
               } else {
-                history[selectedDate].splice(idx,1);
-                if (history[selectedDate].length === 0) delete history[selectedDate];
+                history[entryDate].splice(idx,1);
+                if (history[entryDate].length === 0) delete history[entryDate];
               }
-              save();
+              const saved = save();
               renderDay();
               renderCalendar();
+              if(saved) reportStatus('Calendar entry updated. Saved workout records are unchanged.');
             }
             if (action === 'cancel') {
               form.remove();
@@ -559,16 +726,23 @@ if (typeof document !== 'undefined') {
         actions.appendChild(editBtn);
 
         const delBtn = document.createElement('button');
-        delBtn.textContent = 'Del';
+        delBtn.textContent = 'Delete';
         delBtn.className = 'btn-mini del';
+        delBtn.type = 'button';
+        delBtn.setAttribute('aria-label', `Delete ${text}`);
         delBtn.addEventListener('click', async () => {
           const ok = await confirmModal('Delete entry?', { yesText: 'Delete', noText: 'Cancel', title: 'Delete Entry' });
           if(!ok) return;
-          history[selectedDate].splice(idx,1);
-          if(history[selectedDate].length === 0) delete history[selectedDate];
-          save();
+          if(!Array.isArray(history[entryDate])) return;
+          // Find the original entry again: another tab may have updated the day during confirmation.
+          const entryIndex = history[entryDate].indexOf(text);
+          if(entryIndex < 0) return;
+          history[entryDate].splice(entryIndex,1);
+          if(history[entryDate].length === 0) delete history[entryDate];
+          const saved = save();
           renderDay();
           renderCalendar();
+          if(saved) reportStatus('Calendar entry removed. Saved workout records are unchanged.');
         });
         actions.appendChild(delBtn);
 
@@ -585,21 +759,23 @@ if (typeof document !== 'undefined') {
       if(!val) return;
       if(!history[selectedDate]) history[selectedDate] = [];
       if(!history[selectedDate].includes(val)) history[selectedDate].push(val);
-      entryInput.value='';
-      save();
+      if(save()) { entryInput.value=''; reportStatus('Note saved.'); }
       renderDay();
       renderCalendar();
       updateTitleSelect();
     });
+    entryInput.addEventListener('keydown', event => {
+      if(event.key === 'Enter'){ event.preventDefault(); addEntryBtn.click(); }
+    });
 
     if(resetDayBtn){
       resetDayBtn.addEventListener('click', async () => {
-        const ok = await confirmModal('Clear all entries for this day?', { yesText: 'Clear', noText: 'Cancel', title: 'Clear Day' });
+        const dateToClear = selectedDate;
+        const ok = await confirmModal('Clear calendar notes, imported logs, and the title for this day? Your saved workout records will stay available.', { yesText: 'Clear Notes', noText: 'Cancel', title: 'Clear Day Notes' });
         if(!ok) return;
-        delete history[selectedDate];
-        delete titles[selectedDate];
-        save();
-        saveTitles();
+        delete history[dateToClear];
+        delete titles[dateToClear];
+        if(save()) reportStatus('Day notes cleared. Saved workout records are unchanged.');
         renderDay();
         renderCalendar();
         updateTitleSelect();
@@ -730,23 +906,18 @@ if (typeof document !== 'undefined') {
 
     importBtn.addEventListener('click', () => importFile.click());
     importFile.addEventListener('change', e => {
-      const file = e.target.files[0];
+      const file = e.target.files?.[0];
       if(!file) return;
+      if(file.size > 10 * 1024 * 1024){
+        reportStatus('This file is too large. Import a workout or history file under 10 MB.', true);
+        importFile.value = '';
+        return;
+      }
       const reader = new FileReader();
       reader.onload = () => {
-        const obj = safeParseJson(reader.result);
-        if(obj){
-          const res = mergeHistory(obj);
-          if(res.dates.length) selectedDate = res.dates[0];
-          save();
-          renderCalendar();
-          renderDay();
-          updateTitleSelect();
-          alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
-        } else {
-          alert('Invalid file');
-        }
+        handlePaste(typeof reader.result === 'string' ? reader.result : '');
       };
+      reader.onerror = () => reportStatus('This file could not be read. Your existing history is unchanged.', true);
       reader.readAsText(file);
       importFile.value='';
     });
@@ -758,31 +929,25 @@ if (typeof document !== 'undefined') {
     });
 
     function handlePaste(text){
-      const jsonObj = safeParseJson(text);
-      if(jsonObj && typeof jsonObj === 'object'){
-        const res = mergeHistory(jsonObj);
-        if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay(); updateTitleSelect();
-        alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
-        return true;
+      try{
+        const incoming = safeParseJson(text) || parseAiText(text, selectedDate) || parseCsv(text, selectedDate);
+        if(incoming && typeof incoming === 'object'){
+          const res = mergeHistory(incoming);
+          if(!res.dates.length && !res.skipped){
+            reportStatus('No valid dated workout entries were found. Your existing history is unchanged.', true);
+            return false;
+          }
+          if(!save()){ renderCalendar(); renderDay(); return false; }
+          if(res.dates.length) selectDate(res.dates.sort().at(-1));
+          else { renderCalendar(); renderDay(); }
+          updateTitleSelect();
+          reportStatus(`Imported ${res.added} entries. ${res.skipped} duplicates skipped.${res.rejected ? ` ${res.rejected} invalid entries ignored.` : ''}`);
+          return true;
+        }
+      }catch(error){
+        console.warn('Unable to import calendar history', error);
       }
-      const ai = parseAiText(text, selectedDate);
-      if(ai){
-        const res = mergeHistory(ai);
-        if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay(); updateTitleSelect();
-        alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
-        return true;
-      }
-      const csv = parseCsv(text, selectedDate);
-      if(csv){
-        const res = mergeHistory(csv);
-        if(res.dates.length) selectedDate = res.dates[0];
-        save(); renderCalendar(); renderDay(); updateTitleSelect();
-        alert(`History imported: ${res.dates.length} dates, ${res.added} lines, ${res.skipped} duplicates`);
-        return true;
-      }
-      alert('Could not parse input. Supported: JSON, AI text, CSV. Input: '+text.slice(0,120));
+      reportStatus('Could not read that workout. Paste exported workout JSON, AI text, or CSV. Your existing history is unchanged.', true);
       return false;
     }
 
@@ -809,33 +974,23 @@ if (typeof document !== 'undefined') {
     });
 
     calGoto.addEventListener('input', () => {
-      calGo.disabled = !calGoto.value;
+      calGo.disabled = !isValidHistoryDate(calGoto.value);
     });
 
     calGo.addEventListener('click', () => {
-      if(!calGoto.value) return;
-      const [y,m,d] = calGoto.value.split('-').map(Number);
-      selectedDate = formatDate(new Date(y,m-1,d));
-      current = new Date(y,m-1,1);
-      renderCalendar();
-      renderDay();
+      selectDate(calGoto.value, true);
     });
 
     saveTodayBtn.addEventListener('click', () => {
-      // Wait for session to be available
-      const waitForSession = () => {
+      try{
         if (typeof window.getSessionSnapshot !== 'function') {
-          setTimeout(waitForSession, 100);
+          reportStatus('Workout data is not ready yet. Reopen the Train tab and try again.', true);
           return;
         }
         const snapshot = window.getSessionSnapshot();
-        if (!snapshot.length) {
-          alert('No session data to save');
-          return;
-        }
         const lines = snapshotToLines(snapshot);
         if(!lines.length){
-          alert('No logged sets to save');
+          reportStatus('Log a set in Train before saving it to the calendar.');
           return;
         }
         const today = formatDate(new Date());
@@ -843,16 +998,26 @@ if (typeof document !== 'undefined') {
         current = new Date();
         current.setDate(1);
         const res = mergeHistory({[today]: lines});
-        save();
+        if(!save()){ renderDay(); renderCalendar(); return; }
         renderDay();
         renderCalendar();
         updateTitleSelect();
-        alert(`Saved ${res.added} lines, ${res.skipped} duplicates`);
-      };
-      waitForSession();
+        reportStatus(`Saved ${res.added} entries. ${res.skipped} duplicates skipped.`);
+      }catch(error){
+        console.warn('Unable to save the visible session to the calendar', error);
+        reportStatus('The session could not be copied to the calendar. Your logged workout is unchanged.', true);
+      }
     });
 
     window.addEventListener('wt-history-updated', () => {
+      history = loadStoredHistory();
+      titles = loadStoredTitles();
+      renderCalendar();
+      renderDay();
+      updateTitleSelect();
+    });
+    window.addEventListener('storage', event => {
+      if(event.key !== STORAGE_KEY && event.key !== TITLE_KEY && event.key !== null) return;
       history = loadStoredHistory();
       titles = loadStoredTitles();
       renderCalendar();
@@ -866,5 +1031,5 @@ if (typeof document !== 'undefined') {
   });
 }
 if (typeof module !== 'undefined') {
-  module.exports = { parseDateLocal, parseAiText, parseCsv, snapshotToLines, formatDuration, cardioHistoryLine };
+  module.exports = { parseDateLocal, parseAiText, parseCsv, snapshotToLines, formatDuration, cardioHistoryLine, sanitizeHistory, sanitizeHistoryTitles, isValidHistoryDate };
 }

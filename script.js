@@ -967,6 +967,19 @@ function normalizePayload(payload) {
     exercises: exs,
     schema: WT_SCHEMA_VERSION,
   };
+  if (payload.workoutId) normalized.workoutId = trimString(payload.workoutId, 120);
+  if (payload.dayType) normalized.dayType = trimString(payload.dayType, 40);
+  if (payload.session && typeof payload.session === 'object') {
+    const timing = buildSessionTiming({
+      startedAt: payload.session.sessionStart,
+      finishedAt: payload.session.sessionEnd,
+    }, exs);
+    if (timing) normalized.session = timing;
+  }
+  if (Array.isArray(payload.workoutNotes)) {
+    normalized.workoutNotes = payload.workoutNotes
+      .filter(note => typeof note === 'string').map(note => note.slice(0, 2000)).slice(0, 100);
+  }
   const goals = sanitizeGoals(payload.goals);
   if (goals.length) normalized.goals = goals.map((g) => g.text);
   const constraints = sanitizeConstraints(payload.constraints);
@@ -2146,13 +2159,69 @@ function pruneArchive(map, limit = 90) {
     ([, value]) => value && typeof value === 'object',
   );
   entries.sort((a, b) => {
-    if (a[0] === b[0]) return 0;
-    return a[0] > b[0] ? -1 : 1;
+    const aTime = String(a[1].timestamp || a[1].date || a[0]);
+    const bTime = String(b[1].timestamp || b[1].date || b[0]);
+    return bTime.localeCompare(aTime);
   });
   if (entries.length <= limit) {
     return Object.fromEntries(entries);
   }
   return Object.fromEntries(entries.slice(0, limit));
+}
+
+function buildSessionTiming(workoutSession, exercises = [], nowMs = Date.now()) {
+  const timestamps = exercises.flatMap(ex => (ex?.sets || []).map(set => set?.ts))
+    .filter(ts => typeof ts === 'number' && Number.isFinite(ts) && ts > 0);
+  let start = new Date(workoutSession?.startedAt || '').getTime();
+  let end = new Date(workoutSession?.finishedAt || '').getTime();
+  if (!Number.isFinite(start)) start = timestamps.length ? Math.min(...timestamps) : NaN;
+  if (!Number.isFinite(end)) {
+    end = workoutSession?.startedAt ? nowMs : timestamps.length ? Math.max(...timestamps) : NaN;
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return {
+    sessionStart: new Date(start).toISOString(),
+    sessionEnd: new Date(end).toISOString(),
+    sessionDurationSec: Math.round((end - start) / 1000),
+  };
+}
+
+function getWorkoutDate(workoutSession, fallback = getLocalDateString()) {
+  if (parseYMD(workoutSession?.workoutDate)) return workoutSession.workoutDate;
+  const start = new Date(workoutSession?.startedAt || workoutSession?.finishedAt || '');
+  return Number.isFinite(start.getTime()) ? getLocalDateString(start) : fallback;
+}
+
+function getWorkoutRecords(...sources) {
+  const byId = new Map();
+  const fingerprints = new Map();
+  sources.forEach(source => {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return;
+    Object.entries(source).forEach(([key, raw]) => {
+      if (!raw || !Array.isArray(raw.exercises)) return;
+      const record = normalizePayload({ ...raw, date: raw.date || key });
+      if (!record.totalSets || !parseYMD(record.date)) return;
+      const id = record.workoutId || key;
+      // Legacy date archives and saved-workout copies can contain the same record.
+      const fingerprint = JSON.stringify([record.date, record.exercises]);
+      const duplicateId = fingerprints.get(fingerprint);
+      if (byId.has(id) || (duplicateId && (parseYMD(id) || parseYMD(duplicateId)))) return;
+      record.workoutId = id;
+      byId.set(id, record);
+      fingerprints.set(fingerprint, id);
+    });
+  });
+  return [...byId.values()].sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+}
+
+function previousWorkoutRecords(records, current) {
+  const cutoff = new Date(current.timestamp).getTime();
+  return records.filter(record => {
+    if (record.workoutId && record.workoutId === current.workoutId) return false;
+    const timestamp = new Date(record.timestamp).getTime();
+    if (Number.isFinite(cutoff) && Number.isFinite(timestamp)) return timestamp < cutoff;
+    return record.date < current.date;
+  });
 }
 
 function deepClone(value) {
@@ -2271,18 +2340,42 @@ function lsSetRaw(k, v) {
 
 function backupKey(k, n) { return `${k}.backup${n}`; } // .backup1..3
 
-function writeWithBackups(key, valueStr, keepBackups = true) {
-  // roll backups: 3 <- 2 <- 1 <- current
-  const cur = lsGetRaw(key);
-  if (keepBackups && cur !== null) {
-    const backup2 = lsGetRaw(backupKey(key, 2));
-    const backup1 = lsGetRaw(backupKey(key, 1));
-    if (backup2 !== null) lsSetRaw(backupKey(key, 3), backup2);
-    if (backup1 !== null) lsSetRaw(backupKey(key, 2), backup1);
-    lsSetRaw(backupKey(key,1), cur);
+function isStorageQuotaError(error) {
+  return error?.name === 'QuotaExceededError' || error?.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+    || error?.code === 22 || error?.code === 1014;
+}
+
+function removeRaw(key) {
+  if (!hasLocalStorage()) memStore.delete(key);
+  else localStorage.removeItem(key);
+}
+
+function reclaimStorageBackups() {
+  for (const key of Object.values(WT_KEYS)) {
+    const raw = lsGetRaw(key);
+    if (raw === null || safeParse(raw, undefined) === undefined) continue;
+    for (let i = 1; i <= 3; i++) removeRaw(backupKey(key, i));
   }
-  // atomic-ish: write new value last
-  lsSetRaw(key, valueStr);
+}
+
+function writeWithBackups(key, valueStr, keepBackups = true) {
+  const cur = lsGetRaw(key);
+  if (cur === valueStr) return;
+  try {
+    lsSetRaw(key, valueStr);
+  } catch (error) {
+    if (!isStorageQuotaError(error)) throw error;
+    reclaimStorageBackups();
+    lsSetRaw(key, valueStr);
+    return;
+  }
+  // A redundant recovery copy must never prevent the actual workout save.
+  try {
+    for (let i = 2; i <= 3; i++) removeRaw(backupKey(key, i));
+    if (keepBackups && cur !== null && cur.length <= 32768
+        && safeParse(cur, undefined) !== undefined) lsSetRaw(backupKey(key, 1), cur);
+    else removeRaw(backupKey(key, 1));
+  } catch { /* The primary value was saved successfully. */ }
 }
 
 function reportStorageFailure(error) {
@@ -2310,6 +2403,22 @@ const wtStorage = {
       return false;
     }
   },
+  setMany(entries) {
+    const previous = entries.map(([key]) => [key, lsGetRaw(key)]);
+    try {
+      for (const [key, value] of entries) {
+        writeWithBackups(key, JSON.stringify(value), key !== WT_KEYS.archive && key !== WT_KEYS.completed);
+      }
+      return true;
+    } catch (error) {
+      // Restore all primary values if any part of a session transition fails.
+      for (const [key, raw] of previous.reverse()) {
+        try { if (raw === null) removeRaw(key); else lsSetRaw(key, raw); } catch { /* Keep remaining recovery copies. */ }
+      }
+      reportStorageFailure(error);
+      return false;
+    }
+  },
   getRaw(key) { return lsGetRaw(key); },
   restoreBackup(key, validator = () => true) {
     // try newest → oldest
@@ -2330,6 +2439,8 @@ const wtStorage = {
     for (let i=1;i<=3;i++) localStorage.removeItem(backupKey(key,i));
   }
 };
+
+if (typeof window !== 'undefined') window.wtStorage = wtStorage;
 
 function migrateSetRoleProvenance(value) {
   let changed = false;
@@ -2381,6 +2492,7 @@ function migrateSetRoleProvenance(value) {
 (function ensureSchema() {
   const v = Number(lsGetRaw(WT_KEYS.schema)) || 0;
   if (v < WT_SCHEMA_VERSION) {
+    let migrationSaved = true;
     if (v < 9) {
       [WT_KEYS.session, WT_KEYS.current, WT_KEYS.last, WT_KEYS.archive].forEach((key) => {
         const raw = lsGetRaw(key);
@@ -2388,10 +2500,10 @@ function migrateSetRoleProvenance(value) {
         const parsed = safeParse(raw, null);
         if (parsed === null) return;
         const migrated = migrateSetRoleProvenance(parsed);
-        if (migrated.changed) wtStorage.set(key, migrated.value);
+        if (migrated.changed && !wtStorage.set(key, migrated.value)) migrationSaved = false;
       });
     }
-    lsSetRaw(WT_KEYS.schema, String(WT_SCHEMA_VERSION));
+    if (migrationSaved) wtStorage.set(WT_KEYS.schema, WT_SCHEMA_VERSION);
   }
 })();
 
@@ -2452,7 +2564,7 @@ if (typeof localStorage !== "undefined") {
 
   // sanity shape
   if (!Array.isArray(session.exercises)) session.exercises = [];
-  if (session.startedAt) {
+  if (session.startedAt && !session.finishedAt) {
     const normalizedStartedAt = normalizeSessionStartedAt(session.startedAt);
     if (!normalizedStartedAt) {
       session.startedAt = null;
@@ -2460,7 +2572,7 @@ if (typeof localStorage !== "undefined") {
     }
   }
 
-  const normSession = session.exercises.map(normalizeExercise);
+  const normSession = session.exercises.filter(ex => ex && typeof ex === 'object').map(normalizeExercise);
   if (JSON.stringify(normSession) !== JSON.stringify(session.exercises)) {
     session.exercises = normSession;
     needsSaveAfterNormalize = true;
@@ -2499,13 +2611,27 @@ function canLogStrengthEntry(w, r, role = 'auto') {
 }
 
 function canLogCardio(distance, duration, name) {
-  const durationOk = Number.isFinite(duration) && duration > 0 && duration <= 604800;
+  const durationOk = Number.isInteger(duration) && duration > 0 && duration <= 604800;
   const distanceMissing = distance === null;
   const allowsNoDistance = name === "Jump Rope" || name === "Plank";
   const distanceOk = allowsNoDistance
     ? distanceMissing || (Number.isFinite(distance) && distance >= 0 && distance <= 100000)
     : Number.isFinite(distance) && distance >= 0 && distance <= 100000;
   return distanceOk && durationOk;
+}
+
+function parseDurationFields(minutes, seconds) {
+  const m = String(minutes ?? '').trim() === '' ? 0 : parseWorkoutNumber(String(minutes));
+  const s = String(seconds ?? '').trim() === '' ? 0 : parseWorkoutNumber(String(seconds));
+  if (!Number.isInteger(m) || m < 0 || !Number.isInteger(s) || s < 0 || s > 59) return NaN;
+  const total = m * 60 + s;
+  return total > 0 && total <= 604800 ? total : NaN;
+}
+
+function parseOptionalRest(value) {
+  if (String(value).trim() === '') return null;
+  const parsed = parseWorkoutNumber(String(value));
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 86400 ? parsed : NaN;
 }
 
 /* ------------------ ELEMENTS ------------------ */
@@ -3363,7 +3489,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   window.addEventListener('wt-storage-error', () => {
-    showToast('Storage is full. Export your workout now; the latest change may not be saved.');
+    showToast('Unable to save to browser storage. Export your workout now; the latest change may not be saved.');
   });
 
   // --- Undo Stack ---
@@ -3400,7 +3526,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     goals = sanitizeGoals(wtStorage.get(WT_KEYS.goals, []));
     constraints = sanitizeConstraints(wtStorage.get(WT_KEYS.constraints, DEFAULT_CONSTRAINTS));
     const restoredStatus = wtStorage.get(WT_KEYS.sessionStatus, null);
-    sessionStatus = normalizeSessionStatus(restoredStatus?.status || restoredStatus);
+    sessionStatus = normalizeSessionStatus(restoredStatus?.value || restoredStatus?.status || restoredStatus);
     nextWorkoutMinutes = normalizeWorkoutMinutes(
       wtStorage.get(WT_KEYS.nextWorkoutMinutes, restoredStatus?.nextWorkoutMinutes),
     );
@@ -3739,10 +3865,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const d =
         distanceInput.classList.contains("hidden") || distanceInput.value === ""
           ? null
-          : parseFloat(distanceInput.value);
-      const m = parseInt(durationMinInput.value, 10) || 0;
-      const s = parseInt(durationSecInput.value, 10) || 0;
-      const t = m * 60 + s;
+          : parseWorkoutNumber(distanceInput.value);
+      const t = parseDurationFields(durationMinInput.value, durationSecInput.value);
       logBtn.disabled = !canLogCardio(d, t, currentExercise.name);
       return;
     }
@@ -4674,15 +4798,22 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     exerciseSelect.value = "";
   });
 
-  function startExercise(name) {
+  async function startExercise(name) {
+    const requested = typeof name === 'object' ? name?.name : name;
+    name = trimString(requested, 80);
+    if (!name) return false;
+    if (session.finishedAt && !await startNewWorkout()) return false;
     finishRest({ announceCompletion: false, hide: true });
     if (!session.startedAt) session.startedAt = new Date().toISOString();
     startSessionTimer();
     if (currentExercise && currentExercise.sets.length) {
       pushOrMergeExercise(currentExercise);
     }
-    const meta = allExercises.find((e) => e.name === name);
-    const isCardio = (meta && meta.category === "Cardio") || name === "Plank";
+    const meta = allExercises.find((e) => exerciseGoalKey(e.name) === exerciseGoalKey(name));
+    if (meta) name = meta.name;
+    const historical = getWorkoutRecords(wtStorage.get(WT_KEYS.completed, {}), archivedSessions)
+      .flatMap(workout => workout.exercises).find(ex => exerciseGoalKey(ex.name) === exerciseGoalKey(name));
+    const isCardio = (meta && meta.category === "Cardio") || historical?.isCardio || name === "Plank";
     const key = exerciseGoalKey(name);
     const savedProfile = normalizeExerciseProfile(exerciseProfiles[key]);
     const resolvedProfile = savedProfile.mode === 'auto'
@@ -4723,9 +4854,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       weightInput.focus();
     }
     updateLogButtonState();
+    return true;
   }
 
-  function startSuperset(namesArr) {
+  async function startSuperset(namesArr) {
+    if (session.finishedAt && !await startNewWorkout()) return false;
     finishRest({ announceCompletion: false, hide: true });
     if (!session.startedAt) session.startedAt = new Date().toISOString();
     startSessionTimer();
@@ -4890,11 +5023,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }
 
     if (currentExercise.isCardio) {
-      const rawD = parseFloat(distanceInput.value);
-      const d = distanceInput.value === "" ? null : rawD;
-      const m = parseInt(durationMinInput.value, 10) || 0;
-      const s = parseInt(durationSecInput.value, 10) || 0;
-      const t = m * 60 + s;
+      const d = distanceInput.classList.contains('hidden') || distanceInput.value === ''
+        ? null : parseWorkoutNumber(distanceInput.value);
+      const t = parseDurationFields(durationMinInput.value, durationSecInput.value);
       if (!canLogCardio(d, t, currentExercise.name)) {
         showToast(
           ["Jump Rope", "Plank"].includes(currentExercise.name)
@@ -5301,23 +5432,26 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           });
         } else if (currentExercise.isCardio) {
           const dField = form.querySelector(".editD");
-          const rawD = dField ? parseFloat(dField.value) : null;
+          const rawD = dField ? parseWorkoutNumber(dField.value) : null;
           const newD = dField ? (dField.value === "" ? null : rawD) : null;
           const durField = form.querySelector(".editDur");
           let newDur;
           if (durField) {
-            newDur = parseInt(durField.value, 10);
+            newDur = parseWorkoutNumber(durField.value);
           } else {
-            const m =
-              parseInt(form.querySelector(".editDurMin").value, 10) || 0;
-            const se =
-              parseInt(form.querySelector(".editDurSec").value, 10) || 0;
-            newDur = m * 60 + se;
+            newDur = parseDurationFields(
+              form.querySelector('.editDurMin').value,
+              form.querySelector('.editDurSec').value,
+            );
           }
           const vPlanned = form.querySelector(".editRestPlanned").value;
           const vActual = form.querySelector(".editRestActual").value;
-          const newPlanned = vPlanned === "" ? null : parseInt(vPlanned, 10);
-          const newActual = vActual === "" ? null : parseInt(vActual, 10);
+          const newPlanned = parseOptionalRest(vPlanned);
+          const newActual = parseOptionalRest(vActual);
+          if (Number.isNaN(newPlanned) || Number.isNaN(newActual)) {
+            showToast('Enter rest as whole seconds from 0 to 86400, or leave it blank.');
+            return;
+          }
           if (!canLogCardio(newD, newDur, currentExercise.name)) {
             showToast(
               ["Jump Rope", "Plank"].includes(currentExercise.name)
@@ -5342,8 +5476,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           const vPlanned = form.querySelector(".editRestPlanned").value;
           const vActual = form.querySelector(".editRestActual").value;
 
-          const newPlanned = vPlanned === "" ? null : parseInt(vPlanned, 10);
-          const newActual = vActual === "" ? null : parseInt(vActual, 10);
+          const newPlanned = parseOptionalRest(vPlanned);
+          const newActual = parseOptionalRest(vActual);
+          if (Number.isNaN(newPlanned) || Number.isNaN(newActual)) {
+            showToast('Enter rest as whole seconds from 0 to 86400, or leave it blank.');
+            return;
+          }
 
           const editRole = form.querySelector('.editRole')?.value || s.role;
           if (!canLogStrengthEntry(newW, newR, editRole)) {
@@ -5592,9 +5730,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   });
 
   /* ------------------ CALENDAR SAVE ------------------ */
-  function saveSessionLinesToHistory(){
+  function sessionHistoryUpdate(dateStr = getWorkoutDate(session)) {
     const snapshot = getSessionSnapshot();
-    if(!snapshot.length) return;
     const lines = [];
     snapshot.forEach(ex => {
       if(ex.isSuperset){
@@ -5620,12 +5757,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         });
       }
     });
-    const d = new Date();
-    const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    const history = wtStorage.get(WT_KEYS.history, {});
+    let history = wtStorage.get(WT_KEYS.history, {});
+    if (!history || typeof history !== 'object' || Array.isArray(history)) history = {};
     history[dateStr] = upsertStructuredHistoryLines(history[dateStr], lines);
-    wtStorage.set(WT_KEYS.history, history);
+    return history;
+  }
+
+  function saveSessionLinesToHistory(date = getWorkoutDate(session)) {
+    if (!wtStorage.set(WT_KEYS.history, sessionHistoryUpdate(date))) return false;
     window.dispatchEvent(new Event('wt-history-updated'));
+    return true;
   }
 
   // Build a deep copy of all exercises including the in-progress one
@@ -5636,65 +5777,88 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     ]);
   }
 
+  function ensureWorkoutIdentity() {
+    if (!session.workoutId) {
+      session.workoutId = session.completedId || `workout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+    if (!session.workoutDate) session.workoutDate = getWorkoutDate(session);
+    return session.workoutId;
+  }
+
+  function getSavedRecord() {
+    const id = session.workoutId || session.completedId;
+    return id ? wtStorage.get(WT_KEYS.completed, {})?.[id] || null : null;
+  }
+
+  function buildActiveWorkoutRecord({ finish = false } = {}) {
+    const workoutId = ensureWorkoutIdentity();
+    const date = getWorkoutDate(session);
+    const saved = session.finishedAt ? getSavedRecord() || session.importedContext : null;
+    const finishAt = session.finishedAt || (finish ? new Date().toISOString() : null);
+    const exercises = buildExportExercises();
+    const record = normalizePayload({
+      workoutId,
+      date,
+      timestamp: saved?.timestamp || finishAt || new Date().toISOString(),
+      dayType: saved?.dayType ?? dayType,
+      exercises: saved
+        ? exercises
+        : attachExerciseGoalSnapshots(exercises, exerciseGoals, date),
+      goals: saved ? saved.goals || [] : sanitizeGoals(goals).filter(goal => goal.active).map(goal => goal.text),
+      constraints: saved ? saved.constraints || {} : sanitizeConstraints(constraints),
+      sessionContext: saved?.sessionContext || buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
+      session: saved?.session || buildSessionTiming({ ...session, finishedAt: finishAt }, exercises),
+      workoutNotes: saved?.workoutNotes,
+    });
+    // A saved goal snapshot belongs to that workout, even after the user's goal changes.
+    if (saved) {
+      const oldByName = new Map((saved.exercises || []).filter(Boolean).map(ex => [exerciseGoalKey(ex.name), ex]));
+      record.exercises.forEach(ex => {
+        const old = oldByName.get(exerciseGoalKey(ex.name));
+        if (old?.goal) ex.goal = deepClone(old.goal);
+        else delete ex.goal;
+        if (old?.exerciseGoals) ex.exerciseGoals = deepClone(old.exerciseGoals);
+        else delete ex.exerciseGoals;
+      });
+    }
+    return record;
+  }
+
   function endWorkout({ persistCompleted = true } = {}) {
     finishRest({ announceCompletion: false, hide: true });
-    const date = getLocalDateString();
-    const snapshot = attachExerciseGoalSnapshots(
-      buildExportExercises(),
-      exerciseGoals,
-      date,
-    );
+    const snapshot = buildExportExercises();
     if (persistCompleted && snapshot.length) {
-      const completedId = session.completedId || `workout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-      const savedWorkouts = wtStorage.get(WT_KEYS.completed, null) || { ...archivedSessions };
-      const record = normalizePayload({ date, timestamp: new Date().toISOString(), exercises: snapshot,
-        goals: sanitizeGoals(goals).filter(goal => goal.active).map(goal => goal.text),
-        constraints: sanitizeConstraints(constraints),
-        sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes) });
-      if (!wtStorage.set(WT_KEYS.completed, { ...savedWorkouts, [completedId]: record })) {
+      const record = buildActiveWorkoutRecord({ finish: true });
+      const completedId = record.workoutId;
+      const existingSaved = wtStorage.get(WT_KEYS.completed, null);
+      const savedWorkouts = existingSaved && typeof existingSaved === 'object' && !Array.isArray(existingSaved)
+        ? existingSaved : { ...archivedSessions };
+      const nextArchive = pruneArchive({ ...archivedSessions, [completedId]: record }, 120);
+      const nextSession = { ...session, completedId, finishedAt: session.finishedAt || record.timestamp };
+      if (!wtStorage.setMany([
+        [WT_KEYS.current, currentExercise],
+        [WT_KEYS.completed, { ...savedWorkouts, [completedId]: record }],
+        [WT_KEYS.last, record.exercises],
+        [WT_KEYS.lastMeta, record],
+        [WT_KEYS.history, sessionHistoryUpdate(record.date)],
+        [WT_KEYS.archive, nextArchive],
+        [WT_KEYS.session, nextSession],
+      ])) {
         showToast('Could not save the workout. Your sets are still here. Export a backup before trying again.');
         return false;
       }
-      session.completedId = completedId;
-      if (!wtStorage.set(WT_KEYS.last, snapshot)) return false;
-      if (!wtStorage.set(WT_KEYS.lastMeta, {
-        date,
-        timestamp: new Date().toISOString(),
-        sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
-      })) return false;
-      saveSessionLinesToHistory();
-      const completed = normalizePayload({
-        date,
-        timestamp: new Date().toISOString(),
-        exercises: snapshot,
-        goals: sanitizeGoals(goals).filter((goal) => goal.active).map((goal) => goal.text),
-        constraints: sanitizeConstraints(constraints),
-        sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
-      });
-      if (session.startedAt) {
-        const startMs = new Date(session.startedAt).getTime();
-        const endMs = Date.now();
-        if (Number.isFinite(startMs) && endMs >= startMs) {
-          completed.session = {
-            sessionStart: new Date(startMs).toISOString(),
-            sessionEnd: new Date(endMs).toISOString(),
-            sessionDurationSec: Math.round((endMs - startMs) / 1000),
-          };
-        }
-      }
-      archivedSessions[date] = {
-        ...(archivedSessions[date] || {}),
-        ...completed,
-        sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
-      };
-      archivedSessions = pruneArchive(archivedSessions, 120);
-      if (!wtStorage.set(WT_KEYS.archive, archivedSessions)) return false;
-      // Finishing saves the workout without clearing the visible or persisted sets.
-      session.finishedAt = new Date().toISOString();
+      session = nextSession;
+      archivedSessions = nextArchive;
       stopSessionTimer();
-      saveState();
       updateSummary();
+      notifyStateChanged();
+      window.dispatchEvent(new Event('wt-history-updated'));
       return true;
+    }
+    const nextSession = { exercises: [], startedAt: null };
+    if (!wtStorage.setMany([[WT_KEYS.current, null], [WT_KEYS.session, nextSession]])) {
+      showToast('Could not reset the workout. Your sets are still here. Export a backup and try again.');
+      return false;
     }
     stopRest();
     restSetIndex = null;
@@ -5705,7 +5869,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     restBox.classList.add("hidden");
     restDisplay.textContent = "00:00";
     stopSessionTimer();
-    session = { exercises: [], startedAt: null };
+    session = nextSession;
     currentExercise = null;
     exerciseSelect.value = "";
     interfaceBox.classList.add("hidden");
@@ -5719,7 +5883,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     resetPendingSetContext();
     updateSummary();
     updateSetsToday();
-    saveState();
+    notifyStateChanged();
     updateLogButtonState();
     return true;
   }
@@ -5731,7 +5895,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const prevSession = deepClone(session);
     const prevCurrent = deepClone(currentExercise);
     pushUndo({ type: "reset", payload: { prevSession, prevCurrent } });
-    endWorkout({ persistCompleted: false });
+    if (!endWorkout({ persistCompleted: false })) return;
     announce("Workout reset");
     document.getElementById('exerciseSelect').scrollIntoView({ block: 'center', behavior: 'smooth' });
     showToast("Current workout cleared. Choose an exercise to begin.", { actionLabel: "Undo", onAction: performUndo });
@@ -5770,10 +5934,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const next = document.createElement('button');
       next.className = 'btn';
       next.textContent = 'Start New Workout';
-      next.addEventListener('click', async () => {
-        if (!await confirmModal('Start a new empty workout? This finished workout remains saved.', { title: 'New Workout', yesText: 'Start New', noText: 'Cancel' })) return;
-        endWorkout({ persistCompleted: false });
-      });
+      next.addEventListener('click', startNewWorkout);
       summaryText.append(saved, next);
     }
     session.exercises.forEach((ex, i) => {
@@ -5835,6 +5996,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         savedPanel.appendChild(row);
       });
     }
+    notifyStateChanged();
   }
 
   summaryText.addEventListener("click", (e) => {
@@ -5872,20 +6034,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   /* ------------------ EXPORT (JSON + AI + CSV) ------------------ */
   exportBtn.addEventListener("click", async () => {
     let exportExercises = buildExportExercises();
-    let exportDate = getLocalDateString();
+    let exportRecord;
     if (exportExercises.length) {
-      wtStorage.set(WT_KEYS.last, exportExercises);
-      wtStorage.set(WT_KEYS.lastMeta, {
-        date: exportDate,
-        timestamp: new Date().toISOString(),
-        sessionContext: buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
-      });
-      saveSessionLinesToHistory();
+      exportRecord = buildActiveWorkoutRecord();
+      wtStorage.setMany([[WT_KEYS.last, exportRecord.exercises], [WT_KEYS.lastMeta, exportRecord]]);
+      saveSessionLinesToHistory(exportRecord.date);
     } else {
       const last = wtStorage.get(WT_KEYS.last, null);
       if (last && last.length) {
         const lastMeta = wtStorage.get(WT_KEYS.lastMeta, {});
-        exportDate = /^\d{4}-\d{2}-\d{2}$/.test(String(lastMeta?.date || ''))
+        const exportDate = parseYMD(lastMeta?.date)
           ? lastMeta.date
           : getLocalDateString();
         const reExport = await confirmModal(
@@ -5898,6 +6056,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         );
         if (!reExport) return;
         exportExercises = last;
+        exportRecord = normalizePayload({ ...lastMeta, date: exportDate, exercises: last });
       } else {
         showToast("No workout data yet.");
         return;
@@ -5912,7 +6071,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     }).then((includeNotes) => {
       // Honor preference: if ON include without asking; if OFF exclude without asking
       const alwaysSession = !!wtStorage.get(WT_KEYS.prefSessionTime, false);
-      performExport(exportExercises, includeNotes, alwaysSession, exportDate);
+      performExport(exportExercises, includeNotes, alwaysSession, exportRecord.date, exportRecord);
     });
   });
   
@@ -5921,27 +6080,15 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     includeNotes,
     includeSessionTime,
     currentDate = getLocalDateString(),
+    capturedRecord = null,
   ) {
     const includeExerciseGoalProgress = !!wtStorage.get(
       WT_KEYS.prefExerciseGoalProgress,
       false,
     );
-    const goalsForExport = sanitizeGoals(goals)
-      .filter((g) => g.active)
-      .map((g) => g.text);
-    const constraintsForExport = sanitizeConstraints(constraints);
-
-    const normalized = normalizePayload({
-      date: currentDate,
-      timestamp: new Date().toISOString(),
-      exercises: attachExerciseGoalSnapshots(
-        exportExercises,
-        exerciseGoals,
-        currentDate,
-      ),
-      goals: goalsForExport,
-      constraints: constraintsForExport,
-    });
+    const normalized = normalizePayload(capturedRecord || buildActiveWorkoutRecord());
+    const goalsForExport = normalized.goals || [];
+    const constraintsForExport = sanitizeConstraints(normalized.constraints);
 
     const performedGoalSnapshots = [];
     normalized.exercises.forEach((exercise) => {
@@ -5954,16 +6101,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         normalized.exercises,
         includeExerciseGoalProgress,
       ),
-      sessionContext: buildSessionPlanningContext(
-        sessionStatus,
-        nextWorkoutMinutes,
-      ),
+      sessionContext: normalized.sessionContext || buildSessionPlanningContext('complete', null),
     };
 
     let workoutNotes = [];
     if (includeNotes) {
       const history = wtStorage.get(WT_KEYS.history, {});
-      workoutNotes = Array.isArray(history[currentDate]) ? history[currentDate] : [];
+      workoutNotes = normalized.workoutNotes || (Array.isArray(history[currentDate]) ? history[currentDate] : []);
       const logLineRe = /^.+:\s*Set\s*\d+\s*[-–]\s*(?:Failed attempt at\b|.*(?:lbs\s*[×xX]|mi\s+in\b|\d+(?:\.\d+)?\s*[hms]\b))/i;
       workoutNotes = workoutNotes.filter((line) =>
         !logLineRe.test(String(line).trim()),
@@ -5973,33 +6117,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       }
     }
 
-    let sessionMeta = null;
-    if (includeSessionTime) {
-      const timestamps = [];
-      payload.exercises.forEach((ex) => {
-        ex.sets.forEach((s) => {
-          if (s && typeof s.ts === 'number') timestamps.push(s.ts);
-        });
-      });
-      let startTs = null;
-      let endTs = null;
-      if (session && session.startedAt) {
-        startTs = new Date(session.startedAt).getTime();
-        endTs = Date.now();
-      } else if (timestamps.length) {
-        startTs = Math.min(...timestamps);
-        endTs = Math.max(...timestamps);
-      }
-      if (startTs != null && endTs >= startTs) {
-        const durationSec = Math.max(0, Math.round((endTs - startTs) / 1000));
-        sessionMeta = {
-          sessionStart: new Date(startTs).toISOString(),
-          sessionEnd: new Date(endTs).toISOString(),
-          sessionDurationSec: durationSec,
-        };
-        payload.session = sessionMeta;
-      }
-    }
+    const sessionMeta = includeSessionTime ? normalized.session || buildSessionTiming({}, payload.exercises) : null;
+    if (sessionMeta) payload.session = sessionMeta;
+    else delete payload.session;
+    if (!includeNotes) delete payload.workoutNotes;
 
     // Load calendar titles to match day type
     let titlesByDate = {};
@@ -6008,19 +6129,13 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       titlesByDate = rawTitles ? JSON.parse(rawTitles) : {};
     } catch {}
 
-    let previousSessions = Object.entries(archivedSessions || {})
-      .filter(([date]) => date !== payload.date)
-      .map(([date, data]) =>
-        normalizePayload({
-          ...data,
-          date: data && data.date ? data.date : date,
-        }),
-      )
-      .sort((a, b) => (a.date > b.date ? -1 : 1));
+    let previousSessions = previousWorkoutRecords(
+      getWorkoutRecords(wtStorage.get(WT_KEYS.completed, {}), archivedSessions), payload,
+    );
 
     // If a day type is selected, filter to matching titles
-    if (dayType) {
-      const target = String(dayType).toLowerCase();
+    if (normalized.dayType) {
+      const target = String(normalized.dayType).toLowerCase();
       const keywordMap = {
         back: ['row', 'pull', 'lat', 'pulldown', 'deadlift', 'rear delt'],
         chest: ['bench', 'press', 'push up', 'fly'],
@@ -6036,8 +6151,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const kw = keywordMap[target] || [];
 
       const titleOrHeuristic = (s) => {
-        const t = String(titlesByDate[s.date] || '').toLowerCase();
+        const t = String(s.dayType || titlesByDate[s.date] || '').toLowerCase();
         if (t === target) return true;
+        if (t) return false;
         if (!kw.length) return false;
         // Heuristic: count matches by exercise name
         let names = [];
@@ -6498,9 +6614,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       alert("Exported JSON + CSV. Copy this manually:\n\n" + aiText);
     }
 
-    archivedSessions[payload.date] = payload;
-    archivedSessions = pruneArchive(archivedSessions, 120);
-    wtStorage.set(WT_KEYS.archive, archivedSessions);
+    const archiveKey = normalized.workoutId || `${normalized.date}-${normalized.timestamp}`;
+    const nextArchive = pruneArchive({ ...archivedSessions, [archiveKey]: normalized }, 120);
+    if (wtStorage.set(WT_KEYS.archive, nextArchive)) archivedSessions = nextArchive;
+    notifyStateChanged();
   }
 
   function triggerDownload(blob, filename) {
@@ -6515,9 +6632,58 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   /* ------------------ SAVE / LOAD ------------------ */
+  function notifyStateChanged() {
+    window.dispatchEvent(new Event('wt-state-updated'));
+  }
+
+  async function startNewWorkout() {
+    const hasSets = buildExportExercises().some(ex => ex.sets?.length);
+    if (hasSets) {
+      const message = session.finishedAt
+        ? 'Start a new empty workout? This finished workout remains saved.'
+        : 'Clear the current workout and start fresh? Finish or export it first if you want to keep it.';
+      if (!await confirmModal(message, { title: 'New Workout', yesText: 'Start New', noText: 'Cancel' })) return false;
+    }
+    return endWorkout({ persistCompleted: false });
+  }
+
+  function getAppState() {
+    const history = getWorkoutRecords(wtStorage.get(WT_KEYS.completed, {}), archivedSessions);
+    const lastExercises = wtStorage.get(WT_KEYS.last, []);
+    const lastMeta = wtStorage.get(WT_KEYS.lastMeta, {});
+    const last = Array.isArray(lastExercises) && lastExercises.length
+      ? normalizePayload({ ...lastMeta, exercises: lastExercises }) : history[0] || null;
+    return deepClone({
+      current: { ...buildActiveWorkoutRecord(), finishedAt: session.finishedAt || null },
+      last,
+      history,
+      goals: exerciseGoals,
+      generalGoals: goals,
+      constraints,
+      activeExercise: currentExercise,
+      finishedAt: session.finishedAt || null,
+      dayType,
+      sessionStatus,
+      nextWorkoutMinutes,
+    });
+  }
+
+  window.workoutTracker = Object.freeze({
+    getState: getAppState,
+    startExercise,
+    startNewWorkout,
+    helpers: Object.freeze({
+      computeSessionStats, classifyExerciseSets, buildStrengthDecisionSupport,
+      normalizeExerciseProfile, getGoalPerformanceFromExercise, normalizePayload,
+      buildAutomaticExerciseProfile, previousWorkoutRecords, exerciseGoalKey,
+    }),
+  });
+
   function saveState() {
-    wtStorage.set(WT_KEYS.session, session);
-    wtStorage.set(WT_KEYS.current, currentExercise);
+    if (currentExercise || session.exercises.length) ensureWorkoutIdentity();
+    const saved = wtStorage.setMany([[WT_KEYS.current, currentExercise], [WT_KEYS.session, session]]);
+    notifyStateChanged();
+    return saved;
   }
 
   if (needsSaveAfterNormalize) {
@@ -6610,6 +6776,12 @@ if (typeof window !== "undefined") {
 
 if (typeof module !== "undefined") {
 module.exports = {
+  wtStorage,
+  buildSessionTiming,
+  getWorkoutDate,
+  getWorkoutRecords,
+  previousWorkoutRecords,
+  parseDurationFields,
   THEME_PACKS,
   EXERCISE_GOAL_TYPES,
   SESSION_STATUS_OPTIONS,
