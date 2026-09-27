@@ -290,6 +290,17 @@
     return true;
   }
 
+  // An explicitly configured, five-straight-set 5x5 is a program convention,
+  // not a claim that 5x5 is physiologically optimal. Never infer it from a
+  // general strength goal or from ramped/top-set and back-off work.
+  function straightFiveByFive(profile, work) {
+    return profile.mode === 'custom' && /strength|power/.test(profile.purpose || '')
+      && profile.repMin === 5 && profile.repMax === 5
+      && work.length === 5 && work.every((set) => set.role === 'working'
+        && set.weight > 0 && set.weight === work[0].weight
+        && set.reps >= 1 && set.reps <= 5);
+  }
+
   function planStrength(exercise, previousExercises, current, helpers, goals) {
     const plan = basePlan(exercise, goals);
     const profile = profileFor(exercise, helpers);
@@ -341,6 +352,9 @@
     const minorForm = exercise.sets.some((set) => set.technique === 'minor');
     const lowEffortReserve = work.some((set) => number(set.rir, 0, 10) !== null && number(set.rir, 0, 10) < profile.targetRir);
     const uncertainRoles = work.some((set) => ['auto', 'legacy_default'].includes(set.roleSource) && set.roleConfidence === 'low');
+    const fiveByFive = straightFiveByFive(profile, work) && !failed && !poorForm && !minorForm
+      && !lowEffortReserve && !uncertainRoles && current.sessionContext?.status !== 'recovery_limited';
+    const fiveByFiveComplete = fiveByFive && work.every((set) => set.reps === 5);
     // Safety information remains authoritative even if a supplied engine is old.
     if (poorForm) plan.action = 'REDUCE LOAD';
     else if (failed || minorForm || lowEffortReserve || current.sessionContext?.status === 'recovery_limited') plan.action = 'HOLD';
@@ -349,16 +363,29 @@
       plan.confidence = 'LOW';
     }
 
+    if (fiveByFive) {
+      plan.action = fiveByFiveComplete ? 'ADD LOAD' : 'HOLD';
+      plan.confidence = work.every((set) => number(set.rir, 0, 10) !== null
+        && set.technique === 'good' && set.pain === 'none') ? 'HIGH' : 'MODERATE';
+      plan.evidence.heuristic.push('Explicit straight-set 5×5 convention: complete all 25 reps before increasing load; the exact trigger is not a research-proven optimum.');
+      if (!fiveByFiveComplete) {
+        plan.workingSets = plan.workingSets.map((set) => ({ ...set, reps: 5 }));
+        plan.reason = `Repeat ${work[0].weight} lb for five sets of five. You completed ${work.reduce((total, set) => total + set.reps, 0)} of 25 target reps; a missed rep is not a reason to add weight or erase that set from the next target.`;
+      }
+    }
+
     const topWeight = Math.max(...work.map((set) => set.weight));
     if (plan.action === 'ADD LOAD') {
       const nextWeight = round(topWeight + profile.loadStep);
-      if (topWeight <= 0 || nextWeight > 9999 || profile.loadStep / topWeight > 0.10 || support?.nextLoadPreservesRepMinimum === false) {
+      if (topWeight <= 0 || nextWeight > 9999 || profile.loadStep / topWeight > 0.10 || (!fiveByFiveComplete && support?.nextLoadPreservesRepMinimum === false)) {
         plan.action = 'HOLD';
         plan.reason = 'The available weight jump is too large for a small next step. Repeat this weight or choose a smaller equipment increment.';
       } else {
         plan.workingSets = plan.workingSets.map((set) => set.weight === topWeight
           ? { ...set, weight: nextWeight, reps: Math.min(set.reps, profile.repMin) } : set);
-        plan.reason = `Your recent sets support the next ${profile.loadStep} lb step. Keep the same number of sets and rebuild reps at the new weight.`;
+        plan.reason = fiveByFiveComplete
+          ? `You completed the configured five sets of five. Try one ${profile.loadStep} lb step higher for five sets of five; repeat that load until all 25 reps are completed. This is your 5×5 progression rule, not a guaranteed rate of gain.`
+          : `Your recent sets support the next ${profile.loadStep} lb step. Keep the same number of sets and rebuild reps at the new weight.`;
         plan.evidence.heuristic.push('Raise only the heaviest working-set group by one equipment step; leave back-off work unchanged.');
       }
     }
