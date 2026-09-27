@@ -56,6 +56,7 @@ describe('current workout controls the next exercise roster', () => {
 });
 
 describe('ready-to-follow strength targets', () => {
+  const assigned = (workingSets) => ({source:'app_next_workout',type:'strength',sourceDate:'2026-09-18',workingSets:workingSets.map(([weight,reps])=>({role:'working',weight,reps,restSeconds:180})),preparationSets:[]});
   const fiveByFiveProfile = { mode: 'custom', purpose: 'primary_strength', repMin: 5, repMax: 5, targetRir: 2, loadStep: 2.5 };
   const fiveByFive = (reps) => exercise('Bench Press', reps.map((count) => set(225, count)), { progressionProfile: fiveByFiveProfile });
 
@@ -73,12 +74,81 @@ describe('ready-to-follow strength targets', () => {
     expect(result.reason).toContain('23 of 25');
   });
 
+  it('recognizes improving same-load 5×5 attempts instead of declaring a stall', () => {
+    const result=target(workout('2026-09-20',[fiveByFive([5,5,5,4,4])]),[
+      workout('2026-09-18',[fiveByFive([5,5,5,4,3])]),
+      workout('2026-09-16',[fiveByFive([5,5,5,3,3])]),
+    ]);
+    expect(result.action).toBe('HOLD');
+    expect(result.reason).toContain('up from 22 last time');
+    expect(result.workingSets.every(s=>s.reps===5&&s.weight===225)).toBe(true);
+  });
+
+  it('uses a labelled reset only after three non-improving same-load 5×5 attempts', () => {
+    const repeated=fiveByFive([5,5,5,4,3]);
+    const result=target(workout('2026-09-20',[repeated]),[
+      workout('2026-09-18',[repeated]),workout('2026-09-16',[repeated]),
+    ]);
+    expect(result.action).toBe('REDUCE LOAD');
+    expect(result.workingSets).toHaveLength(5);
+    expect(result.workingSets.every(s=>s.weight===212.5&&s.reps===5)).toBe(true);
+    expect(result.reason).toMatch(/about 5%.*cannot prove why/);
+    expect(result.evidence.heuristic.join(' ')).toMatch(/coaching convention/);
+  });
+
+  it('does not infer a 5×5 stall across an intervening different-load attempt', () => {
+    const repeated=fiveByFive([5,5,5,4,3]);
+    const different=exercise('Bench Press',Array(5).fill(null).map(()=>set(220,5)),{progressionProfile:fiveByFiveProfile});
+    const result=target(workout('2026-09-20',[repeated]),[
+      workout('2026-09-18',[different]),workout('2026-09-16',[repeated]),workout('2026-09-14',[repeated]),
+    ]);
+    expect(result.action).toBe('HOLD');
+    expect(result.workingSets.every(s=>s.weight===225)).toBe(true);
+  });
+
+  it('repairs known short rest before resetting a repeated 5×5 load', () => {
+    const short=fiveByFive([5,5,5,4,3]);
+    short.sets[1].restPlanned=180;short.sets[1].restActual=40;
+    const repeated=fiveByFive([5,5,5,4,3]);
+    const result=target(workout('2026-09-20',[short]),[
+      workout('2026-09-18',[repeated]),workout('2026-09-16',[repeated]),
+    ]);
+    expect(result.action).toBe('INCREASE REST');
+    expect(result.workingSets.every(s=>s.weight===225&&s.reps===5&&s.restSeconds>=180)).toBe(true);
+  });
+
   it('does not treat an effort-limit 5×5 or an unconfigured five-set pattern as earned load progression', () => {
     const hard = fiveByFive([5, 5, 5, 5, 5]);
     hard.sets[4].rir = 0;
     expect(target(workout('2026-09-20', [hard])).action).toBe('HOLD');
     const generic = exercise('Bench Press', Array(5).fill(null).map(() => set(225, 5)));
     expect(target(workout('2026-09-20', [generic])).action).not.toBe('ADD LOAD');
+  });
+
+  it('retains every assigned 5×5 set when a time-limited session logs only three', () => {
+    const ex=fiveByFive([5,5,5]);ex.prescription=assigned(Array(5).fill([225,5]));
+    const result=target(workout('2026-09-20',[ex],{sessionContext:{status:'time_limited'}}));
+    expect(result.action).toBe('HOLD');
+    expect(result.workingSets).toHaveLength(5);
+    expect(result.workingSets.every(s=>s.weight===225&&s.reps===5)).toBe(true);
+    expect(result.reason).toMatch(/omitted sets are not failed/i);
+    expect(result.progressionTrigger).toContain('Complete the assigned sets');
+  });
+
+  it('does not advance weight when the assigned rep-range target was not met', () => {
+    const ex=exercise('Bench',[set(100,12),set(100,11),set(100,9)],{prescription:assigned([[100,12],[100,12],[100,12]])});
+    const result=target(workout('2026-09-20',[ex]),[workout('2026-09-18',[exercise('Bench',[set(100,12),set(100,12),set(100,12)])])]);
+    expect(result.action).toBe('HOLD');
+    expect(result.workingSets.map(s=>s.reps)).toEqual([12,12,12]);
+    expect(result.plannedComparison).toContain('3 of 3');
+  });
+
+  it('does not call a changed load completed against a saved assignment', () => {
+    const ex=exercise('Bench',[set(105,12),set(105,12)],{prescription:assigned([[100,12],[100,12]])});
+    const result=target(workout('2026-09-20',[ex]),[workout('2026-09-18',[exercise('Bench',[set(100,12),set(100,12)])])]);
+    expect(result.action).toBe('HOLD');
+    expect(result.reason).toMatch(/differed from the assigned plan/);
+    expect(result.workingSets.every(s=>s.weight===100)).toBe(true);
   });
 
   it('uses the shared engine and increases load by only the equipment increment', () => {
@@ -274,6 +344,14 @@ describe('bounded cardio and timed-exercise progression', () => {
     expect(result.action).toBe('ADD DISTANCE');
     expect(result.workingSets[0]).toMatchObject({ duration: null, distance: 1.05 });
     expect(result.estimatedMinutes).toBeNull();
+  });
+
+  it('retains an assigned distance-only target when actual distance falls short', () => {
+    const ex=cardio([{duration:600,distance:1}],{prescription:{source:'app_next_workout',type:'cardio',workingSets:[{role:'cardio',distance:1.05}],preparationSets:[]}});
+    const result=target(workout('2026-09-20',[ex]),[workout('2026-09-18',[cardio()])],{goals:{walk:{goalType:'distance',goalValue:3}}});
+    expect(result.action).toBe('HOLD');
+    expect(result.workingSets[0]).toMatchObject({distance:1.05,duration:null});
+    expect(result.progressionTrigger).toContain('prescribed time or distance');
   });
 
   it('holds an incomplete workout, a large recent increase, or an already reached target', () => {

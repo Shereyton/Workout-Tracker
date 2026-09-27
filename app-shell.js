@@ -92,7 +92,7 @@
     exportSection.append(exportOptions);
     plan.append(exportSection,sourceLabel,sourceSelect,planContent);
     plan.append(details('How your plan works',[make('div','coach-method',
-      '<p><strong>More is not always better.</strong> First build repeatable reps with good form; then earn a small weight increase. A repeat or easier day can be the right next step.</p><p>Only this session’s exercises are used. Earlier sessions help compare the same movements. Unknown effort, technique, or set types lower confidence.</p><p>These are conservative starting targets—not a guarantee or a medical assessment. Stop a movement that hurts. Warm-ups are based on what you logged; add gradual, comfortable preparation if needed.</p><p>Guided by the <a href="https://acsm.org/resistance-training-guidelines-update-2026/" target="_blank" rel="noopener">2026 ACSM guidance</a>. Exact step sizes and readiness rules are app heuristics, not a scientifically proven individual optimum.</p>') ]));
+      '<p><strong>More is not always better.</strong> First build repeatable reps with good form; then earn a small weight increase. A repeat or easier day can be the right next step.</p><p>Only this session’s exercises are used. Earlier sessions help compare the same movements. When you follow an in-app plan, the assigned targets are saved separately from your actual sets, so skipped work is not automatically called a failed lift.</p><p>5×5 is an optional strength method, not a universal optimum. Its complete-all-25-then-add-load rule is a <a href="https://support.stronglifts.com/article/71-progression" target="_blank" rel="noopener">program convention</a>; the app’s repeated-stall reset is a heuristic. <a href="https://pubmed.ncbi.nlm.nih.gov/36199287/" target="_blank" rel="noopener">Rep progression</a> can also be useful.</p><p>These are starting targets—not a guarantee or a medical assessment. Stop a movement that hurts. Warm-ups are based on what you logged; add gradual, comfortable preparation if needed. Unknown effort, technique, rest, or recovery lowers confidence.</p><p>Guided by the <a href="https://pubmed.ncbi.nlm.nih.gov/41843416/" target="_blank" rel="noopener">2026 ACSM position stand</a>. Exact step sizes, readiness rules, and personal timelines are not scientifically proven for an individual.</p>') ]));
     const context=details('Tell your coach more',[$('dayTypeSection'),$('goalsSection'),$('constraintsSection')]);
     plan.append(context);
     progress.append(heading('Built over time','Proof of progress.','Your goals, your consistency, and the work behind them.'));
@@ -132,6 +132,8 @@
     async function chooseExercise(name, goal=false) {
       const result=await api.startExercise?.(name);
       if(result===false)return false;
+      const guided=activeGuide?.exercises?.find(ex=>key(ex.name)===key(name));
+      if(guided)api.setActivePrescription?.(guided,activeGuide.sourceDate);
       switchView('train'); scheduleRender();
       if(goal) { if($('exerciseGoalForm').classList.contains('hidden'))$('exerciseGoalToggle').click(); $('exerciseGoalPanel').scrollIntoView({block:'center',behavior:'smooth'}); }
       else $('interface').scrollIntoView({block:'start',behavior:'smooth'});
@@ -187,15 +189,17 @@
         const seconds=Number(ex.restSeconds);
         card.append(make('div','plan-footer',`<span>${Number.isFinite(seconds)&&seconds>0?`Rest ${number(seconds/60)} min`:'Rest until ready'}</span><span>${esc(ex.confidence||'Limited data')} confidence</span>`));
         if(ex.effortCue)card.append(make('p','plan-fineprint',esc(ex.effortCue)));
+        if(ex.progressionTrigger)card.append(make('p','plan-fineprint',`<strong>Earn the next step:</strong> ${esc(ex.progressionTrigger)}`));
+        if(ex.plannedComparison)card.append(make('p','plan-fineprint',esc(ex.plannedComparison)));
         if(ex.needsReview)card.append(make('p','safety-note','Review needed. Do not force a target through pain or an incomplete attempt.'));
         card.append(button(ex.needsReview?'Review exercise':'Train this exercise ↗',async()=>{
           if(hasSets(state.current)&&!state.finishedAt&&!activeGuide){tell('These targets are for your next session. Finish and save today’s workout first.');return;}
-          if(await chooseExercise(ex.name))saveGuide(prescription);
+          if(await chooseExercise(ex.name)){saveGuide(prescription);api.setActivePrescription?.(ex,prescription.sourceDate);}
         }));
         planContent.append(card);
       });
       const copy=button('Copy this full plan',async()=>{
-        const text=prescription.exercises.map(ex=>`${ex.name}\n${ex.actionLabel||''}: ${ex.reason||''}\n${(ex.preparationSets||[]).map((s,i)=>`Warm-up ${i+1}: ${targetText(s,ex.type)}`).join('\n')}\n${(ex.workingSets||[]).map((s,i)=>`Set ${i+1}: ${targetText(s,ex.type)}`).join('\n')}\n${ex.effortCue||''}`).join('\n\n');
+        const text=prescription.exercises.map(ex=>`${ex.name}\n${ex.actionLabel||''}: ${ex.reason||''}\n${(ex.preparationSets||[]).map((s,i)=>`Warm-up ${i+1}: ${targetText(s,ex.type)}`).join('\n')}\n${(ex.workingSets||[]).map((s,i)=>`Set ${i+1}: ${targetText(s,ex.type)}`).join('\n')}\n${ex.effortCue||''}\n${ex.progressionTrigger?`Earn the next step: ${ex.progressionTrigger}`:''}`).join('\n\n');
         try{await root.navigator.clipboard.writeText(text);tell('Full plan copied.');}catch{tell('Clipboard unavailable. Use Export Workout to save your data.');}
       },'shell-button shell-button--secondary');planContent.append(copy);
     }
@@ -203,15 +207,19 @@
       const name=currentName();
       const exercise=activeGuide?.exercises?.find(e=>key(e.name)===key(name));
       if(!exercise){target.hidden=true;return;}
-      const logged=state.activeExercise?.sets||state.currentExercise?.sets||[];
+      const logged=(state.current?.exercises||[]).filter(ex=>key(ex.name)===key(name))
+        .reduce((count,ex)=>count+(ex.sets?.length||0),0);
       const all=[...(exercise.preparationSets||[]),...(exercise.workingSets||[])];
-      const next=all[logged.length];
+      const next=all[logged];
       target.hidden=false;target.replaceChildren();
       target.append(make('span','eyebrow','YOUR SESSION GUIDE'));
-      if(next){target.append(make('h3','',esc(targetText(next,exercise.type))));target.append(make('p','',`${logged.length<(exercise.preparationSets?.length||0)?'Preparation':'Main'} set · ${logged.length+1} of ${all.length}`));
+      if(next){target.append(make('h3','',esc(targetText(next,exercise.type))));target.append(make('p','',`${logged<(exercise.preparationSets?.length||0)?'Preparation':'Main'} set · ${logged+1} of ${all.length}`));
         target.append(button('Use these numbers',()=>{
           const assign=(id,value)=>{if(value===null||value===undefined||!finite(value))return;$(id).value=String(value);$(id).dispatchEvent(new Event('input',{bubbles:true}));};
-          if(exercise.type==='cardio'){assign('distance',next.distance);assign('durationMin',Math.floor(Number(next.duration||0)/60));assign('durationSec',Number(next.duration||0)%60);}
+          if(exercise.type==='cardio'){
+            assign('distance',next.distance);
+            if(finite(next.duration)&&Number(next.duration)>0){assign('durationMin',Math.floor(Number(next.duration)/60));assign('durationSec',Number(next.duration)%60);}
+          }
           else{assign('weight',next.weight);assign('reps',next.reps);}
           if(Number(exercise.restSeconds)>0){$('restSecsInput').value=exercise.restSeconds;$('restSecsInput').dispatchEvent(new Event('change',{bubbles:true}));}
           tell('Target filled in. Log only what you actually complete.');

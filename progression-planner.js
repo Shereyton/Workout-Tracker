@@ -86,6 +86,7 @@
           isCardio: !!parent.isCardio,
           category: parent.category || payload?.dayType || null,
           progressionProfile: parent.progressionProfiles?.[exerciseKey] || parent.progressionProfile,
+          prescription: group ? null : parent.prescription,
           goal: parent.goal || parent.exerciseGoals?.find((goal) => key(goal?.exerciseName) === exerciseKey) || null,
           supersetGroup: group,
           sets: [],
@@ -301,11 +302,46 @@
         && set.reps >= 1 && set.reps <= 5);
   }
 
+  function knownShortRest(exercise) {
+    return exercise.sets.some(set => {
+      const planned = number(set.restPlanned, 1, 900), actual = number(set.restActual, 0, 900);
+      return planned !== null && actual !== null && actual < planned * 0.85;
+    });
+  }
+
+  function priorFiveByFiveTotals(previousExercises, helpers, load) {
+    return previousExercises.slice(0, 2).map(({ exercise, context }) => {
+      if (context?.status && context.status !== 'complete') return null;
+      const priorProfile = profileFor(exercise, helpers);
+      const priorWork = exercise.sets.map(cleanStrength).filter(set => set && WORK_ROLES.has(set.role));
+      if (!straightFiveByFive(priorProfile, priorWork) || priorWork[0].weight !== load
+        || knownShortRest(exercise)
+        || exercise.sets.some(set => set.completed === false || set.outcome === 'failed'
+          || ['stopped', 'discomfort'].includes(set.pain)
+          || ['minor', 'poor'].includes(set.technique))) return null;
+      return priorWork.reduce((total, set) => total + set.reps, 0);
+    }).filter(total => total !== null);
+  }
+
+  function assignedStrengthTargets(exercise, profile) {
+    const saved = exercise.prescription;
+    if (saved?.source !== 'app_next_workout' || saved.type !== 'strength'
+      || !Array.isArray(saved.workingSets) || !saved.workingSets.length || saved.workingSets.length > 40) return null;
+    const targets = saved.workingSets.map((set, index) => {
+      const weight = number(set?.weight, 0, 9999), reps = number(set?.reps, 1, 999);
+      if (weight === null || reps === null || !Number.isInteger(reps)) return null;
+      return { set: index + 1, role: WORK_ROLES.has(set.role) ? set.role : 'working',
+        weight, reps, restSeconds: number(set.restSeconds, 0, 900) ?? restFor(null, profile) };
+    });
+    return targets.every(Boolean) ? targets : null;
+  }
+
   function planStrength(exercise, previousExercises, current, helpers, goals) {
     const plan = basePlan(exercise, goals);
     const profile = profileFor(exercise, helpers);
     const valid = exercise.sets.map(cleanStrength).filter(Boolean);
     const work = valid.filter((set) => WORK_ROLES.has(set.role) && set.pain !== 'stopped' && set.technique !== 'poor');
+    const assigned = assignedStrengthTargets(exercise, profile);
     attachGoalProgress(plan, work);
     plan.preparationSets = valid.filter((set) => PREP_ROLES.has(set.role) && set.technique !== 'poor')
       .map((set, index) => strengthTarget(set, index, profile, true));
@@ -320,6 +356,14 @@
       : 'Start with easy practice reps and build up gradually; warm-up loads were not recorded.';
     if (painBlock(plan, exercise, current.sessionContext)) return finalize(plan);
     if (!work.length) {
+      if (assigned && current.sessionContext?.status === 'time_limited'
+        && !exercise.sets.some((set) => set.completed === false || set.outcome === 'failed')) {
+        plan.action = 'HOLD'; plan.confidence = 'LOW'; plan.workingSets = assigned;
+        plan.reason = 'No planned main sets were reached before time ran out. Repeat the assigned targets; omitted sets are not failed lifts.';
+        plan.progressionTrigger = 'Complete the assigned main sets with controlled technique before increasing demand.';
+        plan.plannedComparison = `0 of ${assigned.length} assigned main sets logged.`;
+        return finalize(plan);
+      }
       plan.action = 'REVIEW DATA';
       plan.confidence = 'INSUFFICIENT';
       plan.needsReview = true;
@@ -355,6 +399,14 @@
     const fiveByFive = straightFiveByFive(profile, work) && !failed && !poorForm && !minorForm
       && !lowEffortReserve && !uncertainRoles && current.sessionContext?.status !== 'recovery_limited';
     const fiveByFiveComplete = fiveByFive && work.every((set) => set.reps === 5);
+    const fiveByFiveShortRest = fiveByFive && knownShortRest(exercise);
+    const priorFiveByFive = fiveByFive ? priorFiveByFiveTotals(previousExercises, helpers, work[0].weight) : [];
+    const currentFiveByFiveReps = fiveByFive ? work.reduce((total, set) => total + set.reps, 0) : null;
+    const stalledFiveByFive = fiveByFive && !fiveByFiveComplete && priorFiveByFive.length >= 2
+      && priorFiveByFive[0] < 25 && priorFiveByFive[1] < 25
+      && !fiveByFiveShortRest && currentFiveByFiveReps <= priorFiveByFive[0] && priorFiveByFive[0] <= priorFiveByFive[1];
+    const assignedMet = assigned && work.length === assigned.length
+      && work.every((set, index) => set.weight === assigned[index].weight && set.reps >= assigned[index].reps);
     // Safety information remains authoritative even if a supplied engine is old.
     if (poorForm) plan.action = 'REDUCE LOAD';
     else if (failed || minorForm || lowEffortReserve || current.sessionContext?.status === 'recovery_limited') plan.action = 'HOLD';
@@ -364,20 +416,41 @@
     }
 
     if (fiveByFive) {
-      plan.action = fiveByFiveComplete ? 'ADD LOAD' : 'HOLD';
+      plan.action = fiveByFiveComplete ? 'ADD LOAD' : fiveByFiveShortRest && support?.decision === 'INCREASE REST' ? 'INCREASE REST' : 'HOLD';
       plan.confidence = work.every((set) => number(set.rir, 0, 10) !== null
         && set.technique === 'good' && set.pain === 'none') ? 'HIGH' : 'MODERATE';
       plan.evidence.heuristic.push('Explicit straight-set 5×5 convention: complete all 25 reps before increasing load; the exact trigger is not a research-proven optimum.');
       if (!fiveByFiveComplete) {
         plan.workingSets = plan.workingSets.map((set) => ({ ...set, reps: 5 }));
-        plan.reason = `Repeat ${work[0].weight} lb for five sets of five. You completed ${work.reduce((total, set) => total + set.reps, 0)} of 25 target reps; a missed rep is not a reason to add weight or erase that set from the next target.`;
+        plan.reason = `Repeat ${work[0].weight} lb for five sets of five. You completed ${currentFiveByFiveReps} of 25 target reps${priorFiveByFive.length&&currentFiveByFiveReps>priorFiveByFive[0]?`, up from ${priorFiveByFive[0]} last time`:''}; a missed rep is not a reason to add weight or erase that set from the next target.`;
+        if (priorFiveByFive.length) plan.evidence.observed.push(`Same-load 5×5 reps: ${priorFiveByFive.slice(0,2).reverse().join('→')}→${currentFiveByFiveReps}/25`);
       }
+    }
+    if (assigned && !assignedMet && !['REDUCE LOAD', 'STOP AND SEEK APPROPRIATE GUIDANCE'].includes(plan.action)) {
+      const matched = Math.min(work.length, assigned.length);
+      const missing = Math.max(0, assigned.length - work.length);
+      plan.plannedComparison = `${work.length} of ${assigned.length} assigned main sets logged${missing ? `; ${missing} omitted` : ''}.`;
+      if (plan.action !== 'INCREASE REST') plan.action = 'HOLD';
+      plan.confidence = 'LOW';
+      plan.workingSets = assigned.map((set) => ({ ...set }));
+      plan.reason = current.sessionContext?.status === 'time_limited' && missing
+        ? 'Time ended before the assigned work was complete. Keep the full target next time; omitted sets are not failed attempts.'
+        : work.slice(0, matched).some((set, index) => set.weight !== assigned[index].weight)
+          ? 'The logged loads differed from the assigned plan. Repeat or deliberately adjust the target before asking for more weight; the app cannot call an altered plan completed.'
+          : `The assigned target was not fully met. Repeat the planned load and reps; a missed rep is not a reason to add weight or extra sets.`;
+      plan.evidence.heuristic.push('Assigned targets are compared with actual logged work; missing sets are not presumed failed.');
+    }
+    if (stalledFiveByFive) {
+      plan.action = 'REDUCE LOAD';
+      plan.confidence = 'MODERATE';
+      plan.evidence.heuristic.push('Three same-load 5×5 attempts without a rep gain trigger a roughly 5% reset rounded to the saved load step; this is a coaching convention, not a proven cutoff.');
     }
 
     const topWeight = Math.max(...work.map((set) => set.weight));
     if (plan.action === 'ADD LOAD') {
       const nextWeight = round(topWeight + profile.loadStep);
-      if (topWeight <= 0 || nextWeight > 9999 || profile.loadStep / topWeight > 0.10 || (!fiveByFiveComplete && support?.nextLoadPreservesRepMinimum === false)) {
+      if (topWeight <= 0 || nextWeight > 9999 || profile.loadStep / topWeight > 0.10
+        || (!fiveByFiveComplete && profile.loadStep / topWeight > 0.05 && support?.nextLoadPreservesRepMinimum === false)) {
         plan.action = 'HOLD';
         plan.reason = 'The available weight jump is too large for a small next step. Repeat this weight or choose a smaller equipment increment.';
       } else {
@@ -399,7 +472,17 @@
       } else plan.action = 'HOLD';
     }
     if (plan.action === 'REDUCE LOAD') {
-      if (work.every((set) => set.weight >= profile.loadStep && set.weight > 0)) {
+      if (stalledFiveByFive) {
+        const steps = Math.max(1, Math.round(topWeight * 0.05 / profile.loadStep));
+        const nextWeight = round(topWeight - steps * profile.loadStep);
+        if (profile.loadStep / topWeight <= 0.1 && nextWeight > 0) {
+          plan.workingSets = plan.workingSets.map((set) => ({ ...set, weight: nextWeight, reps: 5 }));
+          plan.reason = `Three same-load 5×5 attempts did not gain reps. Reset from ${topWeight} to ${nextWeight} lb (about 5%, rounded to your saved load step) for five sets of five, then rebuild in small steps. Check rest and recovery; the log cannot prove why progress stalled.`;
+        } else {
+          plan.action = 'HOLD'; plan.needsReview = true;
+          plan.reason = 'The saved load step cannot make a safe 5×5 reset. Review the available weights and recent recovery before retrying.';
+        }
+      } else if (work.every((set) => set.weight >= profile.loadStep && set.weight > 0)) {
         plan.workingSets = plan.workingSets.map((set) => ({ ...set, weight: round(set.weight - profile.loadStep) }));
         plan.reason = `Form broke down. Use one ${profile.loadStep} lb step less and repeat only your successful reps with control.`;
       } else {
@@ -410,7 +493,7 @@
     }
     if (plan.action === 'INCREASE REST') {
       plan.workingSets = plan.workingSets.map((set) => ({ ...set, restSeconds: Math.min(300, Math.max(set.restSeconds, 180)) }));
-      plan.reason = 'Your reps fell while rest was short. Keep the same targets and take the full rest between sets.';
+      plan.reason = 'Your reps fell while timer-observed rest was short. Keep the same targets and take the full rest between sets.';
     }
     if (plan.action === 'TEST BASELINE') {
       plan.reason = 'Repeat these successful sets to establish a reliable starting point. A steady baseline makes the next increase more useful.';
@@ -424,12 +507,31 @@
       else if ((support?.repDropPercent || 0) >= 20) plan.reason = 'Your reps dropped across repeated sets. Keep the weight steady and take the full rest before trying to progress.';
       else plan.reason = 'Repeat these targets once more. Consistent clean sets will provide better evidence for the next increase.';
     }
+    if (!plan.needsReview) {
+      plan.progressionTrigger = fiveByFive
+        ? 'Complete all five sets of five at the prescribed load without reported pain or form breakdown; use the smallest saved load step when effort permits.'
+        : assigned && !assignedMet
+          ? 'Complete the assigned sets at the planned loads and reps with acceptable technique before adding demand.'
+          : /strength|power/.test(profile.purpose || '')
+            ? 'Complete the prescribed work with controlled technique and tolerable effort; compare it with recent sessions before the next load increase.'
+            : `Build clean reps through the saved ${profile.repMin}–${profile.repMax} range; increase load only when the upper target is repeatable.`;
+    }
     return finalize(plan);
   }
 
   function planCardio(exercise, previousExercises, current, goals) {
     const plan = basePlan(exercise, goals);
     const sets = exercise.sets.map(cleanCardio).filter(Boolean);
+    const saved = exercise.prescription;
+    const assigned = saved?.source === 'app_next_workout' && saved.type === 'cardio'
+      && Array.isArray(saved.workingSets) && saved.workingSets.length <= 40
+      ? saved.workingSets.map((set, index) => {
+        const duration = number(set?.duration, 1, 604800), distance = number(set?.distance, 0.001, 100000);
+        if ((duration === null || !Number.isInteger(duration)) && distance === null) return null;
+        return { set:index+1,role:'cardio',duration,distance,
+          restSeconds:Math.round(number(set.restSeconds,0,900)??0) };
+      }) : null;
+    const assignedTargets = assigned?.length && assigned.every(Boolean) ? assigned : null;
     attachGoalProgress(plan, sets);
     plan.workingSets = sets.map((set, index) => ({
       set: index + 1, role: 'cardio', duration: set.duration, distance: set.distance,
@@ -494,6 +596,19 @@
     if (plan.action === 'HOLD' && !limited && !adverse) {
       plan.reason = 'Repeat your current time and distance at a comfortable effort. Keep building consistency before the next increase.';
     }
+    if (assignedTargets && (sets.length !== assignedTargets.length || sets.some((set,index) => {
+      const target = assignedTargets[index];
+      return !target || target.duration !== null && set.duration < target.duration
+        || target.distance !== null && (set.distance === null || set.distance < target.distance);
+    }))) {
+      plan.action = 'HOLD'; plan.confidence = 'LOW';
+      plan.workingSets = assignedTargets.map(set => ({ ...set }));
+      plan.plannedComparison = `${sets.length} of ${assignedTargets.length} assigned cardio entries logged.`;
+      plan.reason = current.sessionContext?.status === 'time_limited' && sets.length < assignedTargets.length
+        ? 'Time ran out before the assigned cardio target was complete. Keep the full target next time; omitted entries are not failures.'
+        : 'The assigned cardio duration or distance was not fully logged. Repeat that target at a comfortable effort before increasing it.';
+    }
+    plan.progressionTrigger = 'Complete the prescribed time or distance at a comfortable, repeatable effort before another small increase.';
     return finalize(plan);
   }
 

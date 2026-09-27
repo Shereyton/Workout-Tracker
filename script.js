@@ -873,6 +873,37 @@ function formatSetContext(set, { includeRole = true } = {}) {
   return parts.join(' • ');
 }
 
+// A selected in-app plan is a target, not evidence that a set was completed.
+// Keep a bounded snapshot with the exercise so later analysis can compare
+// intended work with the separately logged results.
+function normalizeExercisePrescription(value) {
+  if (!value || value.source !== 'app_next_workout' || !['strength', 'cardio'].includes(value.type)) return null;
+  const normalizeTargets = (items) => (Array.isArray(items) ? items.slice(0, 40) : []).map((item) => {
+    if (!item || typeof item !== 'object') return null;
+    const rest = Number(item.restSeconds);
+    const target = { role: ['warmup', 'ramp', 'technique', 'working', 'top_set', 'back_off', 'cardio'].includes(item.role) ? item.role : 'working' };
+    if (item.restSeconds !== null && item.restSeconds !== undefined && Number.isFinite(rest) && rest >= 0 && rest <= 900) target.restSeconds = rest;
+    if (value.type === 'cardio') {
+      const duration = Number(item.duration), distance = Number(item.distance);
+      if (item.duration !== null && item.duration !== undefined && Number.isInteger(duration) && duration >= 1 && duration <= 604800) target.duration = duration;
+      if (item.distance !== null && item.distance !== undefined && Number.isFinite(distance) && distance > 0 && distance <= 100000) target.distance = distance;
+      if (!target.duration && !target.distance) return null;
+    } else {
+      const weight = Number(item.weight), reps = Number(item.reps);
+      if (!Number.isFinite(weight) || weight < 0 || weight > 9999 || !Number.isInteger(reps) || reps < 1 || reps > 999) return null;
+      target.weight = weight; target.reps = reps;
+    }
+    return target;
+  }).filter(Boolean);
+  const workingSets = normalizeTargets(value.workingSets);
+  if (!workingSets.length) return null;
+  return {
+    source: 'app_next_workout', type: value.type,
+    sourceDate: trimString(value.sourceDate, 40),
+    preparationSets: normalizeTargets(value.preparationSets), workingSets,
+  };
+}
+
 function normalizeExercise(e) {
   const source = e && typeof e === 'object' ? e : {};
   const isSuperset = !!source.isSuperset;
@@ -900,6 +931,8 @@ function normalizeExercise(e) {
     sets,
     nextSet: sets.length + 1,
   };
+  const prescription = normalizeExercisePrescription(source.prescription);
+  if (prescription && prescription.type === (isCardio ? 'cardio' : 'strength')) base.prescription = prescription;
   base.progressionProfile = normalizeExerciseProfile(
     source.progressionProfile || source.profile,
   );
@@ -1807,8 +1840,9 @@ function buildStrengthDecisionSupport(
     && previousMedianRir >= profile.targetRir
     && nextLoadFeasibility
     && !nextLoadFeasibility.preservesRepMinimum
+    && loadIncreasePercent > 5
   ) {
-    reason = `two comparable sessions reached the top of the saved range, but the saved ${formatGoalNumber(step)} lb jump predicts only about ${formatGoalNumber(nextLoadFeasibility.predictedMinimumReps)} reps at the saved ${formatGoalNumber(profile.targetRir)} RIR target—below the ${profile.repMin}-rep minimum. Hold the load or change the rep range; do not add sets at the same time.`;
+    reason = `two comparable sessions reached the top of the saved range, but the saved ${formatGoalNumber(step)} lb jump is relatively large and a rough formula estimates fewer than ${profile.repMin} reps. Hold the load or choose a smaller available increment; this estimate is uncertain, not a measured limit.`;
   } else if (
     hasComparablePrevious
     &&
@@ -1822,14 +1856,12 @@ function buildStrengthDecisionSupport(
     && previousMedianRir >= profile.targetRir
   ) {
     decision = 'ADD LOAD';
-    const feasibilityText = nextLoadFeasibility
-      ? ` The formula ensemble estimates at least about ${formatGoalNumber(nextLoadFeasibility.predictedMinimumReps)} reps at ${formatGoalNumber(profile.targetRir)} RIR after rounding; this is a conservative feasibility check, not a guarantee.`
-      : ` Load feasibility could not be modeled reliably, so the completed-set evidence—not the estimate—remains the basis for this change.`;
-    reason = `two comparable sessions reached the top of the saved ${profile.repMin}–${profile.repMax} range at or above the saved ${formatGoalNumber(profile.targetRir)} RIR target with good technique. Add only the saved ${formatGoalNumber(step)} lb increment, return toward the lower end of the range, and do not add sets at the same time.${feasibilityText}`;
+    reason = `two comparable sessions reached the top of the saved ${profile.repMin}–${profile.repMax} range at or above the saved ${formatGoalNumber(profile.targetRir)} RIR target with good technique. Add only the saved ${formatGoalNumber(step)} lb increment, return toward the lower end of the range, and do not add sets at the same time. The logged outcomes—not an estimated 1RM—justify this attempt.`;
   } else if (
     outcomeBasedProgressionReady
     && nextLoadFeasibility
     && !nextLoadFeasibility.preservesRepMinimum
+    && loadIncreasePercent > 5
   ) {
     reason = `three comparable successful workouts reached the top of the automatic ${profile.repMin}–${profile.repMax} range, but the saved ${formatGoalNumber(step)} lb jump predicts fewer than ${profile.repMin} reps. Hold this weight and keep building clean reps; the equipment jump is too large for the current range.`;
   } else if (
@@ -2077,6 +2109,7 @@ function mergeWorkoutExercises(exercises) {
         return;
       }
       existing.progressionProfile = normalized.progressionProfile;
+      if (normalized.prescription) existing.prescription = normalized.prescription;
       if (normalized.progressionProfiles) {
         existing.progressionProfiles = {
           ...(existing.progressionProfiles || {}),
@@ -4764,6 +4797,28 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     });
   }
 
+  document.getElementById('fiveByFivePreset')?.addEventListener('click', () => {
+    if (!currentExercise || currentExercise.isCardio || currentExercise.isSuperset) {
+      showToast('Choose a strength exercise first.'); return;
+    }
+    const key = exerciseGoalKey(currentExercise.name);
+    const current = normalizeExerciseProfile(exerciseProfiles[key] || currentExercise.progressionProfile);
+    const profile = normalizeExerciseProfile({
+      mode: 'custom', purpose: 'primary_strength', repMin: 5, repMax: 5,
+      targetRir: 2, loadStep: current.loadStep,
+    });
+    exerciseProfiles[key] = profile;
+    currentExercise.progressionProfile = profile;
+    exerciseCoachingModeInput.value = 'custom';
+    customProfileFields.classList.remove('hidden');
+    exercisePurposeInput.value = profile.purpose;
+    exerciseRepMinInput.value = '5'; exerciseRepMaxInput.value = '5';
+    exerciseTargetRirInput.value = '2'; exerciseLoadStepInput.value = String(profile.loadStep);
+    wtStorage.set(WT_KEYS.exerciseProfiles, exerciseProfiles);
+    saveState(); renderAccuracyDetails();
+    showToast(`5×5 selected for ${currentExercise.name}. Log five working sets; adjust the weight step if needed.`);
+  });
+
   /* ------------------ SELECT EXERCISE ------------------ */
   exerciseSelect.addEventListener("change", (e) => {
     const chosen = e.target.value;
@@ -5609,6 +5664,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     );
     if (existing) {
       existing.progressionProfile = normalizeExerciseProfile(ex.progressionProfile);
+      if (ex.prescription) existing.prescription = normalizeExercisePrescription(ex.prescription);
       if (ex.progressionProfiles) {
         existing.progressionProfiles = {
           ...(existing.progressionProfiles || {}),
@@ -5629,6 +5685,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           ? deepClone(ex.progressionProfiles)
           : undefined,
         progressionProfile: normalizeExerciseProfile(ex.progressionProfile),
+        prescription: normalizeExercisePrescription(ex.prescription),
         sets: ex.sets.map((s) => normalizeSet({ ...s })),
       });
     }
@@ -6219,8 +6276,22 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     });
   }
 
+  function setActivePrescription(exercisePlan, sourceDate) {
+    if (!currentExercise || !exercisePlan
+      || exerciseGoalKey(currentExercise.name) !== exerciseGoalKey(exercisePlan.name)
+      || currentExercise.isSuperset) return false;
+    const prescription = normalizeExercisePrescription({
+      source: 'app_next_workout', type: exercisePlan.type,
+      sourceDate, preparationSets: exercisePlan.preparationSets,
+      workingSets: exercisePlan.workingSets,
+    });
+    if (!prescription || prescription.type !== (currentExercise.isCardio ? 'cardio' : 'strength')) return false;
+    currentExercise.prescription = prescription;
+    return saveState();
+  }
+
   window.workoutTracker = Object.freeze({
-    getState: getAppState,
+    getState: getAppState, setActivePrescription,
     startExercise,
     startNewWorkout,
     helpers: Object.freeze({

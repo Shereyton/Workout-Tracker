@@ -40,6 +40,26 @@ describe('iPhone product shell integration', () => {
     expect(window.workoutTracker.getState().current.exercises[0].sets[0].weight).toBe(135);
     expect(window.workoutTracker.getState().history).toHaveLength(1);
   });
+  it('activates and persists the chosen plan for the next exercise session',async()=>{
+    document.getElementById('customExercise').value='Bench Press';
+    document.getElementById('addExercise').click();
+    for(const [id,value] of [['weight','135'],['reps','8']]){
+      document.getElementById(id).value=value;
+      document.getElementById(id).dispatchEvent(new Event('input',{bubbles:true}));
+    }
+    document.getElementById('useTimer').checked=false;
+    document.getElementById('logBtn').click();await flush();
+    document.getElementById('finishBtn').click();
+    [...document.querySelectorAll('[role="dialog"] button')].find(b=>b.textContent==='Save Workout').click();await flush();
+    document.querySelector('.plan-card button').click();await flush();
+    const next=[...document.querySelectorAll('[role="dialog"] button')].find(b=>b.textContent==='Start New');
+    expect(next).toBeTruthy();next.click();await flush();await flush();
+    expect(sessionStorage.getItem('wt_guidedPlan')).not.toBeNull();
+    expect(window.workoutTracker.getState().activeExercise.prescription).toMatchObject({
+      source:'app_next_workout',type:'strength',workingSets:[{weight:135,reps:8}],
+    });
+    expect(document.getElementById('liveTarget').textContent).toContain('135 lb × 8');
+  });
   it('labels the notes export honestly and keeps unknown goals blank',()=>{
     expect(document.querySelector('.data-fineprint').textContent).toContain('calendar notes only');
     expect(document.getElementById('progressContent').textContent).toContain('Give your training a direction');

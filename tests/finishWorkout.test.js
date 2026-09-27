@@ -59,6 +59,28 @@ describe('finish workout persistence', () => {
     expect(JSON.parse(localStorage.getItem('wt_session')).finishedAt).toBeTruthy();
   });
 
+  it('keeps an activated next-workout target separate from the actual saved set', async () => {
+    const plan={name:'Bench Press',type:'strength',preparationSets:[],workingSets:[
+      {role:'working',weight:135,reps:8,restSeconds:180},
+      {role:'working',weight:135,reps:8,restSeconds:180},
+    ]};
+    expect(window.workoutTracker.setActivePrescription(plan,'2026-08-10')).toBe(true);
+    expect(JSON.parse(localStorage.getItem('wt_currentExercise')).prescription.workingSets).toHaveLength(2);
+    await finish();
+    const completed=Object.values(JSON.parse(localStorage.getItem('wt_completedWorkouts')))
+      .find(record=>record.exercises?.some(ex=>ex?.name==='Bench Press'&&ex.prescription));
+    expect(completed.exercises[0].sets[0]).toMatchObject({weight:135,reps:8});
+    expect(completed.exercises[0].prescription).toMatchObject({source:'app_next_workout',workingSets:[{weight:135,reps:8},{weight:135,reps:8}]});
+  });
+
+  it('offers an explicit 5×5 preset without silently changing other exercises', () => {
+    document.getElementById('fiveByFivePreset').click();
+    const current=JSON.parse(localStorage.getItem('wt_currentExercise'));
+    expect(current.progressionProfile).toMatchObject({mode:'custom',purpose:'primary_strength',repMin:5,repMax:5,targetRir:2});
+    expect(document.getElementById('exerciseRepMin').value).toBe('5');
+    expect(document.getElementById('exerciseRepMax').value).toBe('5');
+  });
+
   it('does not clear active data when saving fails', async () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
     jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });

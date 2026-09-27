@@ -155,7 +155,7 @@ describe('one-variable progression decisions', () => {
     expect(decision.decision).toBe('HOLD');
     expect(decision.nextLoad).toBe(120);
     expect(decision.nextLoadPreservesRepMinimum).toBe(false);
-    expect(decision.text).toMatch(/below the 8-rep minimum/);
+    expect(decision.text).toMatch(/smaller available increment/);
   });
 
   it('requires the saved RIR target before adding load', () => {
