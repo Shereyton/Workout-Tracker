@@ -980,6 +980,7 @@ function normalizePayload(payload) {
     normalized.workoutNotes = payload.workoutNotes
       .filter(note => typeof note === 'string').map(note => note.slice(0, 2000)).slice(0, 100);
   }
+  if (['session', 'calendar_day'].includes(payload.workoutNotesScope)) normalized.workoutNotesScope = payload.workoutNotesScope;
   const goals = sanitizeGoals(payload.goals);
   if (goals.length) normalized.goals = goals.map((g) => g.text);
   const constraints = sanitizeConstraints(payload.constraints);
@@ -2880,7 +2881,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const toggleSessionPrefBtn = document.getElementById('toggleSessionPrefBtn');
   function updateSessionPrefButton() {
     const on = !!wtStorage.get(WT_KEYS.prefSessionTime, false);
-    toggleSessionPrefBtn.textContent = `Auto-include session time in export: ${on ? 'ON' : 'OFF'}`;
+    toggleSessionPrefBtn.textContent = `Include session timing in AI export: ${on ? 'ON' : 'OFF'}`;
   }
   if (toggleSessionPrefBtn) {
     updateSessionPrefButton();
@@ -3246,23 +3247,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function updateExportHint() {
     if (!exportHint) return;
-    const day = dayType ? `Day: ${dayType}` : 'Day: —';
-    let win = 'Compare: —';
-    if (dayCompare === 'none') win = 'Compare: None';
-    else if (dayCompare === '3') win = 'Compare: Last 3';
-    else if (dayCompare === '7') win = 'Compare: Last 7';
-    else if (dayCompare === 'all') win = 'Compare: All';
-    const goalCount = goals.filter((g) => g.active).length
-      + Object.keys(exerciseGoals).length;
-    const goalText = goalCount ? `Goals: ${goalCount}` : 'Goals: None';
-    const progText = progressionGuard ? 'Progression Guard: ON' : 'Progression Guard: OFF';
-    const statusText = sessionStatus === 'complete'
-      ? 'Session: Complete'
-      : `Session: ${SESSION_STATUS_OPTIONS[sessionStatus]}`;
-    const timeText = nextWorkoutMinutes == null
-      ? 'Next time: —'
-      : `Next time: ${nextWorkoutMinutes}m`;
-    exportHint.textContent = `${day} • ${win} • ${goalText} • ${progText} • ${statusText} • ${timeText}`;
+    exportHint.textContent = 'The current workout selects the exercises. Matching history helps the AI choose the next weights, reps, sets, and rest.';
   }
   updateExportHint();
 
@@ -5809,6 +5794,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       sessionContext: saved?.sessionContext || buildSessionPlanningContext(sessionStatus, nextWorkoutMinutes),
       session: saved?.session || buildSessionTiming({ ...session, finishedAt: finishAt }, exercises),
       workoutNotes: saved?.workoutNotes,
+      workoutNotesScope: saved?.workoutNotesScope,
     });
     // A saved goal snapshot belongs to that workout, even after the user's goal changes.
     if (saved) {
@@ -6031,594 +6017,159 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     updateSetsToday();
   });
 
-  /* ------------------ EXPORT (JSON + AI + CSV) ------------------ */
-  exportBtn.addEventListener("click", async () => {
-    let exportExercises = buildExportExercises();
-    let exportRecord;
-    if (exportExercises.length) {
-      exportRecord = buildActiveWorkoutRecord();
-      wtStorage.setMany([[WT_KEYS.last, exportRecord.exercises], [WT_KEYS.lastMeta, exportRecord]]);
-      saveSessionLinesToHistory(exportRecord.date);
+  /* ------------------ AI PROGRAMMING EXPORT ------------------ */
+  const exportControls = document.createElement('div');
+  exportControls.className = 'ai-export-controls';
+  const historyLabel = document.createElement('label');
+  historyLabel.htmlFor = 'aiExportHistory';
+  historyLabel.textContent = 'Recent comparisons per exercise';
+  const historySelect = document.createElement('select');
+  historySelect.id = 'aiExportHistory';
+  historySelect.className = 'field';
+  for (const [value, label] of [['3', 'Last 3 matching sessions (recommended)'], ['7', 'Last 7 matching sessions'], ['0', 'Current workout only']]) {
+    const option = document.createElement('option');
+    option.value = value; option.textContent = label; historySelect.appendChild(option);
+  }
+  const historyPreferenceKey = 'wt_pref_aiExportHistory';
+  const storedHistoryLimit = wtStorage.get(historyPreferenceKey, 3);
+  historySelect.value = ['0', '3', '7'].includes(String(storedHistoryLimit)) ? String(storedHistoryLimit) : '3';
+  historySelect.addEventListener('change', () => wtStorage.set(historyPreferenceKey, Number(historySelect.value)));
+  exportControls.append(historyLabel, historySelect);
+  exportBtn.before(exportControls);
+  exportBtn.textContent = 'Copy workout for AI';
+  const exportInstructions = document.createElement('p');
+  exportInstructions.className = 'ai-export-help';
+  exportInstructions.textContent = 'Copy your results, goals, notes, and matching history into ChatGPT. The AI receives facts and a request for your complete next workout.';
+  exportBtn.before(exportInstructions);
+
+  const exportPreview = document.createElement('section');
+  exportPreview.id = 'aiExportPreview';
+  exportPreview.hidden = true;
+  exportPreview.setAttribute('aria-label', 'AI workout export');
+  const exportStatus = document.createElement('p');
+  exportStatus.id = 'aiExportStatus';
+  exportStatus.setAttribute('role', 'status');
+  const exportTextLabel = document.createElement('label');
+  exportTextLabel.htmlFor = 'aiExportText';
+  exportTextLabel.textContent = 'Your AI coaching brief';
+  const exportText = document.createElement('textarea');
+  exportText.id = 'aiExportText'; exportText.readOnly = true; exportText.spellcheck = false;
+  exportText.rows = 9;
+  const previewActions = document.createElement('div');
+  previewActions.className = 'ai-export-actions';
+  const downloadOptions = document.createElement('details');
+  const downloadHeading = document.createElement('summary');
+  downloadHeading.textContent = 'Download options';
+  downloadOptions.appendChild(downloadHeading);
+  exportPreview.append(exportStatus, exportTextLabel, exportText, previewActions, downloadOptions);
+  exportBtn.after(exportPreview);
+  let latestExport = null;
+  let exportSequence = 0;
+
+  function exportAction(label, handler, parent = previewActions) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'btn btn-secondary'; button.textContent = label;
+    button.addEventListener('click', handler); parent.appendChild(button); return button;
+  }
+  async function copyAIExport() {
+    const sequence = exportSequence;
+    const text = exportText.value;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(text);
+      if (sequence === exportSequence) exportStatus.textContent = 'Copied. Paste this into ChatGPT or your AI coach.';
+      showToast('Workout brief copied for your AI.');
+    } catch {
+      if (sequence !== exportSequence) return;
+      exportStatus.textContent = 'Select the brief below and use Copy on your phone.';
+      exportText.focus(); exportText.select(); exportText.setSelectionRange(0, text.length);
+    }
+  }
+  exportAction('Copy again', copyAIExport);
+  exportAction('Select all text', () => { exportText.focus(); exportText.select(); exportText.setSelectionRange(0, exportText.value.length); });
+  exportAction('Download AI brief (.txt)', () => {
+    if (latestExport) triggerDownload(new Blob([latestExport.text], { type: 'text/plain;charset=utf-8' }), `workout_${latestExport.payload.date}_ai.txt`);
+  }, downloadOptions);
+  exportAction('Download workout data (.json)', () => {
+    if (latestExport) triggerDownload(new Blob([JSON.stringify(latestExport.payload, null, 2)], { type: 'application/json' }), `workout_${latestExport.payload.date}.json`);
+  }, downloadOptions);
+  exportAction('Download set log (.csv)', () => {
+    if (!latestExport) return;
+    const columns = ['Date', 'Exercise', 'Type', 'Set', 'Superset', 'Round', 'Weight(lb)', 'Reps', 'Distance(mi)', 'Duration(sec)', 'Completed', 'SetRole', 'RoleSource', 'RoleConfidence', 'RIR', 'Technique', 'Pain', 'RestPlanned(sec)', 'RestTimerObserved(sec)'];
+    const lines = [csvRow(columns)];
+    latestExport.packet.movements.forEach(m => m.sets.forEach((s, i) => lines.push(csvRow([
+      latestExport.payload.date, m.name, m.type, i + 1, s.group || '', s.round ?? '',
+      s.weightLb ?? '', s.reps ?? '', s.distanceMiles ?? '', s.durationSeconds ?? '',
+      s.completed ?? '', s.role || '', s.roleSource || '', s.roleConfidence || '',
+      s.rir ?? '', s.technique || '', s.pain || '', s.restPlannedSeconds ?? '', s.restTimerSeconds ?? '',
+    ]))));
+    triggerDownload(new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }), `workout_${latestExport.payload.date}.csv`);
+  }, downloadOptions);
+
+  function exportNotesForRecord(record) {
+    if (Array.isArray(record.workoutNotes)) return { notes: record.workoutNotes, scope: record.workoutNotesScope || 'session' };
+    const history = wtStorage.get(WT_KEYS.history, {});
+    const dayLines = Array.isArray(history?.[record.date]) ? history[record.date] : [];
+    // Remove exact generated calendar set rows only. Preserve appended safety/context notes.
+    const generatedRow = /^.+:\s*Set\s+\d+\s*[-–]\s*(?:\d+(?:\.\d+)? lbs\s*[×x]\s*\d+ reps?|Failed attempt at \d+(?:\.\d+)? lbs|(?:\d+(?:\.\d+)? mi in )?(?:\d+h\s*)?(?:\d+m\s*)?(?:\d+s))\s*$/i;
+    return { notes: dayLines.filter(line => typeof line === 'string' && !generatedRow.test(line)), scope: 'calendar_day' };
+  }
+
+  exportBtn.addEventListener('click', async () => {
+    if (!window.WorkoutAIExport?.build) { showToast('Export could not load. Refresh the app and try again.'); return; }
+    let record;
+    let recordState;
+    if (buildExportExercises().length) {
+      record = buildActiveWorkoutRecord();
+      recordState = session.finishedAt ? 'finished_saved' : 'active_not_finished';
     } else {
       const last = wtStorage.get(WT_KEYS.last, null);
-      if (last && last.length) {
-        const lastMeta = wtStorage.get(WT_KEYS.lastMeta, {});
-        const exportDate = parseYMD(lastMeta?.date)
-          ? lastMeta.date
-          : getLocalDateString();
-        const reExport = await confirmModal(
-          `There is no active workout. Re-export the saved workout from ${formatShortDate(exportDate)}?`,
-          {
-            yesText: 'Re-export',
-            noText: 'Cancel',
-            title: 'Re-export Saved Workout',
-          },
-        );
-        if (!reExport) return;
-        exportExercises = last;
-        exportRecord = normalizePayload({ ...lastMeta, date: exportDate, exercises: last });
-      } else {
-        showToast("No workout data yet.");
-        return;
-      }
+      const lastMeta = wtStorage.get(WT_KEYS.lastMeta, {});
+      if (!Array.isArray(last) || !last.length) { showToast('Log a workout before exporting.'); return; }
+      if (!await confirmModal(`There is no current workout. Copy the saved workout from ${formatShortDate(lastMeta.date || getLocalDateString())}?`, { title: 'Export Saved Workout', yesText: 'Copy saved', noText: 'Cancel' })) return;
+      record = normalizePayload({ ...lastMeta, exercises: last });
+      recordState = wtStorage.get(WT_KEYS.completed, {})?.[record.workoutId] ? 'finished_saved' : 'saved_export_finish_unknown';
     }
-    
-    // Ask whether to include notes first, then ask for session time
-    confirmModal("Include workout notes in export?", {
-      yesText: "Yes",
-      noText: "No",
-      title: "Export Options",
-    }).then((includeNotes) => {
-      // Honor preference: if ON include without asking; if OFF exclude without asking
-      const alwaysSession = !!wtStorage.get(WT_KEYS.prefSessionTime, false);
-      performExport(exportExercises, includeNotes, alwaysSession, exportRecord.date, exportRecord);
-    });
-  });
-  
-  function performExport(
-    exportExercises,
-    includeNotes,
-    includeSessionTime,
-    currentDate = getLocalDateString(),
-    capturedRecord = null,
-  ) {
-    const includeExerciseGoalProgress = !!wtStorage.get(
-      WT_KEYS.prefExerciseGoalProgress,
-      false,
-    );
-    const normalized = normalizePayload(capturedRecord || buildActiveWorkoutRecord());
-    const goalsForExport = normalized.goals || [];
-    const constraintsForExport = sanitizeConstraints(normalized.constraints);
-
-    const performedGoalSnapshots = [];
-    normalized.exercises.forEach((exercise) => {
-      if (exercise.goal) performedGoalSnapshots.push(exercise.goal);
-      (exercise.exerciseGoals || []).forEach((goal) => performedGoalSnapshots.push(goal));
-    });
-    const payload = {
-      ...normalized,
-      exercises: prepareExerciseGoalsForExport(
-        normalized.exercises,
-        includeExerciseGoalProgress,
-      ),
-      sessionContext: normalized.sessionContext || buildSessionPlanningContext('complete', null),
-    };
-
-    let workoutNotes = [];
-    if (includeNotes) {
-      const history = wtStorage.get(WT_KEYS.history, {});
-      workoutNotes = normalized.workoutNotes || (Array.isArray(history[currentDate]) ? history[currentDate] : []);
-      const logLineRe = /^.+:\s*Set\s*\d+\s*[-–]\s*(?:Failed attempt at\b|.*(?:lbs\s*[×xX]|mi\s+in\b|\d+(?:\.\d+)?\s*[hms]\b))/i;
-      workoutNotes = workoutNotes.filter((line) =>
-        !logLineRe.test(String(line).trim()),
-      );
-      if (workoutNotes.length) {
-        payload.workoutNotes = workoutNotes;
-      }
-    }
-
-    const sessionMeta = includeSessionTime ? normalized.session || buildSessionTiming({}, payload.exercises) : null;
-    if (sessionMeta) payload.session = sessionMeta;
-    else delete payload.session;
-    if (!includeNotes) delete payload.workoutNotes;
-
-    // Load calendar titles to match day type
-    let titlesByDate = {};
     try {
-      const rawTitles = localStorage.getItem('wt_history_titles');
-      titlesByDate = rawTitles ? JSON.parse(rawTitles) : {};
-    } catch {}
-
-    let previousSessions = previousWorkoutRecords(
-      getWorkoutRecords(wtStorage.get(WT_KEYS.completed, {}), archivedSessions), payload,
-    );
-
-    // If a day type is selected, filter to matching titles
-    if (normalized.dayType) {
-      const target = String(normalized.dayType).toLowerCase();
-      const keywordMap = {
-        back: ['row', 'pull', 'lat', 'pulldown', 'deadlift', 'rear delt'],
-        chest: ['bench', 'press', 'push up', 'fly'],
-        legs: ['squat', 'leg', 'lunge', 'calf', 'hamstring', 'quad'],
-        shoulders: ['overhead', 'ohp', 'shoulder', 'lateral raise', 'rear delt'],
-        arms: ['curl', 'tricep', 'bicep', 'extension', 'skullcrusher'],
-        push: ['bench', 'press', 'shoulder', 'tricep', 'dip', 'push'],
-        pull: ['row', 'pull', 'lat', 'pulldown', 'curl', 'deadlift'],
-        upper: ['bench', 'press', 'row', 'pull', 'curl', 'tricep', 'shoulder'],
-        lower: ['squat', 'leg', 'lunge', 'calf', 'deadlift', 'hamstring', 'quad'],
-        cardio: ['run', 'jog', 'walk', 'bike', 'cycle', 'rower', 'elliptical', 'jump rope', 'plank']
+      const notes = exportNotesForRecord(record);
+      const history = getWorkoutRecords(wtStorage.get(WT_KEYS.completed, {}), archivedSessions)
+        .map(past => { const context = exportNotesForRecord(past); return { ...past, workoutNotes: context.notes, workoutNotesScope: context.scope }; });
+      const includeProgress = !!wtStorage.get(WT_KEYS.prefExerciseGoalProgress, false);
+      const includeSessionTime = !!wtStorage.get(WT_KEYS.prefSessionTime, false);
+      const { packet, text } = window.WorkoutAIExport.build({
+        current: record, history, notes: notes.notes, notesScope: notes.scope, recordState,
+        includeProgress, includeSessionTime, historyLimit: Number(historySelect.value),
+        currentExerciseGoals: exerciseGoals,
+        currentGoals: sanitizeGoals(goals).filter(goal => goal.active).map(goal => goal.text),
+        currentConstraints: sanitizeConstraints(constraints),
+        nextWorkoutMinutes: normalizeWorkoutMinutes(nextWorkoutMinutes),
+        helpers: { normalizePayload, classifyExerciseSets, describeConstraintsLines },
+      });
+      const payload = {
+        ...record, exercises: prepareExerciseGoalsForExport(record.exercises, includeProgress),
+        workoutNotes: notes.notes, workoutNotesScope: notes.scope, aiProgrammingContext: packet,
       };
-      const kw = keywordMap[target] || [];
-
-      const titleOrHeuristic = (s) => {
-        const t = String(s.dayType || titlesByDate[s.date] || '').toLowerCase();
-        if (t === target) return true;
-        if (t) return false;
-        if (!kw.length) return false;
-        // Heuristic: count matches by exercise name
-        let names = [];
-        if (Array.isArray(s.exercises)) {
-          s.exercises.forEach((ex) => {
-            if (!ex) return;
-            if (ex.isSuperset && Array.isArray(ex.sets)) {
-              ex.sets.forEach((set) => {
-                (set.exercises || []).forEach((inner) => names.push(String(inner.name || '')));
-              });
-            } else {
-              names.push(String(ex.name || ''));
-            }
-          });
-        }
-        const total = names.length || 1;
-        const hits = names.filter((n) => {
-          const low = n.toLowerCase();
-          return kw.some((k) => low.includes(k));
-        }).length;
-        return hits / total >= 0.4; // include if ~40% exercises match
-      };
-
-      previousSessions = previousSessions.filter(titleOrHeuristic);
+      delete payload.exerciseHighlights;
+      if (!includeSessionTime) delete payload.session;
+      latestExport = { packet, text, payload };
+      exportSequence += 1;
+      exportText.value = text;
+      exportPreview.hidden = false;
+      exportStatus.textContent = `Ready: ${packet.movements.length} movements; ${packet.movements.reduce((sum, m) => sum + m.history.length, 0)} matching comparisons. Notes included when available.`;
+      // Archive the full captured record, never the compact/deduplicated presentation.
+      const captured = { ...record, workoutNotes: notes.notes, workoutNotesScope: notes.scope };
+      const archiveKey = captured.workoutId || `${captured.date}-${captured.timestamp}`;
+      const nextArchive = pruneArchive({ ...archivedSessions, [archiveKey]: captured }, 120);
+      wtStorage.setMany([[WT_KEYS.last, captured.exercises], [WT_KEYS.lastMeta, captured]]);
+      if (wtStorage.set(WT_KEYS.archive, nextArchive)) archivedSessions = nextArchive;
+      notifyStateChanged();
+      // Called from the export tap; selectable preview also works without clipboard permission.
+      await copyAIExport();
+    } catch (error) {
+      console.error('AI workout export failed', error);
+      showToast('Could not build the brief. Your workout is still saved. Try downloading your saved workout.');
     }
-
-    // Limit by comparison window (or none)
-    if (dayCompare === 'none') previousSessions = [];
-    else if (dayCompare === '3') previousSessions = previousSessions.slice(0, 3);
-    else if (dayCompare === '7') previousSessions = previousSessions.slice(0, 7);
-
-    const exerciseSelection = buildExerciseSelectionReference(payload);
-    payload.exerciseSelection = exerciseSelection;
-
-    const currentStats = computeSessionStats(payload);
-    const previousStats = previousSessions.map((session) =>
-      computeSessionStats(session),
-    );
-    const highlights = buildExerciseHighlightsForExport(
-      currentStats,
-      previousStats,
-    );
-    if (highlights.length) {
-      payload.exerciseHighlights = sanitizeExerciseHighlights(highlights);
-    }
-    const prevByName = new Map();
-    const prevHistoryByName = new Map();
-    previousStats.forEach((sess) => {
-      (sess.exercises || []).forEach((ex) => {
-        if (!ex || !ex.name) return;
-        const key = exerciseGoalKey(ex.name);
-        if (!prevHistoryByName.has(key)) prevHistoryByName.set(key, []);
-        prevHistoryByName.get(key).push(ex);
-        if (!prevByName.has(key)) prevByName.set(key, ex);
-      });
-    });
-    const progressionLines = [];
-    const nextTargetLines = [];
-    const progressionDecisions = [];
-    (currentStats.exercises || []).forEach((ex) => {
-      const prev = prevByName.get(exerciseGoalKey(ex.name));
-      if (prev) {
-        const currentProgressionVolume = getProgressionVolume(ex);
-        const previousProgressionVolume = getProgressionVolume(prev);
-        if (currentProgressionVolume <= 0) {
-          progressionLines.push(
-            `${ex.name} – No classified progression sets; volume and load progression comparison withheld.`,
-          );
-        } else if (previousProgressionVolume > 0) {
-          const volChange = formatPercentChange(
-            currentProgressionVolume,
-            previousProgressionVolume,
-          );
-        const topChange = formatPercentChange(
-          ex.topSet?.weight ?? null,
-          prev.topSet?.weight ?? null,
-        );
-        const prevTop = formatTopSet(prev.topSet);
-        const currTop = formatTopSet(ex.topSet);
-        const prevVol = formatVolumeNumber(previousProgressionVolume);
-        const currVol = formatVolumeNumber(currentProgressionVolume);
-        progressionLines.push(
-          `${ex.name} – Progression volume: ${prevVol} → ${currVol} (${volChange}); Top successful set: ${prevTop} → ${currTop} (${topChange})`,
-        );
-        }
-      }
-
-      const history = prevHistoryByName.get(exerciseGoalKey(ex.name)) || [];
-      const decisionSupport = buildStrengthDecisionSupport(
-        ex,
-        prev,
-        null,
-        history.slice(1),
-      );
-      if (decisionSupport) {
-        nextTargetLines.push(decisionSupport.text);
-        progressionDecisions.push({
-          exercise: ex.name,
-          primaryAction: decisionSupport.decision,
-          confidence: decisionSupport.confidence,
-          repRange: decisionSupport.repRange,
-          targetRir: decisionSupport.targetRir,
-          nextLoad: decisionSupport.nextLoad,
-          predictedMinimumRepsAtNextLoad: decisionSupport.predictedMinimumRepsAtNextLoad,
-          nextLoadPreservesRepMinimum: decisionSupport.nextLoadPreservesRepMinimum,
-          evidenceTrace: decisionSupport.evidenceTrace,
-        });
-      }
-    });
-    if (progressionDecisions.length) payload.progressionDecisions = progressionDecisions;
-
-    const jsonStr = JSON.stringify(payload, null, 2);
-    triggerDownload(
-      new Blob([jsonStr], { type: "application/json" }),
-      `workout_${payload.date}.json`,
-    );
-
-    const csvColumns = [
-      "Exercise", "Set", "Weight", "Reps", "Distance", "Duration", "Time",
-      "RestPlanned(sec)", "RestActual(sec)", "SetRole", "RoleSource",
-      "RoleConfidence", "RoleReason", "Outcome", "RIR",
-      "Technique", "Pain", "GoalType", "GoalValue", "GoalUnit",
-    ];
-    if (includeExerciseGoalProgress) {
-      csvColumns.push("CurrentBest", "GoalRemaining", "ProgressPercent");
-    }
-    const csvHeader = `${csvColumns.join(",")}\n`;
-    const goalCsvCells = (goal) => {
-      const cells = [
-        goal?.goalType ?? "",
-        goal?.goalValue ?? "",
-        goal?.unit ?? "",
-      ];
-      if (includeExerciseGoalProgress) {
-        cells.push(
-          goal?.currentBestPerformance ?? "",
-          goal?.remainingDistanceToGoal ?? "",
-          goal?.progressPercentage ?? "",
-        );
-      }
-      return cells;
-    };
-    let csv = csvHeader;
-    if (includeSessionTime && sessionMeta) {
-      const meta = [
-        `SessionStart,${sessionMeta.sessionStart}`,
-        `SessionEnd,${sessionMeta.sessionEnd}`,
-        `SessionDuration(sec),${sessionMeta.sessionDurationSec}`,
-        "",
-      ].join("\n");
-      csv = meta + "\n" + csvHeader;
-    }
-    payload.exercises.forEach((ex) => {
-      ex.sets.forEach((s) => {
-        if (ex.isSuperset) {
-          s.exercises.forEach((sub) => {
-            const context = { ...s, ...sub, exercises: undefined };
-            const goal = (ex.exerciseGoals || []).find(
-              (item) => exerciseGoalKey(item.exerciseName) === exerciseGoalKey(sub.name),
-            );
-            csv += `${csvRow([
-              sub.name, s.set, sub.weight, sub.reps, "", "", s.time,
-              s.restPlanned ?? "", s.restActual ?? "",
-              context.role ?? "unknown", context.roleSource ?? "manual",
-              context.roleConfidence ?? "", context.roleReason ?? "",
-              context.outcome ?? "completed", context.rir ?? "",
-              context.technique ?? "unknown", context.pain ?? "unknown",
-              ...goalCsvCells(goal),
-            ])}\n`;
-          });
-        } else if (ex.isCardio) {
-          const goal = ex.goal;
-          csv += `${csvRow([
-            ex.name, s.set, "", "", s.distance ?? "", s.duration ?? "", s.time,
-            s.restPlanned ?? "", s.restActual ?? "",
-            ...Array(8).fill(""),
-            ...goalCsvCells(goal),
-          ])}\n`;
-        } else {
-          const goal = ex.goal;
-          csv += `${csvRow([
-            ex.name, s.set, s.weight, s.reps, "", "", s.time,
-            s.restPlanned ?? "", s.restActual ?? "",
-            s.role ?? "unknown", s.roleSource ?? "manual",
-            s.roleConfidence ?? "", s.roleReason ?? "",
-            s.outcome ?? "completed", s.rir ?? "",
-            s.technique ?? "unknown", s.pain ?? "unknown",
-            ...goalCsvCells(goal),
-          ])}\n`;
-        }
-      });
-    });
-    triggerDownload(
-      new Blob([csv], { type: "text/csv" }),
-      `workout_${payload.date}.csv`,
-    );
-
-    if (wtStorage.get(WT_KEYS.prefSessionTime, false)) {
-      showToast("Always include session time is ON", {
-        actionLabel: "Turn off",
-        onAction: () => {
-          wtStorage.set(WT_KEYS.prefSessionTime, false);
-          showToast("Preference updated: session time won't be auto-included.");
-        },
-      });
-    }
-
-    const constraintLines = describeConstraintsLines(payload.constraints);
-
-    let aiText = `WORKOUT DATA - ${payload.date}\n\n`;
-    aiText += `SESSION SNAPSHOT\n`;
-    aiText += `- Total logged sets: ${payload.totalSets} (all logged roles; see classification below)\n`;
-    aiText += `- Mechanical volume load: ${formatVolumeNumber(currentStats.totalVolume)} (sum weight × reps; useful for comparison, not a direct measure of fatigue or training quality)\n`;
-    const explicitProgressionSets = currentStats.roleCounts.working
-      + currentStats.roleCounts.top_set
-      + currentStats.roleCounts.back_off;
-    aiText += `- Strength set-entry classification: ${currentStats.warmupSetCount} warm-up/ramp; ${explicitProgressionSets} working/top/back-off; ${currentStats.roleCounts.technique} technique; ${currentStats.failedAttemptCount} failed; ${currentStats.roleCounts.unknown + currentStats.roleCounts.auto} unclassified. (Each exercise inside a superset is counted separately.)\n`;
-    const strengthSetCount = Object.values(currentStats.roleCounts)
-      .reduce((sum, count) => sum + Number(count || 0), 0);
-    if (strengthSetCount) {
-      const inferredCount = currentStats.roleSourceCounts.auto
-        + currentStats.roleSourceCounts.legacy_default;
-      aiText += `- Classification source: ${inferredCount} automatically inferred; ${currentStats.roleSourceCounts.manual} user-marked; ${currentStats.roleSourceCounts.system} outcome-determined. Automatic labels are transparent estimates, not claims that the user selected those roles.\n`;
-    }
-    if (currentStats.totalCardioDuration) {
-      aiText += `- Cardio duration: ${formatSecondsHuman(currentStats.totalCardioDuration)}\n`;
-    }
-    if (includeSessionTime && sessionMeta) {
-      aiText += `- Session duration: ${formatSecondsHuman(sessionMeta.sessionDurationSec)}\n`;
-    }
-    aiText += `\n`;
-
-    aiText += `AUTOMATIC COACHING CONTRACT\n`;
-    aiText += `- The user has chosen a long-term result and should not have to design the next workout. Do the progression calculations for them.\n`;
-    aiText += `- Put a short DO THIS NEXT section first. Give one primary prescription, not a menu of programs or choices.\n`;
-    aiText += `- The current exported session is the only source of exercise selection. Include every current-session exercise and do not add exercises from history, another workout day, or earlier AI recommendations.\n`;
-    aiText += `- Keep the long-term goal fixed, update the next step from completed evidence after every export, and show the load/repetition/set percentage change used.\n`;
-    aiText += `- The user should only need to follow the prescription, log what happened, and export again. Reserve alternatives for pain, unavailable equipment, or a red-readiness safety rule.\n\n`;
-
-    aiText += `SESSION COMPLETION & NEXT-WORKOUT BUDGET\n`;
-    aiText += `- Current session status: ${payload.sessionContext.statusLabel}\n`;
-    if (payload.sessionContext.status === 'time_limited') {
-      aiText += `- Interpretation: Omitted exercises and lower total volume are not regressions. Prescribe every exercise actually logged in this export, but do not recover or add exercises from older workouts merely because time ran out. Put the current-session exercises in priority order and do not add catch-up sets.\n`;
-    } else if (payload.sessionContext.status === 'pain_limited') {
-      aiText += `- Interpretation: Do not progress or re-prescribe painful movements without a pain-free alternative and an appropriate stop rule.\n`;
-    } else if (payload.sessionContext.status === 'recovery_limited') {
-      aiText += `- Interpretation: Treat lower output as readiness-limited until comparable recovered-session evidence shows otherwise.\n`;
-    } else if (payload.sessionContext.isIncomplete) {
-      aiText += `- Interpretation: Do not classify omitted exercises or lower session totals as regressions.\n`;
-    }
-    if (payload.sessionContext.nextWorkoutMinutes != null) {
-      aiText += `- Hard time budget for the next workout: ${payload.sessionContext.nextWorkoutMinutes} minutes, including warm-ups and rest.\n`;
-      aiText += `- MUST DO FIRST duration target: at most ${payload.sessionContext.mustDoTargetMinutes} minutes, leaving ${payload.sessionContext.timeBufferMinutes} minutes for normal setup and transition uncertainty. Still display every remaining current-session exercise afterward under CONTINUE IF TIME, with its exact sets, reps, load, rest, and normal per-exercise dose.\n`;
-    } else {
-      aiText += `- Next-workout time budget: Not provided. Show the complete current-session exercise list and its full estimated duration. Do not omit a current-session exercise merely because this session ran out of time, and do not add an exercise from history. Do not exceed the latest completed comparable session's normal per-exercise workload without a specific recovery-based reason.\n`;
-    }
-    aiText += `\n`;
-
-    aiText += `CURRENT-SESSION EXERCISE SELECTION (MANDATORY)\n`;
-    aiText += `- Required exercise list from this export: ${exerciseSelection.requiredExercises.length ? exerciseSelection.requiredExercises.join('; ') : 'No exercises available'}\n`;
-    aiText += `- Historical data controls progression only. It may change the next weight, repetitions, sets, rest, or progression decision for a current-session exercise, but it must never add an exercise that is absent from this export.\n`;
-    aiText += `- Include every exercise in the required current-session list and include no other exercise. Do not combine exercises from different workout days, older exports, other conversations, or previous AI recommendations.\n`;
-    aiText += `- An exercise may be added, removed, or replaced only when the user explicitly requests it, this export explicitly requests a change, a completed goal has a saved next-step instruction, or pain, safety, or unavailable equipment requires a substitution. Label every permitted substitution and explain why.\n`;
-    aiText += `- Time affects priority, not the required current-session list: put the time-fitting portion under MUST DO FIRST, then show every other current-session exercise under CONTINUE IF TIME with exact instructions.\n`;
-    aiText += `- Do not turn missed work into catch-up volume. Give each exercise only its normal evidence-based dose.\n\n`;
-
-    aiText += `SESSION GOALS & FOCUS\n`;
-    if (goalsForExport.length) {
-      goalsForExport.forEach((goal) => {
-        aiText += `- ${goal}\n`;
-      });
-    } else {
-      aiText += `- None specified.\n`;
-    }
-    aiText += `\n`;
-
-    aiText += `PERSONAL EXERCISE GOALS (performed exercises only)\n`;
-    if (performedGoalSnapshots.length) {
-      performedGoalSnapshots.forEach((goal) => {
-        aiText += `${goal.exerciseName}:\n`;
-        aiText += `  Goal: ${formatGoalNumber(goal.goalValue)} ${goal.unit} (${goal.goalType})\n`;
-        aiText += `  Automatic coaching path: ${goal.goalPathLabel}\n`;
-        if (includeExerciseGoalProgress) {
-          aiText += `  App-tracked logged best: ${formatGoalNumber(goal.currentBestPerformance)} ${goal.unit}\n`;
-          aiText += `  Arithmetic distance from goal: ${formatGoalNumber(goal.remainingDistanceToGoal)} ${goal.unit}\n`;
-          aiText += `  Arithmetic goal ratio: ${formatGoalNumber(goal.progressPercentage)}%\n`;
-          aiText += `  Guidance: ${buildGoalInsight(goal)}\n`;
-        }
-      });
-    } else {
-      aiText += `- No performed exercise had a saved personal goal.\n`;
-    }
-    if (!includeExerciseGoalProgress && performedGoalSnapshots.length) {
-      aiText += `- Logged best and arithmetic goal progress were intentionally omitted. Calculate any performance estimates from the detailed workout records available to you.\n`;
-    }
-    aiText += `- Treat these as long-term targets, not next-session prescriptions. Use workout history, execution quality, and recovery context; never force an unsafe jump to reach a goal faster.\n\n`;
-
-    aiText += `AUTOMATIC EXERCISE COACHING RULES\n`;
-    const strengthProfiles = payload.exercises.filter((exercise) => !exercise.isCardio);
-    if (strengthProfiles.length) {
-      strengthProfiles.forEach((exercise) => {
-        const profile = normalizeExerciseProfile(exercise.progressionProfile);
-        const modeLabel = profile.mode === 'auto' ? 'automatic from the saved goal' : 'custom advanced settings';
-        aiText += `- ${exercise.name}: ${modeLabel}; ${profile.purposeLabel}; target ${profile.repMin}–${profile.repMax} reps with about ${formatGoalNumber(profile.targetRir)} clean reps left; smallest load jump ${formatGoalNumber(profile.loadStep)} lbs.\n`;
-      });
-    } else {
-      aiText += `- No strength exercise profiles in this session.\n`;
-    }
-    aiText += `- These rules define the exercise's executable path. They do not prove readiness for an increase; completed evidence still controls the next step.\n\n`;
-
-    aiText += `DATA INTERPRETATION LIMITS\n`;
-    aiText += `- A weight goal compares the goal with the heaviest load logged for that exercise; it is not an estimated or tested one-repetition maximum.\n`;
-    aiText += `- Set role, RIR, pain, technique quality, and equipment increment are structured when recorded. Missing values must remain unknown; never infer exact RIR, technique, pain, or equipment equivalence.\n`;
-    aiText += `- Use only completed working/top/back-off sets for progression. Warm-ups, ramp sets, technique sets, painful stopped sets, and failed attempts cannot establish a successful best.\n`;
-    aiText += `- If free-text notes mention a failed attempt, pain, or a stop condition that is absent from the structured counters, the note still controls safety. Do not count it as a completed set; state that the evidence was unstructured and lower confidence accordingly.\n`;
-    aiText += `- “No pain reported” is not the same as “pain-free.” When pain, technique, or RIR was not entered, write Missing/unknown rather than placing it under Reported as a favorable result.\n`;
-    aiText += `- Estimated 1RM is a model-derived range, not a verified maximum. Do not estimate from failures, painful/poor-technique sets, or more than 10 effective reps for strength prescription.\n`;
-    aiText += `- A rep drop across repeated-load sets is a fatigue/pacing signal, not a diagnosis. Do not infer readiness or prescribe a load increase from volume alone.\n\n`;
-
-    aiText += `SCHEDULE & CONSTRAINTS\n`;
-    if (constraintLines.length) {
-      constraintLines.forEach((line) => {
-        aiText += `- ${line}\n`;
-      });
-    } else {
-      aiText += `- No upcoming constraints reported.\n`;
-    }
-    aiText += `\n`;
-
-    if (includeNotes && workoutNotes.length) {
-      aiText += `WORKOUT NOTES (use these before the automatic guardrails)\n`;
-      workoutNotes.forEach((note) => {
-        aiText += `- ${note}\n`;
-      });
-      aiText += `- A failed attempt is not a completed set or proof of a successful logged best. Reconcile notes about failures, pain, speed, readiness, and time limits before making progression decisions.\n\n`;
-    }
-
-    if (progressionGuard) {
-      aiText += `PROGRESSION METRICS (from selected app history)\n`;
-      if (progressionLines.length) {
-        progressionLines.forEach((line) => {
-          aiText += `- ${line}\n`;
-        });
-      } else {
-        aiText += `- Not enough past data to compute progression deltas.\n`;
-      }
-      aiText += `\n`;
-
-      aiText += `PROGRESSION GUARD (MANDATORY IF INCLUDED)\n`;
-      aiText += `- Prevent true stagnation without forcing load increases. Progress may be more load, more clean reps, better range of motion, improved technique, appropriate rest, or lower effort at the same work.\n`;
-      aiText += `- Compare volume, top-set load/reps, repeated-load rep drop, and recent sessions. A deliberate hold or deload is valid when fatigue, recovery, pain, or insufficient evidence makes an increase inappropriate.\n`;
-      aiText += `- Increase one primary variable at a time. Add load only after the prescribed work is completed cleanly and repeatably at the saved RIR target; round to equipment the user can actually load and check whether that jump can reasonably preserve the saved rep minimum. Treat that formula check as a conservative estimate, never a guarantee.\n\n`;
-    }
-
-    if (nextTargetLines.length) {
-      aiText += `NEXT-SESSION DECISION SUPPORT (conservative auto-check)\n`;
-      nextTargetLines.forEach((line) => {
-        aiText += `- ${line}\n`;
-      });
-      aiText += `- These are guardrails, not a complete program. Override them when reliable history, RIR/RPE, pain, technique, recovery, or coach instructions justify a different decision.\n`;
-      aiText += `\n`;
-    }
-
-    aiText += `EXERCISE HIGHLIGHTS\n`;
-    if (payload.exerciseHighlights && payload.exerciseHighlights.length) {
-      payload.exerciseHighlights.forEach((highlight) => {
-        aiText += `${highlight.name}:\n`;
-        if (highlight.today) aiText += `  Today: ${highlight.today}\n`;
-        if (highlight.trend) aiText += `  Trend: ${highlight.trend}\n`;
-        if (highlight.previous && highlight.previous.length) {
-          aiText += `  Recent:\n`;
-          highlight.previous.forEach((prev) => {
-            aiText += `    - ${prev}\n`;
-          });
-        }
-        if (highlight.isPR) {
-          aiText += `  PR: New personal best on the top set.\n`;
-        }
-        aiText += `\n`;
-      });
-    } else {
-      aiText += `- No past data yet to compare.\n\n`;
-    }
-
-    aiText += `DETAILED SET LOG\n`;
-    if (payload.exercises.length) {
-      payload.exercises.forEach((ex) => {
-        aiText += `${ex.name}:\n`;
-        const detailedGoals = ex.goal ? [ex.goal] : (ex.exerciseGoals || []);
-        detailedGoals.forEach((goal) => {
-          aiText += `  Personal goal: ${formatGoalNumber(goal.goalValue)} ${goal.unit}`;
-          if (includeExerciseGoalProgress) {
-            aiText += `; app-tracked logged best ${formatGoalNumber(goal.currentBestPerformance)}; ${formatGoalNumber(goal.remainingDistanceToGoal)} arithmetic distance (${formatGoalNumber(goal.progressPercentage)}% ratio)`;
-          }
-          aiText += `\n`;
-        });
-        ex.sets.forEach((s) => {
-          const rp =
-            s.restPlanned != null
-              ? ` (planned ${formatSec(s.restPlanned)}`
-              : "";
-          const ra =
-            s.restActual != null
-              ? `${rp ? "; " : " ("}actual ${formatSec(s.restActual)})`
-              : rp
-                ? ")"
-                : "";
-          const rest = rp || ra ? (rp ? rp : "") + (ra ? ra : "") : "";
-          if (ex.isSuperset) {
-            const parts = (s.exercises || []).map((sub) => {
-              const child = { ...s, ...sub, exercises: undefined };
-              const failed = normalizeSetRole(child.role) === 'failed_attempt';
-              const performance = failed
-                ? `Failed attempt at ${sub.weight} lbs`
-                : `${sub.weight} lbs × ${sub.reps} rep${Number(sub.reps) === 1 ? '' : 's'}`;
-              const context = formatSetContext(child, { includeRole: !failed });
-              return `${sub.name}: ${performance}${context ? ` [${context}]` : ''}`;
-            }).join(" | ");
-            aiText += `  Set ${s.set}: ${parts}${rest ? rest : ""}\n`;
-          } else if (ex.isCardio) {
-            const dist = s.distance != null ? `${s.distance} mi` : "";
-            const dur = formatSec(s.duration);
-            aiText += `  Set ${s.set}: ${dist ? dist + " in " : ""}${dur}${rest ? rest : ""}\n`;
-          } else {
-            const failedAttempt = normalizeSetRole(s.role) === 'failed_attempt';
-            const context = formatSetContext(s, { includeRole: !failedAttempt });
-            const performance = failedAttempt
-              ? `Failed attempt at ${s.weight} lbs`
-              : `${s.weight} lbs × ${s.reps} rep${Number(s.reps) === 1 ? '' : 's'}`;
-            aiText += `  Set ${s.set}: ${performance}${context ? ` [${context}]` : ''}${rest ? rest : ""}\n`;
-          }
-        });
-        aiText += `\n`;
-      });
-    } else {
-      aiText += `- No sets logged.\n\n`;
-    }
-
-    aiText += `NEXT STEPS REQUEST\n`;
-    aiText += `Analyze the session and produce one ready-to-follow next workout. Start with DO THIS NEXT. The user must not need to understand programming language or make training decisions mid-session.\n`;
-    aiText += `1. Insight: Distinguish evidence from inference. Note trends, weak points, and possible fatigue signals without treating mechanical volume or a single session as proof.\n`;
-    aiText += `2. Exact full workout: List every exercise in the Required current-session exercise list in order, and do not list any exercise outside it unless a permitted substitution is explicitly labeled. Separate warm-up sets from work sets and give exact sets × reps, exact load when equipment permits, rest time, a plain-language effort target such as “stop with 2 clean reps left,” and one concise technique cue. State warm-up sets, work sets, total logged sets, the MUST DO FIRST stopping point, and realistic durations for both the priority portion and the complete current-session workout.\n`;
-    aiText += `3. Progression math: For every exercise, choose exactly one primary action from HOLD, ADD REPS, ADD LOAD, ADD SET, REDUCE LOAD, REDUCE SETS, INCREASE REST, CHANGE REP RANGE, TEST BASELINE, DELOAD, SUBSTITUTE EXERCISE, or STOP AND SEEK APPROPRIATE GUIDANCE. Show previous → next load, reps, and sets plus the percentage change. Explain the reason in one beginner-friendly sentence. The one-variable rule applies to the entire exercise: if total sets increase, no prescribed load anywhere in that exercise may increase; if any prescribed load increases, total sets may not increase. For ADD LOAD, use exactly one saved equipment increment unless the equipment cannot make that jump, in which case explain the available increment.\n`;
-    aiText += `4. Feasibility and complete current-session coverage: Obey the hard time budget when supplied and keep MUST DO FIRST within the exported 90% duration target. Always display every remaining current-session exercise under CONTINUE IF TIME with exact instructions, even when completing that current-session list would exceed the day's time budget. Without a supplied budget, show the full estimated duration. Time changes order and stopping point only; history must not add exercises, and the plan must not create catch-up volume.\n`;
-    aiText += `5. Evidence trace: For every decision, label Observed, Reported, Estimated, Inferred, Heuristic, and Missing/unknown information separately and give HIGH, MODERATE, LOW, or INSUFFICIENT confidence. Missing data must lower confidence rather than being invented. Never write “no pain reported/noted” under Reported when pain was simply not entered.\n`;
-    aiText += `6. Autoregulation: Include simple green/yellow/red rules for readiness and a stop/substitution rule for pain or technique breakdown. A yellow or red trigger may only hold, reduce, skip, or stop the planned load; it must never tell the user to attempt a heavier set after an earlier ramp set was slow, shaky, painful, or technically poor. Ask only for truly missing information that would materially change safety or the plan.\n`;
-    aiText += `7. Final validation: The required plan is invalid if any current-session exercise disappears without a permitted explicit reason, if it adds an exercise that is absent from the current export without a permitted labeled substitution, if it combines workout-day rosters, if MUST DO FIRST exceeds the time target, if it counts failed or likely warm-up sets as successful progression work, if it uses the long-term goal as the next load, if it prescribes catch-up volume, if it increases exercise load and total sets together, if ADD LOAD skips the saved increment without an equipment reason, or if it recommends ADD LOAD/ADD SET for a pain-limited movement. The displayed complete current-session workout may exceed a hard time budget only when the priority stopping point remains within budget.\n`;
-    aiText += `8. Simplicity check: Rewrite anything a brand-new lifter would not understand. End with one sentence: “Follow this workout, log the result, and export again so I can calculate the next step.”\n`;
-
-    if (navigator.clipboard) {
-      navigator.clipboard
-        .writeText(aiText)
-        .then(() => {
-          alert("Exported JSON + CSV. AI summary copied to clipboard ✅");
-        })
-        .catch(() => alert("Exported files. (Clipboard copy failed)"));
-    } else {
-      alert("Exported JSON + CSV. Copy this manually:\n\n" + aiText);
-    }
-
-    const archiveKey = normalized.workoutId || `${normalized.date}-${normalized.timestamp}`;
-    const nextArchive = pruneArchive({ ...archivedSessions, [archiveKey]: normalized }, 120);
-    if (wtStorage.set(WT_KEYS.archive, nextArchive)) archivedSessions = nextArchive;
-    notifyStateChanged();
-  }
+  });
 
   function triggerDownload(blob, filename) {
     const link = document.createElement("a");
@@ -6845,6 +6396,7 @@ module.exports = {
   normalizeWorkoutMinutes,
   getLocalDateString,
   buildSessionPlanningContext,
+  describeConstraintsLines,
   normalizeSessionStartedAt,
 };
 }

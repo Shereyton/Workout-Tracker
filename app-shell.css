@@ -40,3 +40,12 @@ body.app-v2.dark{--paper:#101b15;--card:#1b2a21;--ink:#f1f6eb;--muted:#b0bfaf;--
 @media(min-width:700px){.app-v2 .header{padding-top:35px}.app-v2 .section{padding-top:24px}.today-overview{padding:36px;min-height:350px}.app-v2 .today-overview h2{font-size:58px}.hero-button{width:250px}.hero-orbit{width:420px;height:420px;right:-60px;top:-35px}.hero-orbit span{left:95px;top:150px;font-size:110px}.plan-content{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.plan-content>*+*{margin-top:0}.plan-intro,.plan-content>.empty-state,.plan-content>.shell-button{grid-column:1/-1}.plan-card{align-self:start}.progress-content{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.progress-content>*+*{margin-top:0}.progress-content>.activity-card,.progress-content>.section-line,.progress-content>.empty-state{grid-column:1/-1}}
 @media(max-width:360px){.app-v2 .header{padding-left:16px;padding-right:16px}.app-v2 .section{padding-left:16px;padding-right:16px}.app-v2 .header h1{font-size:16px}.app-v2 .today-overview h2{font-size:37px}.app-v2 .immersive-card{padding:15px}.app-v2 .flex-fixed-120{flex-basis:78px}.number-field{padding:12px}}
 @media(prefers-reduced-motion:reduce){.app-v2 *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+.ai-export-controls label,.ai-export-help,#aiExportPreview label{display:block;font-size:12px;line-height:1.5;margin:8px 0;color:var(--muted-fg)}
+#aiExportPreview{margin:18px 0;padding-top:16px;border-top:1px solid var(--input-border)}
+#aiExportStatus{font-size:13px;line-height:1.5;font-weight:650;margin-bottom:10px}
+#aiExportText{width:100%;font-size:16px;line-height:1.5;min-height:230px;resize:vertical;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;user-select:text;-webkit-user-select:text}
+.ai-export-actions{display:flex;gap:10px}.ai-export-actions .btn{flex:1}
+.app-v2 #summaryExportBtn{display:block;width:100%;margin-top:16px}.app-v2 #summaryExportBtn[hidden]{display:none}
+.app-v2 #exportSection>.settings-disclosure{margin-top:16px}.app-v2 #exportSection>.settings-disclosure .btn{width:100%;margin-top:8px}
+#aiExportPreview details{margin-top:12px}#aiExportPreview summary{cursor:pointer;font-size:13px;min-height:44px;padding:10px 0}#aiExportPreview details .btn{display:block;width:100%}
+#aiExportPreview[hidden]{display:none!important}
