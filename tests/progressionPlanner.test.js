@@ -56,6 +56,31 @@ describe('current workout controls the next exercise roster', () => {
 });
 
 describe('ready-to-follow strength targets', () => {
+  const fiveByFiveProfile = { mode: 'custom', purpose: 'primary_strength', repMin: 5, repMax: 5, targetRir: 2, loadStep: 2.5 };
+  const fiveByFive = (reps) => exercise('Bench Press', reps.map((count) => set(225, count)), { progressionProfile: fiveByFiveProfile });
+
+  it('uses an explicitly configured straight 5×5 completion to prescribe one small load step', () => {
+    const result = target(workout('2026-09-20', [fiveByFive([5, 5, 5, 5, 5])]));
+    expect(result.action).toBe('ADD LOAD');
+    expect(result.workingSets.map((entry) => [entry.weight, entry.reps])).toEqual(Array(5).fill(null).map(() => [227.5, 5]));
+    expect(result.reason).toMatch(/five sets of five/);
+  });
+
+  it('retries the full 5×5 target after late-set misses without increasing load or deleting reps', () => {
+    const result = target(workout('2026-09-20', [fiveByFive([5, 5, 5, 4, 4])]));
+    expect(result.action).toBe('HOLD');
+    expect(result.workingSets.map((entry) => [entry.weight, entry.reps])).toEqual(Array(5).fill(null).map(() => [225, 5]));
+    expect(result.reason).toContain('23 of 25');
+  });
+
+  it('does not treat an effort-limit 5×5 or an unconfigured five-set pattern as earned load progression', () => {
+    const hard = fiveByFive([5, 5, 5, 5, 5]);
+    hard.sets[4].rir = 0;
+    expect(target(workout('2026-09-20', [hard])).action).toBe('HOLD');
+    const generic = exercise('Bench Press', Array(5).fill(null).map(() => set(225, 5)));
+    expect(target(workout('2026-09-20', [generic])).action).not.toBe('ADD LOAD');
+  });
+
   it('uses the shared engine and increases load by only the equipment increment', () => {
     const current = workout('2026-09-20');
     const previous = workout('2026-09-18');
