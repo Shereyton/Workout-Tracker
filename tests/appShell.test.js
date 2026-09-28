@@ -65,4 +65,26 @@ describe('iPhone product shell integration', () => {
     expect(document.getElementById('progressContent').textContent).toContain('Give your training a direction');
     expect(document.body.textContent).not.toContain('NaN');
   });
+  it('shows top and back-off targets with their distinct rest times on the phone plan',async()=>{
+    document.getElementById('customExercise').value='Bench Press';
+    document.getElementById('addExercise').click();
+    for(const [id,value] of [['weight','285'],['reps','1']]){
+      document.getElementById(id).value=value;
+      document.getElementById(id).dispatchEvent(new Event('input',{bubbles:true}));
+    }
+    document.getElementById('useTimer').checked=false;
+    document.getElementById('logBtn').click();await flush();
+    window.WorkoutPlanner={buildNextWorkout:()=>({exercises:[{
+      name:'Bench Press',type:'strength',actionLabel:'Make a small step',reason:'Keep the back-offs steady.',
+      confidence:'HIGH',preparationSets:[],workingSets:[
+        {role:'top_set',weight:290,reps:1,restSeconds:240},
+        {role:'back_off',weight:255,reps:4,restSeconds:180},
+      ],
+    }]})};
+    document.getElementById('planSource').dispatchEvent(new Event('change'));
+    const card=document.querySelector('.plan-card');
+    expect(card.textContent).toContain('Top set');
+    expect(card.textContent).toContain('Back-off set');
+    expect(card.textContent).toContain('top set 4 min · back-offs 3 min');
+  });
 });
