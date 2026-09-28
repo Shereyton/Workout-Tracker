@@ -6096,7 +6096,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   exportBtn.textContent = 'Copy workout for AI';
   const exportInstructions = document.createElement('p');
   exportInstructions.className = 'ai-export-help';
-  exportInstructions.textContent = 'Copy your results, goals, notes, and matching history into ChatGPT. The AI receives facts and a request for your complete next workout.';
+  exportInstructions.textContent = 'Copy your results, goals, and matching history into ChatGPT. After you finish, the export also includes the app’s draft next targets for the AI to check.';
   exportBtn.before(exportInstructions);
 
   const exportPreview = document.createElement('section');
@@ -6193,8 +6193,21 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         .map(past => { const context = exportNotesForRecord(past); return { ...past, workoutNotes: context.notes, workoutNotesScope: context.scope }; });
       const includeProgress = !!wtStorage.get(WT_KEYS.prefExerciseGoalProgress, false);
       const includeSessionTime = !!wtStorage.get(WT_KEYS.prefSessionTime, false);
+      let appPlan = null;
+      if (recordState === 'finished_saved' && window.WorkoutPlanner?.buildNextWorkout) {
+        try {
+          appPlan = window.WorkoutPlanner.buildNextWorkout({
+            current: record, history, goals: exerciseGoals,
+            helpers: { classifyExerciseSets, computeSessionStats,
+              buildStrengthDecisionSupport, normalizeExerciseProfile },
+          });
+        } catch (plannerError) {
+          console.warn('In-app draft unavailable for this export', plannerError);
+        }
+      }
       const { packet, text } = window.WorkoutAIExport.build({
         current: record, history, notes: notes.notes, notesScope: notes.scope, recordState,
+        appPlan,
         includeProgress, includeSessionTime, historyLimit: Number(historySelect.value),
         currentExerciseGoals: exerciseGoals,
         currentGoals: sanitizeGoals(goals).filter(goal => goal.active).map(goal => goal.text),
