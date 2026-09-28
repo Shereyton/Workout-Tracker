@@ -200,6 +200,7 @@
     const recorded = number(set?.restPlanned, 15, 900);
     if (recorded !== null) return Math.round(recorded);
     if (preparation) return 60;
+    if (/strength|power/.test(profile.purpose || '') && set?.role === 'top_set') return 240;
     return /strength|power/.test(profile.purpose || '') ? 180 : 120;
   }
 
@@ -331,9 +332,38 @@
       const weight = number(set?.weight, 0, 9999), reps = number(set?.reps, 1, 999);
       if (weight === null || reps === null || !Number.isInteger(reps)) return null;
       return { set: index + 1, role: WORK_ROLES.has(set.role) ? set.role : 'working',
-        weight, reps, restSeconds: number(set.restSeconds, 0, 900) ?? restFor(null, profile) };
+        weight, reps, restSeconds: number(set.restSeconds, 0, 900) ?? restFor(set, profile) };
     });
     return targets.every(Boolean) ? targets : null;
+  }
+
+  // A deliberately labelled top set plus back-offs is not a straight rep-range
+  // workout. Compare its parts at the same loads; never turn a single into an
+  // extra-rep target just because the back-offs have room in the profile range.
+  function structuredStrengthReady(work, previousExercises, profile) {
+    const top = work.filter((set) => set.role === 'top_set');
+    const backs = work.filter((set) => set.role === 'back_off');
+    if (top.length !== 1 || !backs.length || top[0].weight <= 0
+      || backs.some((set) => set.weight >= top[0].weight)
+      || work.length !== 1 + backs.length
+      || work.some((set) => set.roleSource !== 'manual'
+        || number(set.rir, 0, 10) === null
+        || set.rir < profile.targetRir
+        || set.technique !== 'good' || set.pain !== 'none')) return false;
+    const previous = previousExercises[0];
+    if (!previous || previous.context?.status !== 'complete') return false;
+    const old = previous.exercise.sets.map(cleanStrength).filter((set) => set && WORK_ROLES.has(set.role));
+    if (old.length !== work.length || old.filter((set) => set.role === 'top_set').length !== 1
+      || old.filter((set) => set.role === 'back_off').length !== backs.length
+      || previous.exercise.sets.some((set) => set.completed === false || set.outcome === 'failed')) return false;
+    return work.every((set, index) => {
+      const before = old[index];
+      return before && before.role === set.role && before.roleSource === 'manual'
+        && before.weight === set.weight && before.reps <= set.reps
+        && (set.role !== 'top_set' || before.reps === set.reps)
+        && number(before.rir, 0, 10) !== null && before.rir >= profile.targetRir
+        && before.technique === 'good' && before.pain === 'none';
+    });
   }
 
   function planStrength(exercise, previousExercises, current, helpers, goals) {
@@ -407,6 +437,8 @@
       && !fiveByFiveShortRest && currentFiveByFiveReps <= priorFiveByFive[0] && priorFiveByFive[0] <= priorFiveByFive[1];
     const assignedMet = assigned && work.length === assigned.length
       && work.every((set, index) => set.weight === assigned[index].weight && set.reps >= assigned[index].reps);
+    const structured = work.some((set) => set.role === 'top_set')
+      && work.some((set) => set.role === 'back_off');
     // Safety information remains authoritative even if a supplied engine is old.
     if (poorForm) plan.action = 'REDUCE LOAD';
     else if (failed || minorForm || lowEffortReserve || current.sessionContext?.status === 'recovery_limited') plan.action = 'HOLD';
@@ -446,20 +478,46 @@
       plan.evidence.heuristic.push('Three same-load 5×5 attempts without a rep gain trigger a roughly 5% reset rounded to the saved load step; this is a coaching convention, not a proven cutoff.');
     }
 
+    if (structured && !failed && !poorForm && !minorForm && !lowEffortReserve
+      && !uncertainRoles && current.sessionContext?.status === 'complete'
+      && (!assigned || assignedMet) && plan.action !== 'REDUCE LOAD') {
+      const ready = structuredStrengthReady(work, previousExercises, profile);
+      const top = work.find((set) => set.role === 'top_set');
+      if (ready && profile.loadStep / top.weight <= 0.03) {
+        plan.action = 'ADD LOAD';
+        plan.confidence = 'HIGH';
+        plan.reason = `Two comparable top-set and back-off sessions were completed at the intended effort. Try one ${profile.loadStep} lb step on the top set only; keep the back-off sets unchanged. This is a cautious coaching rule, not a proven personal rate of gain.`;
+        plan.evidence.observed.push(`Top set ${top.weight} lb × ${top.reps} repeated with the same back-off structure and at least ${profile.targetRir} reps in reserve.`);
+      } else {
+        plan.action = 'HOLD';
+        plan.reason = ready
+          ? 'Your saved equipment step is large for a heavy top set. Repeat it or choose a smaller increment; keep the back-offs unchanged.'
+          : 'Keep the top set and back-offs separate. Repeat the successful structure until two comparable sessions meet the intended effort; do not turn the heavy set into an extra-rep target.';
+      }
+      plan.evidence.heuristic.push('Explicit top-set/back-off structure is progressed independently; no percentage of an untested max is assumed.');
+    }
+    if (structured && plan.action === 'ADD REPS') {
+      plan.action = 'HOLD';
+      plan.reason = 'Keep the heavy top set and back-offs at their intended repetitions; do not add a rep to a heavy single just to fill a general rep range.';
+    }
+
     const topWeight = Math.max(...work.map((set) => set.weight));
     if (plan.action === 'ADD LOAD') {
-      const nextWeight = round(topWeight + profile.loadStep);
-      if (topWeight <= 0 || nextWeight > 9999 || profile.loadStep / topWeight > 0.10
+      const topGroupWeight = structured ? Math.max(...work.filter((set) => set.role === 'top_set').map((set) => set.weight)) : topWeight;
+      const nextWeight = round(topGroupWeight + profile.loadStep);
+      if (topGroupWeight <= 0 || nextWeight > 9999 || profile.loadStep / topGroupWeight > 0.10
         || (!fiveByFiveComplete && profile.loadStep / topWeight > 0.05 && support?.nextLoadPreservesRepMinimum === false)) {
         plan.action = 'HOLD';
         plan.reason = 'The available weight jump is too large for a small next step. Repeat this weight or choose a smaller equipment increment.';
       } else {
-        plan.workingSets = plan.workingSets.map((set) => set.weight === topWeight
+        plan.workingSets = plan.workingSets.map((set) => (structured ? set.role === 'top_set' : set.weight === topWeight)
           ? { ...set, weight: nextWeight, reps: Math.min(set.reps, profile.repMin) } : set);
-        plan.reason = fiveByFiveComplete
+        plan.reason = structured ? plan.reason : fiveByFiveComplete
           ? `You completed the configured five sets of five. Try one ${profile.loadStep} lb step higher for five sets of five; repeat that load until all 25 reps are completed. This is your 5×5 progression rule, not a guaranteed rate of gain.`
           : `Your recent sets support the next ${profile.loadStep} lb step. Keep the same number of sets and rebuild reps at the new weight.`;
-        plan.evidence.heuristic.push('Raise only the heaviest working-set group by one equipment step; leave back-off work unchanged.');
+        plan.evidence.heuristic.push(structured
+          ? 'Raise only the labelled top set by one equipment step; leave back-off work unchanged.'
+          : 'Raise only the heaviest working-set group by one equipment step; leave back-off work unchanged.');
       }
     }
     if (plan.action === 'ADD REPS') {
@@ -508,7 +566,9 @@
       else plan.reason = 'Repeat these targets once more. Consistent clean sets will provide better evidence for the next increase.';
     }
     if (!plan.needsReview) {
-      plan.progressionTrigger = fiveByFive
+      plan.progressionTrigger = structured
+        ? 'Repeat the top set and all back-offs with good technique and the intended effort in two comparable sessions; increase only the top set by a small available step.'
+        : fiveByFive
         ? 'Complete all five sets of five at the prescribed load without reported pain or form breakdown; use the smallest saved load step when effort permits.'
         : assigned && !assignedMet
           ? 'Complete the assigned sets at the planned loads and reps with acceptable technique before adding demand.'

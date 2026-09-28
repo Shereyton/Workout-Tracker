@@ -23,6 +23,10 @@
     }
     return `${Number(set.weight) === 0 ? 'Bodyweight' : `${number(set.weight)} lb`} × ${number(set.reps)}`;
   }
+  function setLabel(set, index) {
+    return set.role === 'top_set' ? 'Top set'
+      : set.role === 'back_off' ? 'Back-off set' : `Set ${index + 1}`;
+  }
   function sessionDate(payload) {
     const date = String(payload?.date || payload?.timestamp || '').slice(0,10);
     const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T12:00:00`) : null;
@@ -92,7 +96,7 @@
     exportSection.append(exportOptions);
     plan.append(exportSection,sourceLabel,sourceSelect,planContent);
     plan.append(details('How your plan works',[make('div','coach-method',
-      '<p><strong>More is not always better.</strong> First build repeatable reps with good form; then earn a small weight increase. A repeat or easier day can be the right next step.</p><p>Only this session’s exercises are used. Earlier sessions help compare the same movements. When you follow an in-app plan, the assigned targets are saved separately from your actual sets, so skipped work is not automatically called a failed lift.</p><p>5×5 is an optional strength method, not a universal optimum. Its complete-all-25-then-add-load rule is a <a href="https://support.stronglifts.com/article/71-progression" target="_blank" rel="noopener">program convention</a>; the app’s repeated-stall reset is a heuristic. <a href="https://pubmed.ncbi.nlm.nih.gov/36199287/" target="_blank" rel="noopener">Rep progression</a> can also be useful.</p><p>These are starting targets—not a guarantee or a medical assessment. Stop a movement that hurts. Warm-ups are based on what you logged; add gradual, comfortable preparation if needed. Unknown effort, technique, rest, or recovery lowers confidence.</p><p>Guided by the <a href="https://pubmed.ncbi.nlm.nih.gov/41843416/" target="_blank" rel="noopener">2026 ACSM position stand</a>. Exact step sizes, readiness rules, and personal timelines are not scientifically proven for an individual.</p>') ]));
+      '<p><strong>More is not always better.</strong> First build repeatable reps with good form; then earn a small weight increase. A repeat or easier day can be the right next step.</p><p>Only this session’s exercises are used. Earlier sessions help compare the same movements. When you follow an in-app plan, the assigned targets are saved separately from your actual sets, so skipped work is not automatically called a failed lift.</p><p>5×5 is an optional strength method, not a universal optimum. Its complete-all-25-then-add-load rule is a <a href="https://support.stronglifts.com/article/71-progression" target="_blank" rel="noopener">program convention</a>; the app’s repeated-stall reset is a heuristic. <a href="https://pubmed.ncbi.nlm.nih.gov/36199287/" target="_blank" rel="noopener">Rep progression</a> can also be useful. If you label a heavy top set and back-offs, the app keeps those jobs separate and only suggests a small top-set increase after comparable, good-quality attempts.</p><p>These are starting targets—not a guarantee or a medical assessment. Stop a movement that hurts. Warm-ups are based on what you logged; add gradual, comfortable preparation if needed. Unknown effort, technique, rest, or recovery lowers confidence.</p><p>Guided by the <a href="https://pubmed.ncbi.nlm.nih.gov/41843416/" target="_blank" rel="noopener">2026 ACSM position stand</a>. Exact step sizes, readiness rules, and personal timelines are not scientifically proven for an individual.</p>') ]));
     const context=details('Tell your coach more',[$('dayTypeSection'),$('goalsSection'),$('constraintsSection')]);
     plan.append(context);
     progress.append(heading('Built over time','Proof of progress.','Your goals, your consistency, and the work behind them.'));
@@ -182,12 +186,18 @@
         const card=make('article','plan-card');
         card.innerHTML=`<div class="plan-card-top"><span class="movement-number">${String(i+1).padStart(2,'0')}</span><span class="action-pill">${esc(ex.actionLabel||'Build consistency')}</span></div><h3>${esc(ex.name)}</h3><p class="plan-reason">${esc(ex.reason||'Repeat a controlled effort before adding more.')}</p>`;
         const sets=Array.isArray(ex.workingSets)?ex.workingSets:[];
-        if(sets.length){const rows=make('div','prescription-table');rows.append(make('div','prescription-head','<span>MAIN SET</span><span>WEIGHT × REPS</span>'));sets.forEach((set,j)=>rows.append(make('div','prescription-row',`<span>${j+1}</span><strong>${esc(targetText(set,ex.type))}</strong>`)));card.append(rows);}
+        if(sets.length){const rows=make('div','prescription-table');rows.append(make('div','prescription-head','<span>MAIN SET</span><span>WEIGHT × REPS</span>'));sets.forEach((set,j)=>rows.append(make('div','prescription-row',`<span>${esc(setLabel(set,j))}</span><strong>${esc(targetText(set,ex.type))}</strong>`)));card.append(rows);}
         else card.append(make('div','review-note',ex.needsReview?'Check this movement before prescribing a target.':'More clearly logged sets are needed to choose a target.'));
         if(ex.preparationSets?.length){const prep=make('div','warmup-list');ex.preparationSets.forEach((s,j)=>prep.append(make('p','',`${j+1}. ${esc(targetText(s,ex.type))}`)));card.append(details(`Warm-up · ${ex.preparationSets.length} preparation sets`,[prep],'warmup-details'));}
         else if(ex.type!=='cardio')card.append(make('p','plan-fineprint','Warm-up: no preparation sets were logged. Build up gradually before your main sets.'));
-        const seconds=Number(ex.restSeconds);
-        card.append(make('div','plan-footer',`<span>${Number.isFinite(seconds)&&seconds>0?`Rest ${number(seconds/60)} min`:'Rest until ready'}</span><span>${esc(ex.confidence||'Limited data')} confidence</span>`));
+        const restValues=[...new Set(sets.map(set=>Number(set.restSeconds)).filter(value=>Number.isFinite(value)&&value>0))];
+        const topRest=sets.find(set=>set.role==='top_set')?.restSeconds;
+        const backRests=[...new Set(sets.filter(set=>set.role==='back_off').map(set=>set.restSeconds))];
+        const restText=restValues.length===1?`Rest ${number(restValues[0]/60)} min between main sets`
+          : Number(topRest)>0&&backRests.length===1&&Number(backRests[0])>0
+            ?`Rest: top set ${number(topRest/60)} min · back-offs ${number(backRests[0]/60)} min`
+          : restValues.length?`Rest by set: ${sets.map((set,j)=>`${setLabel(set,j)} ${Number(set.restSeconds)>0?`${number(Number(set.restSeconds)/60)} min`:'as needed'}`).join(' · ')}`:'Rest until ready';
+        card.append(make('div','plan-footer',`<span>${esc(restText)}</span><span>${esc(ex.confidence||'Limited data')} confidence</span>`));
         if(ex.effortCue)card.append(make('p','plan-fineprint',esc(ex.effortCue)));
         if(ex.progressionTrigger)card.append(make('p','plan-fineprint',`<strong>Earn the next step:</strong> ${esc(ex.progressionTrigger)}`));
         if(ex.plannedComparison)card.append(make('p','plan-fineprint',esc(ex.plannedComparison)));
@@ -199,7 +209,7 @@
         planContent.append(card);
       });
       const copy=button('Copy this full plan',async()=>{
-        const text=prescription.exercises.map(ex=>`${ex.name}\n${ex.actionLabel||''}: ${ex.reason||''}\n${(ex.preparationSets||[]).map((s,i)=>`Warm-up ${i+1}: ${targetText(s,ex.type)}`).join('\n')}\n${(ex.workingSets||[]).map((s,i)=>`Set ${i+1}: ${targetText(s,ex.type)}`).join('\n')}\n${ex.effortCue||''}\n${ex.progressionTrigger?`Earn the next step: ${ex.progressionTrigger}`:''}`).join('\n\n');
+        const text=prescription.exercises.map(ex=>`${ex.name}\n${ex.actionLabel||''}: ${ex.reason||''}\n${(ex.preparationSets||[]).map((s,i)=>`Warm-up ${i+1}: ${targetText(s,ex.type)}`).join('\n')}\n${(ex.workingSets||[]).map((s,i)=>`${setLabel(s,i)}: ${targetText(s,ex.type)}${Number(s.restSeconds)>0?` · rest ${number(Number(s.restSeconds)/60)} min`:''}`).join('\n')}\n${ex.effortCue||''}\n${ex.progressionTrigger?`Earn the next step: ${ex.progressionTrigger}`:''}`).join('\n\n');
         try{await root.navigator.clipboard.writeText(text);tell('Full plan copied.');}catch{tell('Clipboard unavailable. Use Export Workout to save your data.');}
       },'shell-button shell-button--secondary');planContent.append(copy);
     }
@@ -213,7 +223,7 @@
       const next=all[logged];
       target.hidden=false;target.replaceChildren();
       target.append(make('span','eyebrow','YOUR SESSION GUIDE'));
-      if(next){target.append(make('h3','',esc(targetText(next,exercise.type))));target.append(make('p','',`${logged<(exercise.preparationSets?.length||0)?'Preparation':'Main'} set · ${logged+1} of ${all.length}`));
+      if(next){target.append(make('h3','',esc(targetText(next,exercise.type))));target.append(make('p','',`${logged<(exercise.preparationSets?.length||0)?'Preparation set':setLabel(next,logged-(exercise.preparationSets?.length||0))} · ${logged+1} of ${all.length}`));
         target.append(button('Use these numbers',()=>{
           const assign=(id,value)=>{if(value===null||value===undefined||!finite(value))return;$(id).value=String(value);$(id).dispatchEvent(new Event('input',{bubbles:true}));};
           if(exercise.type==='cardio'){
@@ -221,7 +231,7 @@
             if(finite(next.duration)&&Number(next.duration)>0){assign('durationMin',Math.floor(Number(next.duration)/60));assign('durationSec',Number(next.duration)%60);}
           }
           else{assign('weight',next.weight);assign('reps',next.reps);}
-          if(Number(exercise.restSeconds)>0){$('restSecsInput').value=exercise.restSeconds;$('restSecsInput').dispatchEvent(new Event('change',{bubbles:true}));}
+          if(Number(next.restSeconds)>0){$('restSecsInput').value=next.restSeconds;$('restSecsInput').dispatchEvent(new Event('change',{bubbles:true}));}
           tell('Target filled in. Log only what you actually complete.');
           $(exercise.type==='cardio'?'distance':'weight').focus();
         },'target-fill'));

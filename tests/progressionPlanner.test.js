@@ -184,6 +184,45 @@ describe('ready-to-follow strength targets', () => {
     expect(result.preparationSets[0].restSeconds).toBe(60);
   });
 
+  it('progresses a labelled heavy top set independently of completed back-offs', () => {
+    const strength = { mode: 'custom', purpose: 'primary_strength', repMin: 3, repMax: 5, targetRir: 2, loadStep: 5 };
+    const sets = [set(285, 1, { role: 'top_set' }), ...Array(4).fill(null).map(() => set(255, 4, { role: 'back_off' }))];
+    const entry = exercise('Bench Press', sets, { progressionProfile: strength });
+    const result = target(workout('2026-09-20', [entry]), [workout('2026-09-18', [entry])]);
+    expect(result.action).toBe('ADD LOAD');
+    expect(result.workingSets.map(({ role, weight, reps }) => [role, weight, reps])).toEqual([
+      ['top_set', 290, 1], ...Array(4).fill(['back_off', 255, 4]),
+    ]);
+    expect(result.workingSets[0].restSeconds).toBe(240);
+    expect(result.workingSets[1].restSeconds).toBe(180);
+    expect(result.progressionTrigger).toMatch(/top set and all back-offs/i);
+  });
+
+  it('holds a heavy top set when effort is unknown or the available jump is too large', () => {
+    const strength = { mode: 'custom', purpose: 'primary_strength', repMin: 3, repMax: 5, targetRir: 2, loadStep: 5 };
+    const sets = [set(100, 1, { role: 'top_set' }), set(80, 4, { role: 'back_off' })];
+    const entry = exercise('Squat', sets, { progressionProfile: strength });
+    const tooLarge = target(workout('2026-09-20', [entry]), [workout('2026-09-18', [entry])]);
+    expect(tooLarge.action).toBe('HOLD');
+    expect(tooLarge.workingSets.map((s) => s.weight)).toEqual([100, 80]);
+    expect(tooLarge.reason).toMatch(/equipment step is large/i);
+    const unknown = exercise('Squat', [set(285, 1, { role: 'top_set', rir: null }), set(255, 4, { role: 'back_off' })], { progressionProfile: strength });
+    expect(target(workout('2026-09-20', [unknown]), [workout('2026-09-18', [unknown])]).action).toBe('HOLD');
+  });
+
+  it('does not advance top work when a saved top-and-back-off assignment was missed', () => {
+    const strength = { mode: 'custom', purpose: 'primary_strength', repMin: 3, repMax: 5, targetRir: 2, loadStep: 5 };
+    const sets = [set(285, 1, { role: 'top_set' }), set(255, 4, { role: 'back_off' })];
+    const saved = { source: 'app_next_workout', type: 'strength', workingSets: [
+      { role: 'top_set', weight: 285, reps: 1 }, { role: 'back_off', weight: 255, reps: 5 },
+    ] };
+    const current = exercise('Bench Press', sets, { progressionProfile: strength, prescription: saved });
+    const prior = exercise('Bench Press', sets, { progressionProfile: strength });
+    const result = target(workout('2026-09-20', [current]), [workout('2026-09-18', [prior])]);
+    expect(result.action).toBe('HOLD');
+    expect(result.workingSets.map((s) => s.reps)).toEqual([1, 5]);
+  });
+
   it('holds large equipment jumps and never substitutes the long-term goal for next load', () => {
     const largeStep = { ...profile, loadStep: 20, repMin: 1 };
     const ex = exercise('Press', [set()], { progressionProfile: largeStep });

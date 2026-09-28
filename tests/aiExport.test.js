@@ -71,6 +71,19 @@ describe('AI programming handoff',()=>{
     expect(result.text).toContain('Numeric targets met 2/4; 3 qualifying main entries logged');
     expect(result.text).toContain('Missing entries are not automatically failed sets');
   });
+  it('preserves top-set and back-off roles in an assigned strength target',()=>{
+    const record=workout('2026-08-03',[lift('Bench',[
+      [285,1,{role:'top_set',rir:2}], [255,4,{role:'back_off',rir:2}],
+    ],{prescription:{source:'app_next_workout',type:'strength',workingSets:[
+      {role:'top_set',weight:285,reps:1},{role:'back_off',weight:255,reps:4},
+    ]}})]);
+    const result=build({current:record,helpers});
+    expect(result.packet.movements[0].prescription.workingSets.map(set=>set.role)).toEqual(['top_set','back_off']);
+    expect(result.text).toContain('1×top 285×1 | 1×backoff 255×4');
+    expect(result.text).toContain('Numeric targets met 2/2');
+    record.exercises[0].sets[0].role='working';
+    expect(build({current:record,helpers}).text).toContain('Numeric targets met 1/2');
+  });
   it('preserves and compares a distance-only cardio assignment without inventing a time target',()=>{
     const record=workout('2026-08-03',[{name:'Walk',isCardio:true,sets:[{distance:1,duration:600}],prescription:{source:'app_next_workout',type:'cardio',workingSets:[{distance:1.05,duration:null}]}}]);
     const result=build({current:record,helpers});

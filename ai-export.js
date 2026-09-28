@@ -23,7 +23,7 @@
     if(value?.source!=='app_next_workout'||value.type!==(cardio?'cardio':'strength')||!Array.isArray(value.workingSets))return null;
     const sets=value.workingSets.slice(0,40).map(s=>cardio
       ? {durationSeconds:n(s?.duration),distanceMiles:n(s?.distance)}
-      : {weightLb:n(s?.weight),reps:n(s?.reps)});
+      : {role:mainRoles.has(s?.role)?s.role:'working',weightLb:n(s?.weight),reps:n(s?.reps)});
     if(!sets.length||sets.some(s=>cardio?!(s.durationSeconds>0)&&!(s.distanceMiles>0):s.weightLb===null||!(s.reps>0)))return null;
     return {sourceDate:clean(value.sourceDate)||null,workingSets:sets};
   }
@@ -126,14 +126,16 @@
     const target=m.prescription;if(!target)return null;
     const formatted=target.workingSets.map(s=>m.type==='cardio'
       ? [s.distanceMiles!==null?`${fmt(s.distanceMiles)} mi`:null,s.durationSeconds!==null?`${fmt(s.durationSeconds)} sec`:null].filter(Boolean).join(' / ')
-      : `${fmt(s.weightLb)}×${fmt(s.reps)}`);
+      : `${s.role==='top_set'?'top ':s.role==='back_off'?'backoff ':''}${fmt(s.weightLb)}×${fmt(s.reps)}`);
     const runs=[];formatted.forEach(value=>{const last=runs[runs.length-1];if(last&&last.value===value)last.count++;else runs.push({value,count:1});});
     const actual=m.type==='cardio'?m.sets:m.sets.filter(s=>mainRoles.has(s.role)&&s.completed);
     const met=target.workingSets.reduce((count,s,i)=>{
       const logged=actual[i];if(!logged)return count;
       return count+(m.type==='cardio'
         ? (s.durationSeconds===null||logged.durationSeconds!==null&&logged.durationSeconds>=s.durationSeconds)&&(s.distanceMiles===null||logged.distanceMiles!==null&&logged.distanceMiles>=s.distanceMiles)
-        : logged.weightLb===s.weightLb&&logged.reps>=s.reps&&logged.pain!=='stopped'&&logged.technique!=='poor');
+        : logged.weightLb===s.weightLb&&logged.reps>=s.reps
+          &&(s.role==='working'||logged.role===s.role)
+          &&logged.pain!=='stopped'&&logged.technique!=='poor');
     },0);
     return `Assigned main target${target.sourceDate?` (from ${target.sourceDate})`:''}: ${runs.map(r=>`${r.count}×${r.value}`).join(' | ')}. Numeric targets met ${met}/${target.workingSets.length}; ${actual.length} qualifying main entries logged. Missing entries are not automatically failed sets.`;
   }
