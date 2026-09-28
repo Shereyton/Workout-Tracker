@@ -84,6 +84,36 @@ describe('AI programming handoff',()=>{
     record.exercises[0].sets[0].role='working';
     expect(build({current:record,helpers}).text).toContain('Numeric targets met 1/2');
   });
+  it('hands the receiving AI a labelled app draft with targets, reasons and evidence limits',()=>{
+    const record=current();
+    const appPlan={selectionRule:'current_session_only',sourceDate:record.date,exercises:[{
+      name:'Bench Press',type:'strength',action:'HOLD',confidence:'MODERATE',
+      reason:'Repeat the assigned load after a late missed rep.',
+      progressionTrigger:'Complete all planned reps at the target effort.',
+      effortCue:'Leave about two clean reps in reserve.',
+      preparationSets:[{role:'warmup',weight:45,reps:8,restSeconds:60}],
+      workingSets:[{role:'top_set',weight:135,reps:8,restSeconds:240},
+        {role:'back_off',weight:120,reps:8,restSeconds:180}],
+    }]};
+    const result=build({current:record,helpers,recordState:'finished_saved',appPlan});
+    expect(result.packet.appPlan.source).toBe('app_draft_not_performed');
+    expect(result.text).toContain('APP NEXT-WORKOUT DRAFT');
+    expect(result.text).toContain('1× top 135 lb×8 (rest 240s)');
+    expect(result.text).toContain('1× backoff 120 lb×8 (rest 180s)');
+    expect(result.text).toContain('Why: Repeat the assigned load after a late missed rep.');
+    expect(result.text).toContain('Next increase requires: Complete all planned reps');
+    expect(result.text).toContain('coaching heuristics, not proven individual laws');
+    expect(result.text).toContain('if you change a target, show the changed number');
+    expect(result.text).not.toMatch(/NaN|Infinity/);
+  });
+  it('omits a draft for an unfinished session or a mismatched exercise roster',()=>{
+    const record=current();
+    const appPlan={selectionRule:'current_session_only',sourceDate:record.date,
+      exercises:[{name:'Squat',type:'strength',workingSets:[{weight:225,reps:5}]}]};
+    expect(build({current:record,helpers,recordState:'finished_saved',appPlan}).packet.appPlan).toBeNull();
+    appPlan.exercises[0].name='Bench Press';
+    expect(build({current:record,helpers,recordState:'active_not_finished',appPlan}).packet.appPlan).toBeNull();
+  });
   it('preserves and compares a distance-only cardio assignment without inventing a time target',()=>{
     const record=workout('2026-08-03',[{name:'Walk',isCardio:true,sets:[{distance:1,duration:600}],prescription:{source:'app_next_workout',type:'cardio',workingSets:[{distance:1.05,duration:null}]}}]);
     const result=build({current:record,helpers});

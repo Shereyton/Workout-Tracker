@@ -1,7 +1,7 @@
-/* A fact-first coaching handoff. No generated prescriptions or invented observations. */
+/* A fact-first coaching handoff. App targets are labelled drafts, never observations. */
 (function (root) {
   'use strict';
-  const VERSION = 'ai-workout/1';
+  const VERSION = 'ai-workout/2';
   const clean = value => String(value ?? '').replace(/\s+/g, ' ').trim();
   const key = value => clean(value).toLowerCase();
   const numeric = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
@@ -143,6 +143,33 @@
     if(!p)return '';
     return `${p.source==='user_settings'?'User settings':'App defaults (not verified equipment)'}: ${p.purpose}; reps ${fmt(p.repMin)}–${fmt(p.repMax)}, target RIR ${fmt(p.targetRir)}, load step ${fmt(p.loadStep)} lb.`;
   }
+  function appPlanFact(value,movements,date){
+    if(value?.selectionRule!=='current_session_only'||value.sourceDate!==date
+      ||!Array.isArray(value.exercises)||value.exercises.length!==movements.length
+      ||value.exercises.some((ex,i)=>key(ex?.name)!==key(movements[i].name)
+        ||ex.type!==movements[i].type))return null;
+    const sets=(entries,type)=>Array.isArray(entries)&&entries.length<=40?entries.map(s=>type==='cardio'
+      ?{durationSeconds:n(s?.duration),distanceMiles:n(s?.distance),restSeconds:n(s?.restSeconds)}
+      :{role:roleNames[s?.role]?s.role:'working',weightLb:n(s?.weight),reps:n(s?.reps),restSeconds:n(s?.restSeconds)}):[];
+    return {source:'app_draft_not_performed',sourceDate:date,exercises:value.exercises.map(ex=>({
+      name:clean(ex.name),type:ex.type,action:clean(ex.action),confidence:clean(ex.confidence),
+      reason:clean(ex.reason),trigger:clean(ex.progressionTrigger),effortCue:clean(ex.effortCue),
+      warmups:sets(ex.preparationSets,ex.type),main:sets(ex.workingSets,ex.type),
+      reviewRequired:!!ex.needsReview,
+    }))};
+  }
+  function planSetText(set,type){
+    const label=type==='cardio'?'cardio':roleNames[set.role]||'work';
+    const target=type==='cardio'
+      ?[set.distanceMiles!==null?`${fmt(set.distanceMiles)} mi`:null,set.durationSeconds!==null?`${fmt(set.durationSeconds)} sec`:null].filter(Boolean).join('/')
+      :`${fmt(set.weightLb)} lb×${fmt(set.reps)}`;
+    return `${label} ${target}${set.restSeconds>0?` (rest ${fmt(set.restSeconds)}s)`:''}`;
+  }
+  function compactPlanSets(sets,type){
+    const runs=[];
+    sets.forEach(set=>{const value=planSetText(set,type),last=runs[runs.length-1];if(last?.value===value)last.count++;else runs.push({value,count:1});});
+    return runs.map(run=>`${run.count}× ${run.value}`).join(' | ');
+  }
   function build(options){
     const {helpers={},includeProgress=false,recordState='unknown'}=options;
     const current=helpers.normalizePayload?helpers.normalizePayload(options.current):options.current;
@@ -171,6 +198,7 @@
     });
     const nextMinutes=Object.prototype.hasOwnProperty.call(options,'nextWorkoutMinutes')?options.nextWorkoutMinutes:current.sessionContext?.nextWorkoutMinutes??null;
     const packet={format:VERSION,date:current.date,recordState,dayType:clean(current.dayType)||null,sessionStatus:current.sessionContext?.status||'unknown',nextWorkoutMinutes:nextMinutes,priorityTargetMinutes:nextMinutes===null?null:Math.floor(nextMinutes*0.9),goals:options.currentGoals??current.goals??[],constraints:options.currentConstraints??current.constraints??{},notes,historyLimit:limit,groups:flat.groups,movements};
+    packet.appPlan=recordState==='finished_saved'?appPlanFact(options.appPlan,movements,current.date):null;
     packet.notesScope=options.notesScope||current.workoutNotesScope||'session';
     const usedHistory=new Set(movements.flatMap(m=>m.history.map(h=>h.contextId)));
     packet.historyContext=priors.filter(p=>usedHistory.has(p.id)).map(p=>({id:p.id,date:p.payload.date,timestamp:p.payload.timestamp,dayType:clean(p.payload.dayType)||null,status:p.payload.sessionContext?.status||'unknown',notes:(p.payload.workoutNotes||[]).filter(x=>typeof x==='string'),notesScope:p.payload.workoutNotesScope||'session'}));
@@ -208,7 +236,26 @@
       });
       if(m.comparison){const c=m.comparison;if(c.sameLoadReps.length)lines.push(`Same-load qualifying reps, latest previous → today: ${c.sameLoadReps.map(x=>`${fmt(x.weightLb)} lb [${x.previous.join(',')}]→[${x.current.join(',')}]`).join('; ')}.`);if(c.qualifyingVolumeChangePercent!==undefined)lines.push(`Latest comparison: main-set count ${c.qualifyingSetsDelta>=0?'+':''}${c.qualifyingSetsDelta}; main volume ${c.qualifyingVolumeChangePercent>=0?'+':''}${c.qualifyingVolumeChangePercent}% (dose comparison only; check reps, effort and context).`);}
     });
-    lines.push('','NEXT WORKOUT REQUEST','Start with DO THIS NEXT. Prescribe every current-roster movement, in the same training-day category and superset groups; history changes targets, never the roster. Include exact warm-up/main sets, loads/reps or distance/time, rest, effort cue, and one reason per movement.','Compare any assigned plan with actual results. Preserve an identifiable progression scheme (e.g. straight 5×5 versus rep-range or top/back-off), but never impose 5×5 from a goal alone. Use recent comparable attempts to distinguish improvement from a stall. Change the smallest justified variable; do not add sets reflexively or use an estimated 1RM as a verdict.','Show previous→next targets and meaningful load/rep/set changes; no percentage from zero. Long-term goals guide direction. Holds/reductions count as strategic decisions. Account for reported notes, failures, uncertain roles, unknown effort/form/pain, and recovery; do not invent observations or force increases. An app load step does not verify available equipment.','Respect any next-session time budget: show a priority stopping point and the full remaining roster, with no catch-up sets. Label and explain any user-requested, post-goal, safety/pain or equipment substitution. End with each movement’s next progression trigger, confidence, and whether its exact rule is evidence-supported or a coaching convention; ask only questions that materially change the plan.');
+    if(packet.appPlan){
+      lines.push('','APP NEXT-WORKOUT DRAFT (calculated from this log; not performed or medically verified)');
+      packet.appPlan.exercises.forEach((ex,i)=>{
+        lines.push(`${i+1}. ${JSON.stringify(ex.name)}: ${ex.action||'REVIEW'} [${ex.confidence||'unknown'} confidence]${ex.reviewRequired?' — review before following':''}.`);
+        if(ex.main.length)lines.push(`  Main: ${compactPlanSets(ex.main,ex.type)}.`);
+        if(ex.warmups.length)lines.push(`  Logged warm-up pattern: ${compactPlanSets(ex.warmups,ex.type)}.`);
+        if(ex.reason)lines.push(`  Why: ${ex.reason}`);
+        if(ex.effortCue)lines.push(`  Effort: ${ex.effortCue}`);
+        if(ex.trigger)lines.push(`  Next increase requires: ${ex.trigger}`);
+      });
+    }
+    if(movements.some(m=>m.type==='strength'))lines.push('','PROGRAMMING LENS (general evidence versus app rules)',
+      'For a strength goal, prioritize repeatable high-quality work, appropriate heavier exposure, enough submaximal volume and rest, and recorded effort/recovery. A goal load is not a verified current 1RM; do not derive fixed percentages or a peak calendar from it.',
+      'Keep the logged scheme: straight 5×5, top set plus back-offs, or rep range only when actually identifiable. Complete assigned work before escalating; compare like loads/roles across sessions. Change one variable at a time; hold or reduce after misses, pain, poor form or uncertain data. Do not add a heavy single or extra exercise just because a strength goal exists.',
+      'The app’s exact 5×5 completion/reset, two-comparable-session, load-step and fatigue cutoffs are coaching heuristics, not proven individual laws. General evidence anchors: ACSM position stand https://pubmed.ncbi.nlm.nih.gov/41843416/ ; autoregulation review https://pubmed.ncbi.nlm.nih.gov/40791980/ ; strength rest review https://pubmed.ncbi.nlm.nih.gov/28933024/ .');
+    lines.push('','NEXT WORKOUT REQUEST',
+      'Start with DO THIS NEXT. Prescribe the full current-session roster in order, same day and superset groups; history informs progression, never exercise selection. Give warm-ups, exact main sets/load/reps (or cardio time/distance), rest, effort, next progression trigger and one reason per movement.',
+      'Compare assigned versus completed work and like-for-like history. Preserve the identifiable scheme; choose the smallest justified change in load, reps or sets. Holds/reductions are valid. Explain meaningful previous→next numbers and confidence; mark exact rules as evidence-backed or coaching heuristics. Do not invent maxes, equipment, effort, recovery or observations.',
+      'If time is limited, show a priority stopping point AND the complete remaining roster without catch-up sets. Change the roster only for an explicit user request, stated post-goal rule, or safety/equipment need; label any substitution. Ask only questions that materially change the plan.');
+    if(packet.appPlan)lines.push('Treat the app draft as a transparent starting point, not an order. Reconcile it with the log; if you change a target, show the changed number and specific evidence or safety reason so app and AI stay on one progression path.');
     return {packet,text:lines.join('\n')};
   }
   const api={build,compactSets,flatten,summarize};

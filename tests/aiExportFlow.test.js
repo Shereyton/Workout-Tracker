@@ -29,4 +29,17 @@ describe('copy workout for AI flow',()=>{
     expect(document.getElementById('aiExportStatus').textContent).toContain('use Copy');
     const text=document.getElementById('aiExportText');expect(text.selectionEnd).toBe(text.value.length);
   });
+  it('adds the in-app draft after a finished workout without changing logged data',async()=>{
+    window.WorkoutPlanner=require('../progression-planner');
+    document.getElementById('finishBtn').click();
+    [...document.querySelectorAll('[role="dialog"] button')].find(b=>b.textContent==='Save Workout').click();
+    await Promise.resolve();await Promise.resolve();
+    const original=localStorage.getItem('wt_currentExercise');
+    document.getElementById('exportBtn').click();await Promise.resolve();await Promise.resolve();
+    const brief=navigator.clipboard.writeText.mock.calls[0][0];
+    expect(brief).toContain('APP NEXT-WORKOUT DRAFT');
+    expect(brief).toContain('PROGRAMMING LENS');
+    expect(brief).toContain('Bench');
+    expect(localStorage.getItem('wt_currentExercise')).toBe(original);
+  });
 });
