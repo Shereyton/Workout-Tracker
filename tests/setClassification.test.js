@@ -36,7 +36,7 @@ describe('automatic set classification', () => {
 
     expect(classified.sets.map((set) => set.role)).toEqual([
       'warmup', 'ramp', 'ramp', 'ramp',
-      'top_set', 'working', 'working', 'back_off', 'back_off',
+      'working', 'working', 'working', 'back_off', 'back_off',
     ]);
     expect(stats.totalVolume).toBe(10385);
     expect(stats.progressionSetCount).toBe(5);
@@ -53,6 +53,18 @@ describe('automatic set classification', () => {
     expect(classified.sets.map((set) => set.role)).toEqual([
       'working', 'working', 'working',
     ]);
+  });
+
+  it('does not invent a top set in a ramp followed by straight work sets', () => {
+    const classified = classifyExerciseSets({
+      name: 'Squat',
+      sets: [[45, 10], [135, 8], [185, 5], [225, 3],
+        [275, 3], [275, 3], [275, 3], [275, 3], [275, 3]]
+        .map(([weight, reps]) => autoSet(weight, reps)),
+    });
+    expect(classified.sets.slice(4).map((set) => set.role)).toEqual(
+      Array(5).fill('working'),
+    );
   });
 
   it('keeps a narrow productive pyramid while identifying its top set', () => {
