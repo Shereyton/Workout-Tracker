@@ -778,6 +778,8 @@ function classifyExerciseSets(exercise) {
   const hasLowerAfterPeak = analysis.some(
     ({ index, load }) => index > peakIndex && load < maxLoad - loadTolerance,
   );
+  const repeatedPeakBlock = peakCandidates.length > 1
+    && peakCandidates.every(({ reps }) => reps === peakCandidates[0].reps);
 
   const resolvedSets = sets.map((set, index) => {
     if (!isAutomaticRole(set)) return set;
@@ -805,9 +807,11 @@ function classifyExerciseSets(exercise) {
         : 'No comparable external load was available, so completed sets are treated as work.';
     } else if (sameLoad(load, maxLoad)) {
       const isFirstPeak = index === peakIndex;
-      role = isFirstPeak ? 'top_set' : 'working';
+      role = isFirstPeak && !repeatedPeakBlock ? 'top_set' : 'working';
       confidence = hasLowerAfterPeak || peakCandidates.length > 1 ? 'high' : 'moderate';
-      reason = isFirstPeak
+      reason = repeatedPeakBlock
+        ? 'This is part of a repeated same-load, same-rep work block; a distinct top set was not recorded.'
+        : isFirstPeak
         ? 'This is the first set at the session’s heaviest load.'
         : 'This repeats the session’s heaviest load after the first top set.';
     } else if (index > peakIndex && load < maxLoad - loadTolerance) {
@@ -3280,7 +3284,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   function updateExportHint() {
     if (!exportHint) return;
-    exportHint.textContent = 'The current workout selects the exercises. Matching history helps the AI choose the next weights, reps, sets, and rest.';
+    exportHint.textContent = 'Export saves a snapshot to History, even without Finish Workout. Re-export if you change sets. The current workout selects the exercises; matching history guides the next targets.';
   }
   updateExportHint();
 
@@ -5899,7 +5903,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       return true;
     }
     const nextSession = { exercises: [], startedAt: null };
-    if (!wtStorage.setMany([[WT_KEYS.current, null], [WT_KEYS.session, nextSession]])) {
+    if (!wtStorage.setMany([
+      [WT_KEYS.current, null], [WT_KEYS.session, nextSession],
+      [WT_KEYS.dayType, ''], [WT_KEYS.sessionStatus, null], [WT_KEYS.nextWorkoutMinutes, null],
+    ])) {
       showToast('Could not reset the workout. Your sets are still here. Export a backup and try again.');
       return false;
     }
@@ -5913,6 +5920,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     restDisplay.textContent = "00:00";
     stopSessionTimer();
     session = nextSession;
+    dayType = '';
+    sessionStatus = 'complete';
+    nextWorkoutMinutes = null;
+    renderDayType();
+    if (sessionStatusSelect) sessionStatusSelect.value = sessionStatus;
+    if (nextWorkoutMinutesInput) nextWorkoutMinutesInput.value = '';
     currentExercise = null;
     exerciseSelect.value = "";
     interfaceBox.classList.add("hidden");
@@ -6096,7 +6109,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   exportBtn.textContent = 'Copy workout for AI';
   const exportInstructions = document.createElement('p');
   exportInstructions.className = 'ai-export-help';
-  exportInstructions.textContent = 'Copy your results, goals, and matching history into ChatGPT. After you finish, the export also includes the app’s draft next targets for the AI to check.';
+  exportInstructions.textContent = 'Copy your results, goals, matching history, and the app’s draft next targets into ChatGPT. An active workout gets a provisional draft; re-export after later edits.';
   exportBtn.before(exportInstructions);
 
   const exportPreview = document.createElement('section');
@@ -6131,14 +6144,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   async function copyAIExport() {
     const sequence = exportSequence;
     const text = exportText.value;
+    const saveWarning = latestExport?.snapshotSaved === false
+      ? ' Snapshot was NOT saved in the app. Download a backup before resetting.' : '';
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(text);
-      if (sequence === exportSequence) exportStatus.textContent = 'Copied. Paste this into ChatGPT or your AI coach.';
+      if (sequence === exportSequence) exportStatus.textContent = `Copied. Paste this into ChatGPT or your AI coach.${saveWarning}`;
       showToast('Workout brief copied for your AI.');
     } catch {
       if (sequence !== exportSequence) return;
-      exportStatus.textContent = 'Select the brief below and use Copy on your phone.';
+      exportStatus.textContent = `Select the brief below and use Copy on your phone.${saveWarning}`;
       exportText.focus(); exportText.select(); exportText.setSelectionRange(0, text.length);
     }
   }
@@ -6164,11 +6179,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }, downloadOptions);
 
   function exportNotesForRecord(record) {
-    if (Array.isArray(record.workoutNotes)) return { notes: record.workoutNotes, scope: record.workoutNotesScope || 'session' };
+    // Older saves can contain generated set transcriptions in workoutNotes.
+    // They duplicate the actual set log and should not be presented as context.
+    const generatedRow = /^.+:\s*Set\s+\d+\s*[-–]\s*(?:\d+(?:\.\d+)? lbs\s*[×x]\s*\d+ reps?|Failed attempt at \d+(?:\.\d+)? lbs|(?:\d+(?:\.\d+)? mi in )?(?:\d+h\s*)?(?:\d+m\s*)?(?:\d+s))\s*$/i;
+    if (Array.isArray(record.workoutNotes)) return {
+      notes: record.workoutNotes.filter(line => typeof line === 'string' && !generatedRow.test(line)),
+      scope: record.workoutNotesScope || 'session',
+    };
     const history = wtStorage.get(WT_KEYS.history, {});
     const dayLines = Array.isArray(history?.[record.date]) ? history[record.date] : [];
     // Remove exact generated calendar set rows only. Preserve appended safety/context notes.
-    const generatedRow = /^.+:\s*Set\s+\d+\s*[-–]\s*(?:\d+(?:\.\d+)? lbs\s*[×x]\s*\d+ reps?|Failed attempt at \d+(?:\.\d+)? lbs|(?:\d+(?:\.\d+)? mi in )?(?:\d+h\s*)?(?:\d+m\s*)?(?:\d+s))\s*$/i;
     return { notes: dayLines.filter(line => typeof line === 'string' && !generatedRow.test(line)), scope: 'calendar_day' };
   }
 
@@ -6194,7 +6214,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const includeProgress = !!wtStorage.get(WT_KEYS.prefExerciseGoalProgress, false);
       const includeSessionTime = !!wtStorage.get(WT_KEYS.prefSessionTime, false);
       let appPlan = null;
-      if (recordState === 'finished_saved' && window.WorkoutPlanner?.buildNextWorkout) {
+      if ((recordState === 'finished_saved' || recordState === 'active_not_finished') && window.WorkoutPlanner?.buildNextWorkout) {
         try {
           appPlan = window.WorkoutPlanner.buildNextWorkout({
             current: record, history, goals: exerciseGoals,
@@ -6221,7 +6241,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       };
       delete payload.exerciseHighlights;
       if (!includeSessionTime) delete payload.session;
-      latestExport = { packet, text, payload };
+      latestExport = { packet, text, payload, snapshotSaved: true };
       exportSequence += 1;
       exportText.value = text;
       exportPreview.hidden = false;
@@ -6230,8 +6250,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const captured = { ...record, workoutNotes: notes.notes, workoutNotesScope: notes.scope };
       const archiveKey = captured.workoutId || `${captured.date}-${captured.timestamp}`;
       const nextArchive = pruneArchive({ ...archivedSessions, [archiveKey]: captured }, 120);
-      wtStorage.setMany([[WT_KEYS.last, captured.exercises], [WT_KEYS.lastMeta, captured]]);
-      if (wtStorage.set(WT_KEYS.archive, nextArchive)) archivedSessions = nextArchive;
+      const snapshotSaved = wtStorage.setMany([
+        [WT_KEYS.last, captured.exercises], [WT_KEYS.lastMeta, captured], [WT_KEYS.archive, nextArchive],
+      ]);
+      if (snapshotSaved) archivedSessions = nextArchive;
+      else if (recordState === 'active_not_finished') latestExport.snapshotSaved = false;
       notifyStateChanged();
       // Called from the export tap; selectable preview also works without clipboard permission.
       await copyAIExport();

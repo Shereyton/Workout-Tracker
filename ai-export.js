@@ -198,13 +198,15 @@
     });
     const nextMinutes=Object.prototype.hasOwnProperty.call(options,'nextWorkoutMinutes')?options.nextWorkoutMinutes:current.sessionContext?.nextWorkoutMinutes??null;
     const packet={format:VERSION,date:current.date,recordState,dayType:clean(current.dayType)||null,sessionStatus:current.sessionContext?.status||'unknown',nextWorkoutMinutes:nextMinutes,priorityTargetMinutes:nextMinutes===null?null:Math.floor(nextMinutes*0.9),goals:options.currentGoals??current.goals??[],constraints:options.currentConstraints??current.constraints??{},notes,historyLimit:limit,groups:flat.groups,movements};
-    packet.appPlan=recordState==='finished_saved'?appPlanFact(options.appPlan,movements,current.date):null;
+    packet.appPlan=['finished_saved','active_not_finished'].includes(recordState)
+      ?appPlanFact(options.appPlan,movements,current.date):null;
     packet.notesScope=options.notesScope||current.workoutNotesScope||'session';
     const usedHistory=new Set(movements.flatMap(m=>m.history.map(h=>h.contextId)));
     packet.historyContext=priors.filter(p=>usedHistory.has(p.id)).map(p=>({id:p.id,date:p.payload.date,timestamp:p.payload.timestamp,dayType:clean(p.payload.dayType)||null,status:p.payload.sessionContext?.status||'unknown',notes:(p.payload.workoutNotes||[]).filter(x=>typeof x==='string'),notesScope:p.payload.workoutNotesScope||'session'}));
     if(options.includeSessionTime&&current.session)packet.sessionTiming=current.session;
     packet.counts={loggedEntries:(current.exercises||[]).reduce((a,e)=>a+(e.sets?.length||0),0),movementEntries:movements.reduce((a,m)=>a+m.sets.length,0),strengthEntries:movements.filter(m=>m.type==='strength').reduce((a,m)=>a+m.sets.length,0),cardioEntries:movements.filter(m=>m.type==='cardio').reduce((a,m)=>a+m.sets.length,0)};
-    const lines=[`WORKOUT → NEXT SESSION | ${current.date} | ${VERSION}`,`Record: ${recordState}; day: ${packet.dayType||'unspecified'}; session-status setting: ${packet.sessionStatus}.`,`Roster (only these movements for next workout): ${movements.map(m=>JSON.stringify(m.name)).join(', ')}.`,`Counts: ${packet.counts.loggedEntries} log entries (a superset round is one); ${packet.counts.movementEntries} movement entries = ${packet.counts.strengthEntries} strength + ${packet.counts.cardioEntries} cardio.`];
+    const lines=[`WORKOUT → NEXT SESSION | ${current.date} | ${VERSION}`,`Record: ${recordState}; user-selected day label: ${packet.dayType||'unspecified'}; user-selected session outcome: ${packet.sessionStatus}.`,`Roster (only these movements for next workout): ${movements.map(m=>JSON.stringify(m.name)).join(', ')}.`,`Counts: ${packet.counts.loggedEntries} log entries (a superset round is one); ${packet.counts.movementEntries} movement entries = ${packet.counts.strengthEntries} strength + ${packet.counts.cardioEntries} cardio.`];
+    if(recordState==='active_not_finished')lines.push('This is an exported snapshot of an active workout, not a finished-session record. If sets change afterward, re-export before planning.');
     if(packet.sessionTiming)lines.push(`Session timing: ${packet.sessionTiming.sessionStart} → ${packet.sessionTiming.sessionEnd}; ${fmt(packet.sessionTiming.sessionDurationSec)} sec.`);
     if(packet.goals.length)lines.push(`Training focus: ${packet.goals.map(clean).join('; ')}.`);
     const constraintLines=helpers.describeConstraintsLines?helpers.describeConstraintsLines(packet.constraints):[];
@@ -237,7 +239,9 @@
       if(m.comparison){const c=m.comparison;if(c.sameLoadReps.length)lines.push(`Same-load qualifying reps, latest previous → today: ${c.sameLoadReps.map(x=>`${fmt(x.weightLb)} lb [${x.previous.join(',')}]→[${x.current.join(',')}]`).join('; ')}.`);if(c.qualifyingVolumeChangePercent!==undefined)lines.push(`Latest comparison: main-set count ${c.qualifyingSetsDelta>=0?'+':''}${c.qualifyingSetsDelta}; main volume ${c.qualifyingVolumeChangePercent>=0?'+':''}${c.qualifyingVolumeChangePercent}% (dose comparison only; check reps, effort and context).`);}
     });
     if(packet.appPlan){
-      lines.push('','APP NEXT-WORKOUT DRAFT (calculated from this log; not performed or medically verified)');
+      lines.push('',recordState==='active_not_finished'
+        ?'PROVISIONAL APP NEXT-WORKOUT DRAFT (from this active snapshot; recalculate after later edits)'
+        :'APP NEXT-WORKOUT DRAFT (calculated from this log; not performed or medically verified)');
       packet.appPlan.exercises.forEach((ex,i)=>{
         lines.push(`${i+1}. ${JSON.stringify(ex.name)}: ${ex.action||'REVIEW'} [${ex.confidence||'unknown'} confidence]${ex.reviewRequired?' — review before following':''}.`);
         if(ex.main.length)lines.push(`  Main: ${compactPlanSets(ex.main,ex.type)}.`);
@@ -252,7 +256,7 @@
       'Keep the logged scheme: straight 5×5, top set plus back-offs, or rep range only when actually identifiable. Complete assigned work before escalating; compare like loads/roles across sessions. Change one variable at a time; hold or reduce after misses, pain, poor form or uncertain data. Do not add a heavy single or extra exercise just because a strength goal exists.',
       'The app’s exact 5×5 completion/reset, two-comparable-session, load-step and fatigue cutoffs are coaching heuristics, not proven individual laws. General evidence anchors: ACSM position stand https://pubmed.ncbi.nlm.nih.gov/41843416/ ; autoregulation review https://pubmed.ncbi.nlm.nih.gov/40791980/ ; strength rest review https://pubmed.ncbi.nlm.nih.gov/28933024/ .');
     lines.push('','NEXT WORKOUT REQUEST',
-      'Start with DO THIS NEXT. Prescribe the full current-session roster in order, same day and superset groups; history informs progression, never exercise selection. Give warm-ups, exact main sets/load/reps (or cardio time/distance), rest, effort, next progression trigger and one reason per movement.',
+      'Start with DO THIS NEXT. Prescribe the full current-session roster in order and preserve superset groups. The day label is user-selected context; if it conflicts with the exercises, flag it rather than moving or adding movements. History informs progression, never exercise selection. Give warm-ups, exact main sets/load/reps (or cardio time/distance), rest, effort, next progression trigger and one reason per movement.',
       'Compare assigned versus completed work and like-for-like history. Preserve the identifiable scheme; choose the smallest justified change in load, reps or sets. Holds/reductions are valid. Explain meaningful previous→next numbers and confidence; mark exact rules as evidence-backed or coaching heuristics. Do not invent maxes, equipment, effort, recovery or observations.',
       'If time is limited, show a priority stopping point AND the complete remaining roster without catch-up sets. Change the roster only for an explicit user request, stated post-goal rule, or safety/equipment need; label any substitution. Ask only questions that materially change the plan.');
     if(packet.appPlan)lines.push('Treat the app draft as a transparent starting point, not an order. Reconcile it with the log; if you change a target, show the changed number and specific evidence or safety reason so app and AI stay on one progression path.');

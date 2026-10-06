@@ -106,13 +106,17 @@ describe('AI programming handoff',()=>{
     expect(result.text).toContain('if you change a target, show the changed number');
     expect(result.text).not.toMatch(/NaN|Infinity/);
   });
-  it('omits a draft for an unfinished session or a mismatched exercise roster',()=>{
+  it('allows a provisional active-session draft but rejects a mismatched exercise roster',()=>{
     const record=current();
     const appPlan={selectionRule:'current_session_only',sourceDate:record.date,
       exercises:[{name:'Squat',type:'strength',workingSets:[{weight:225,reps:5}]}]};
     expect(build({current:record,helpers,recordState:'finished_saved',appPlan}).packet.appPlan).toBeNull();
     appPlan.exercises[0].name='Bench Press';
-    expect(build({current:record,helpers,recordState:'active_not_finished',appPlan}).packet.appPlan).toBeNull();
+    const active=build({current:record,helpers,recordState:'active_not_finished',appPlan});
+    expect(active.packet.appPlan).not.toBeNull();
+    expect(active.text).toContain('PROVISIONAL APP NEXT-WORKOUT DRAFT');
+    expect(active.text).toContain('exported snapshot of an active workout');
+    expect(build({current:record,helpers,recordState:'saved_export_finish_unknown',appPlan}).packet.appPlan).toBeNull();
   });
   it('preserves and compares a distance-only cardio assignment without inventing a time target',()=>{
     const record=workout('2026-08-03',[{name:'Walk',isCardio:true,sets:[{distance:1,duration:600}],prescription:{source:'app_next_workout',type:'cardio',workingSets:[{distance:1.05,duration:null}]}}]);
