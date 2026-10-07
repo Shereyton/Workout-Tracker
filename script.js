@@ -98,6 +98,7 @@ const EXERCISE_PURPOSES = Object.freeze({
   general: Object.freeze({ label: 'General progression', repMin: 6, repMax: 12, targetRir: 2 }),
   primary_strength: Object.freeze({ label: 'Primary strength lift', repMin: 1, repMax: 5, targetRir: 2 }),
   secondary_strength: Object.freeze({ label: 'Secondary strength lift', repMin: 3, repMax: 8, targetRir: 2 }),
+  strength_isolation: Object.freeze({ label: 'Isolation lift (strength goal)', repMin: 6, repMax: 12, targetRir: 2 }),
   hypertrophy_compound: Object.freeze({ label: 'Hypertrophy compound', repMin: 6, repMax: 12, targetRir: 2 }),
   hypertrophy_isolation: Object.freeze({ label: 'Hypertrophy isolation', repMin: 8, repMax: 20, targetRir: 2 }),
   power_skill: Object.freeze({ label: 'Power / skill', repMin: 1, repMax: 5, targetRir: 3 }),
@@ -225,7 +226,8 @@ function buildAutomaticExerciseProfile(exerciseName, goal, previousProfile = nul
   const path = normalizeGoalPath(normalizedGoal?.goalPath, goalType);
   let purpose = 'general';
   if (path === 'performance') purpose = 'conditioning';
-  else if (path === 'strength') purpose = 'primary_strength';
+  else if (path === 'strength') purpose = isLikelyIsolationExercise(exerciseName)
+    ? 'strength_isolation' : 'primary_strength';
   else if (path === 'balanced') purpose = 'hybrid';
   else if (path === 'hypertrophy') {
     purpose = isLikelyIsolationExercise(exerciseName)
@@ -5857,6 +5859,27 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       workoutNotes: saved?.workoutNotes,
       workoutNotesScope: saved?.workoutNotesScope,
     });
+    // Current automatic profiles are policy, not historical observations. Refresh
+    // a copied active record so an older one-rep isolation default cannot leak
+    // into the visible plan or AI export after an app update.
+    if (!saved) record.exercises.forEach((exercise) => {
+      if (exercise.isCardio) return;
+      if (exercise.isSuperset) {
+        (exercise.exercises || []).forEach((name) => {
+          const key = exerciseGoalKey(name);
+          const profile = exercise.progressionProfiles?.[key];
+          if (exerciseGoals[key] && normalizeExerciseProfile(profile).mode !== 'custom') {
+            exercise.progressionProfiles ||= {};
+            exercise.progressionProfiles[key] = buildAutomaticExerciseProfile(name, exerciseGoals[key], profile);
+          }
+        });
+      } else {
+        const key = exerciseGoalKey(exercise.name);
+        if (exerciseGoals[key] && normalizeExerciseProfile(exercise.progressionProfile).mode !== 'custom') {
+          exercise.progressionProfile = buildAutomaticExerciseProfile(exercise.name, exerciseGoals[key], exercise.progressionProfile);
+        }
+      }
+    });
     // A saved goal snapshot belongs to that workout, even after the user's goal changes.
     if (saved) {
       const oldByName = new Map((saved.exercises || []).filter(Boolean).map(ex => [exerciseGoalKey(ex.name), ex]));
@@ -6219,7 +6242,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
           appPlan = window.WorkoutPlanner.buildNextWorkout({
             current: record, history, goals: exerciseGoals,
             helpers: { classifyExerciseSets, computeSessionStats,
-              buildStrengthDecisionSupport, normalizeExerciseProfile },
+              buildStrengthDecisionSupport, normalizeExerciseProfile, buildAutomaticExerciseProfile },
           });
         } catch (plannerError) {
           console.warn('In-app draft unavailable for this export', plannerError);

@@ -168,10 +168,17 @@
       });
   }
 
-  function profileFor(exercise, helpers) {
+  function profileFor(exercise, helpers, goals = null) {
+    const activeGoal = Object.entries(goals || {}).find(([name]) => key(name) === key(exercise.name))?.[1]
+      || exercise.goal;
+    const savedProfile = exercise.progressionProfile;
+    const effectiveProfile = savedProfile?.mode !== 'custom' && activeGoal
+      && typeof helpers.buildAutomaticExerciseProfile === 'function'
+      ? helpers.buildAutomaticExerciseProfile(exercise.name, activeGoal, savedProfile)
+      : savedProfile;
     const profile = typeof helpers.normalizeExerciseProfile === 'function'
-      ? helpers.normalizeExerciseProfile(exercise.progressionProfile)
-      : exercise.progressionProfile || {};
+      ? helpers.normalizeExerciseProfile(effectiveProfile)
+      : effectiveProfile || {};
     const repMin = number(profile.repMin, 1, 100) ?? 6;
     return {
       ...profile,
@@ -368,10 +375,13 @@
 
   function planStrength(exercise, previousExercises, current, helpers, goals) {
     const plan = basePlan(exercise, goals);
-    const profile = profileFor(exercise, helpers);
+    const profile = profileFor(exercise, helpers, goals);
     const valid = exercise.sets.map(cleanStrength).filter(Boolean);
     const work = valid.filter((set) => WORK_ROLES.has(set.role) && set.pain !== 'stopped' && set.technique !== 'poor');
-    const assigned = assignedStrengthTargets(exercise, profile);
+    const savedAssignment = assignedStrengthTargets(exercise, profile);
+    const staleIsolationAssignment = profile.mode === 'auto' && profile.purpose === 'strength_isolation'
+      && savedAssignment?.some((set) => set.reps < profile.repMin);
+    const assigned = staleIsolationAssignment ? null : savedAssignment;
     attachGoalProgress(plan, work);
     plan.preparationSets = valid.filter((set) => PREP_ROLES.has(set.role) && set.technique !== 'poor')
       .map((set, index) => strengthTarget(set, index, profile, true));
@@ -502,6 +512,13 @@
     }
 
     const topWeight = Math.max(...work.map((set) => set.weight));
+    const buildIsolationReps = profile.purpose === 'strength_isolation' && !structured
+      && plan.action === 'ADD LOAD'
+      && work.some((set) => set.weight === topWeight && set.reps < profile.repMax);
+    if (buildIsolationReps) {
+      plan.action = 'ADD REPS';
+      plan.evidence.heuristic.push('For an automatic isolation-strength plan, build the highest-load work toward the saved rep ceiling before another load step. This is a coaching rule, not a proven personal optimum.');
+    }
     if (plan.action === 'ADD LOAD') {
       const topGroupWeight = structured ? Math.max(...work.filter((set) => set.role === 'top_set').map((set) => set.weight)) : topWeight;
       const nextWeight = round(topGroupWeight + profile.loadStep);
@@ -511,7 +528,8 @@
         plan.reason = 'The available weight jump is too large for a small next step. Repeat this weight or choose a smaller equipment increment.';
       } else {
         plan.workingSets = plan.workingSets.map((set) => (structured ? set.role === 'top_set' : set.weight === topWeight)
-          ? { ...set, weight: nextWeight, reps: Math.min(set.reps, profile.repMin) } : set);
+          ? { ...set, weight: nextWeight, reps: profile.purpose === 'strength_isolation' && !structured
+            ? Math.max(profile.repMin, set.reps - 1) : Math.min(set.reps, profile.repMin) } : set);
         plan.reason = structured ? plan.reason : fiveByFiveComplete
           ? `You completed the configured five sets of five. Try one ${profile.loadStep} lb step higher for five sets of five; repeat that load until all 25 reps are completed. This is your 5×5 progression rule, not a guaranteed rate of gain.`
           : `Your recent sets support the next ${profile.loadStep} lb step. Keep the same number of sets and rebuild reps at the new weight.`;
@@ -522,11 +540,14 @@
     }
     if (plan.action === 'ADD REPS') {
       const candidates = plan.workingSets.map((set, index) => ({ set, index }))
-        .filter(({ set }) => set.reps < profile.repMax)
+        .filter(({ set }) => set.reps < profile.repMax
+          && (profile.purpose !== 'strength_isolation' || set.weight === topWeight))
         .sort((a, b) => a.set.reps - b.set.reps || b.index - a.index);
       if (candidates.length) {
         plan.workingSets[candidates[0].index].reps += 1;
-        plan.reason = 'Aim for one extra clean rep across the whole exercise. Keep the weight and number of sets the same.';
+        plan.reason = profile.purpose === 'strength_isolation'
+          ? 'Keep the load steady and add one clean rep to the heaviest working block. Build repeatable reps before another load step.'
+          : 'Aim for one extra clean rep across the whole exercise. Keep the weight and number of sets the same.';
       } else plan.action = 'HOLD';
     }
     if (plan.action === 'REDUCE LOAD') {
@@ -572,9 +593,17 @@
         ? 'Complete all five sets of five at the prescribed load without reported pain or form breakdown; use the smallest saved load step when effort permits.'
         : assigned && !assignedMet
           ? 'Complete the assigned sets at the planned loads and reps with acceptable technique before adding demand.'
+          : profile.purpose === 'strength_isolation'
+            ? `Build every highest-load working set toward ${profile.repMax} clean reps before considering the smallest available load step.`
           : /strength|power/.test(profile.purpose || '')
             ? 'Complete the prescribed work with controlled technique and tolerable effort; compare it with recent sessions before the next load increase.'
             : `Build clean reps through the saved ${profile.repMin}–${profile.repMax} range; increase load only when the upper target is repeatable.`;
+    }
+    if (staleIsolationAssignment) {
+      plan.needsReview = true;
+      plan.confidence = 'LOW';
+      plan.reason = `${plan.reason || 'Review the new target.'} An older app-generated isolation target below ${profile.repMin} reps was ignored; check the updated plan before training.`;
+      plan.progressionTrigger = `Confirm the updated ${profile.repMin}–${profile.repMax} rep range before using another saved assignment.`;
     }
     return finalize(plan);
   }

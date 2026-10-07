@@ -41,6 +41,9 @@ describe('custom exercise goals', () => {
       goalPath: 'hypertrophy',
       goalValue: 60,
     }, { loadStep: 5 });
+    const strongerIsolation = buildAutomaticExerciseProfile('Rear Delt Fly', {
+      exerciseName: 'Rear Delt Fly', goalType: 'weight', goalPath: 'strength', goalValue: 95,
+    }, { loadStep: 5 });
     const noGoal = buildAutomaticExerciseProfile('Bench Press', null, { loadStep: 5 });
 
     expect(strength).toMatchObject({
@@ -48,6 +51,9 @@ describe('custom exercise goals', () => {
     });
     expect(muscleIsolation).toMatchObject({
       mode: 'auto', purpose: 'hypertrophy_isolation', repMin: 8, repMax: 20,
+    });
+    expect(strongerIsolation).toMatchObject({
+      mode: 'auto', purpose: 'strength_isolation', repMin: 6, repMax: 12,
     });
     expect(noGoal).toMatchObject({
       mode: 'auto', purpose: 'general', repMin: 6, repMax: 12,

@@ -55,6 +55,46 @@ describe('current workout controls the next exercise roster', () => {
   });
 });
 
+describe('automatic isolation strength progression', () => {
+  const goal = { exerciseName: 'Rear Delt Fly', goalType: 'weight', goalPath: 'strength', goalValue: 95 };
+  const legacyProfile = { mode: 'auto', purpose: 'primary_strength', repMin: 1, repMax: 5, targetRir: 2, loadStep: 5 };
+  const rearDelt = (extra = {}) => exercise('Rear Delt Fly', [set(90, 6), set(90, 6), set(90, 6)], {
+    progressionProfile: legacyProfile, goal, ...extra,
+  });
+
+  it('builds reps instead of turning repeated six-rep sets into 95 lb singles', () => {
+    const result = target(workout('2026-09-20', [rearDelt()]), [
+      workout('2026-09-18', [rearDelt()]),
+    ], { goals: { 'rear delt fly': goal } });
+    expect(result.repRange).toEqual([6, 12]);
+    expect(result.action).toBe('ADD REPS');
+    expect(result.workingSets.map((s) => [s.weight, s.reps])).toEqual([[90, 6], [90, 6], [90, 7]]);
+  });
+
+  it('does not carry forward an older app-generated one-rep isolation assignment', () => {
+    const oldAssignment = { source: 'app_next_workout', type: 'strength', sourceDate: '2026-09-18',
+      workingSets: [1, 2, 3].map(() => ({ role: 'working', weight: 95, reps: 1, restSeconds: 120 })),
+      preparationSets: [] };
+    const result = target(workout('2026-09-20', [rearDelt({ prescription: oldAssignment })]), [
+      workout('2026-09-18', [rearDelt()]),
+    ], { goals: { 'rear delt fly': goal } });
+    expect(result.needsReview).toBe(true);
+    expect(result.workingSets.every((s) => s.reps >= 6)).toBe(true);
+    expect(result.reason).toMatch(/older app-generated isolation target/i);
+  });
+
+  it('uses a modest rep reset when an isolation lift earns a load increase', () => {
+    const complete = exercise('Rear Delt Fly', [set(90, 12), set(90, 12), set(90, 12)], {
+      progressionProfile: legacyProfile, goal,
+    });
+    const result = target(workout('2026-09-20', [complete]), [
+      workout('2026-09-18', [complete]),
+    ], { goals: { 'rear delt fly': goal } });
+    expect(result.action).toBe('ADD LOAD');
+    expect(result.workingSets.map((s) => [s.weight, s.reps])).toEqual([[95, 11], [95, 11], [95, 11]]);
+  });
+});
+
 describe('ready-to-follow strength targets', () => {
   const assigned = (workingSets) => ({source:'app_next_workout',type:'strength',sourceDate:'2026-09-18',workingSets:workingSets.map(([weight,reps])=>({role:'working',weight,reps,restSeconds:180})),preparationSets:[]});
   const fiveByFiveProfile = { mode: 'custom', purpose: 'primary_strength', repMin: 5, repMax: 5, targetRir: 2, loadStep: 2.5 };
