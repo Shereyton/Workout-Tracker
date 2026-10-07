@@ -137,7 +137,9 @@
           &&(s.role==='working'||logged.role===s.role)
           &&logged.pain!=='stopped'&&logged.technique!=='poor');
     },0);
-    return `Assigned main target${target.sourceDate?` (from ${target.sourceDate})`:''}: ${runs.map(r=>`${r.count}×${r.value}`).join(' | ')}. Numeric targets met ${met}/${target.workingSets.length}; ${actual.length} qualifying main entries logged. Missing entries are not automatically failed sets.`;
+    const outdatedAutoTarget=m.type==='strength'&&m.profile?.source==='automatic_app_settings'
+      &&target.workingSets.some(s=>s.reps<m.profile.repMin);
+    return `Assigned main target${target.sourceDate?` (from ${target.sourceDate})`:''}: ${runs.map(r=>`${r.count}×${r.value}`).join(' | ')}. Numeric targets met ${met}/${target.workingSets.length}; ${actual.length} qualifying main entries logged. Missing entries are not automatically failed sets.${outdatedAutoTarget?' This older app target is below the current automatic rep range; review it instead of treating it as mandatory.':''}`;
   }
   function profileText(p){
     if(!p)return '';
@@ -205,7 +207,10 @@
     packet.historyContext=priors.filter(p=>usedHistory.has(p.id)).map(p=>({id:p.id,date:p.payload.date,timestamp:p.payload.timestamp,dayType:clean(p.payload.dayType)||null,status:p.payload.sessionContext?.status||'unknown',notes:(p.payload.workoutNotes||[]).filter(x=>typeof x==='string'),notesScope:p.payload.workoutNotesScope||'session'}));
     if(options.includeSessionTime&&current.session)packet.sessionTiming=current.session;
     packet.counts={loggedEntries:(current.exercises||[]).reduce((a,e)=>a+(e.sets?.length||0),0),movementEntries:movements.reduce((a,m)=>a+m.sets.length,0),strengthEntries:movements.filter(m=>m.type==='strength').reduce((a,m)=>a+m.sets.length,0),cardioEntries:movements.filter(m=>m.type==='cardio').reduce((a,m)=>a+m.sets.length,0)};
-    const lines=[`WORKOUT → NEXT SESSION | ${current.date} | ${VERSION}`,`Record: ${recordState}; user-selected day label: ${packet.dayType||'unspecified'}; user-selected session outcome: ${packet.sessionStatus}.`,`Roster (only these movements for next workout): ${movements.map(m=>JSON.stringify(m.name)).join(', ')}.`,`Counts: ${packet.counts.loggedEntries} log entries (a superset round is one); ${packet.counts.movementEntries} movement entries = ${packet.counts.strengthEntries} strength + ${packet.counts.cardioEntries} cardio.`];
+    const outcomeNote=packet.sessionStatus==='complete'
+      ? ' (complete is the app default unless changed; this setting alone does not mean Finish Workout was pressed)'
+      : '';
+    const lines=[`WORKOUT → NEXT SESSION | ${current.date} | ${VERSION}`,`Record: ${recordState}; user-selected day label: ${packet.dayType||'unspecified'}; session outcome setting: ${packet.sessionStatus}${outcomeNote}.`,`Roster (only these movements for next workout): ${movements.map(m=>JSON.stringify(m.name)).join(', ')}.`,`Counts: ${packet.counts.loggedEntries} log entries (a superset round is one); ${packet.counts.movementEntries} movement entries = ${packet.counts.strengthEntries} strength + ${packet.counts.cardioEntries} cardio.`];
     if(recordState==='active_not_finished')lines.push('This is an exported snapshot of an active workout, not a finished-session record. If sets change afterward, re-export before planning.');
     if(packet.sessionTiming)lines.push(`Session timing: ${packet.sessionTiming.sessionStart} → ${packet.sessionTiming.sessionEnd}; ${fmt(packet.sessionTiming.sessionDurationSec)} sec.`);
     if(packet.goals.length)lines.push(`Training focus: ${packet.goals.map(clean).join('; ')}.`);
@@ -258,7 +263,8 @@
     lines.push('','NEXT WORKOUT REQUEST',
       'Start with DO THIS NEXT. Prescribe the full current-session roster in order and preserve superset groups. The day label is user-selected context; if it conflicts with the exercises, flag it rather than moving or adding movements. History informs progression, never exercise selection. Give warm-ups, exact main sets/load/reps (or cardio time/distance), rest, effort, next progression trigger and one reason per movement.',
       'Compare assigned versus completed work and like-for-like history. Preserve the identifiable scheme; choose the smallest justified change in load, reps or sets. Holds/reductions are valid. Explain meaningful previous→next numbers and confidence; mark exact rules as evidence-backed or coaching heuristics. Do not invent maxes, equipment, effort, recovery or observations.',
-      'If time is limited, show a priority stopping point AND the complete remaining roster without catch-up sets. Change the roster only for an explicit user request, stated post-goal rule, or safety/equipment need; label any substitution. Ask only questions that materially change the plan.');
+      'A logged successful rep is not independent proof of clean technique, effort or a tested max. Preserve the exercise roster, not an arbitrary exact set count; distinguish warm-ups from working sets and justify the planned dose and time estimate.',
+      'If time is limited, show a priority stopping point AND the complete remaining roster without catch-up sets. Change the roster only for an explicit user request, stated post-goal rule, or safety/equipment need; label any substitution. Pain, a miss or form breakdown must not trigger mandatory fallback sets or an invented precise substitution; stop the affected work and give a conditional safety path. Ask only questions that materially change the plan.');
     if(packet.appPlan)lines.push('Treat the app draft as a transparent starting point, not an order. Reconcile it with the log; if you change a target, show the changed number and specific evidence or safety reason so app and AI stay on one progression path.');
     return {packet,text:lines.join('\n')};
   }

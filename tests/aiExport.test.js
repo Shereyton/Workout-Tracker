@@ -103,6 +103,9 @@ describe('AI programming handoff',()=>{
     expect(result.text).toContain('Why: Repeat the assigned load after a late missed rep.');
     expect(result.text).toContain('Next increase requires: Complete all planned reps');
     expect(result.text).toContain('coaching heuristics, not proven individual laws');
+    expect(result.text).toContain('A logged successful rep is not independent proof');
+    expect(result.text).toContain('must not trigger mandatory fallback sets');
+    expect(result.text).toContain('session outcome setting: unknown');
     expect(result.text).toContain('if you change a target, show the changed number');
     expect(result.text).not.toMatch(/NaN|Infinity/);
   });
@@ -116,6 +119,9 @@ describe('AI programming handoff',()=>{
     expect(active.packet.appPlan).not.toBeNull();
     expect(active.text).toContain('PROVISIONAL APP NEXT-WORKOUT DRAFT');
     expect(active.text).toContain('exported snapshot of an active workout');
+    const defaultOutcome=build({current:{...record,sessionContext:{status:'complete'}},helpers,recordState:'active_not_finished'});
+    expect(defaultOutcome.text).toContain('complete is the app default unless changed');
+    expect(defaultOutcome.text).toContain('does not mean Finish Workout was pressed');
     expect(build({current:record,helpers,recordState:'saved_export_finish_unknown',appPlan}).packet.appPlan).toBeNull();
   });
   it('preserves and compares a distance-only cardio assignment without inventing a time target',()=>{
@@ -123,6 +129,16 @@ describe('AI programming handoff',()=>{
     const result=build({current:record,helpers});
     expect(result.packet.movements[0].prescription.workingSets[0]).toEqual({durationSeconds:null,distanceMiles:1.05});
     expect(result.text).toContain('Assigned main target: 1×1.05 mi. Numeric targets met 0/1');
+  });
+  it('flags an older app assignment below the current automatic rep range',()=>{
+    const record=workout('2026-10-06',[lift('Rear Delt Fly',[[90,6],[90,6],[90,6]],{
+      goal:{exerciseName:'Rear Delt Fly',goalType:'weight',goalValue:95,unit:'lbs',goalPath:'strength'},
+      progressionProfile:{mode:'auto',purpose:'strength_isolation',repMin:6,repMax:12,targetRir:2,loadStep:5},
+      prescription:{source:'app_next_workout',type:'strength',sourceDate:'2026-10-01',
+        workingSets:[1,2,3].map(()=>({role:'working',weight:95,reps:1}))},
+    })]);
+    const result=build({current:record,helpers});
+    expect(result.text).toContain('below the current automatic rep range');
   });
   it('includes historical notes once and honors bounded history and timing preferences',()=>{
     const record=workout('2026-08-03',[lift('Bench',[[135,5]]),lift('Row',[[100,5]])],{sessionContext:{status:'time_limited',nextWorkoutMinutes:45},session:{sessionStart:'2026-08-03T17:00:00Z',sessionEnd:'2026-08-03T18:00:00Z'}});
