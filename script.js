@@ -271,6 +271,9 @@ function normalizeExerciseGoal(value, exerciseName = '', nowIso = new Date().toI
     : 'weight';
   const goalValue = Number(value.goalValue ?? value.goalWeight);
   if (!name || !Number.isFinite(goalValue) || goalValue <= 0) return null;
+  const requestedReps = Number(value.targetReps ?? 1);
+  const targetReps = Number.isInteger(requestedReps) && requestedReps >= 1 && requestedReps <= 20
+    ? requestedReps : 1;
   const createdAt = trimString(value.dateCreated || value.createdAt || nowIso, 40);
   const updatedAt = trimString(value.lastUpdated || value.updatedAt || nowIso, 40);
   const best = Number(value.currentBestPerformance);
@@ -288,7 +291,7 @@ function normalizeExerciseGoal(value, exerciseName = '', nowIso = new Date().toI
     goalPath,
     goalPathLabel: GOAL_PATHS[goalPath].label,
     goalValue,
-    ...(goalType === 'weight' ? { goalWeight: goalValue } : {}),
+    ...(goalType === 'weight' ? { goalWeight: goalValue, targetReps } : {}),
     unit: trimString(value.unit || meta.unit, 20),
     dateCreated: createdAt || nowIso,
     lastUpdated: updatedAt || nowIso,
@@ -312,7 +315,7 @@ function sanitizeExerciseGoals(value) {
   return out;
 }
 
-function getGoalPerformanceFromExercise(exercise, goalType, exerciseName = '') {
+function getGoalPerformanceFromExercise(exercise, goalType, exerciseName = '', targetReps = 1) {
   if (!exercise || !Array.isArray(exercise.sets)) return 0;
   const classifiedExercise = classifyExerciseSets(exercise);
   const values = [];
@@ -325,6 +328,7 @@ function getGoalPerformanceFromExercise(exercise, goalType, exerciseName = '') {
       || normalizeTechnique(set.technique) === 'poor'
     ) return;
     if (['weight', 'reps'].includes(goalType) && !isProgressionSet(set)) return;
+    if (goalType === 'weight' && Number(set.reps) < targetReps) return;
     let value = null;
     if (goalType === 'weight') value = Number(set.weight);
     else if (goalType === 'reps') value = Number(set.reps);
@@ -379,7 +383,7 @@ function buildExerciseGoalSnapshots(exercise, goalsByExercise) {
   return names.filter(Boolean).map((name) => {
     const goal = safeGoals[exerciseGoalKey(name)];
     if (!goal) return null;
-    const performance = getGoalPerformanceFromExercise(exercise, goal.goalType, name);
+    const performance = getGoalPerformanceFromExercise(exercise, goal.goalType, name, goal.targetReps);
     return updateExerciseGoalProgress(goal, performance);
   }).filter(Boolean);
 }
@@ -408,7 +412,7 @@ function exerciseGoalForExport(goal, includeProgress = false) {
     goalPathLabel: normalized.goalPathLabel,
     goalValue: normalized.goalValue,
     ...(normalized.goalType === 'weight'
-      ? { goalWeight: normalized.goalWeight }
+      ? { goalWeight: normalized.goalWeight, targetReps: normalized.targetReps }
       : {}),
     unit: normalized.unit,
     dateCreated: normalized.dateCreated,
@@ -455,11 +459,13 @@ function buildGoalInsight(goal) {
   const best = normalized.currentBestPerformance;
   const remaining = normalized.remainingDistanceToGoal;
   const pathLabel = normalized.goalPathLabel;
+  const repContext = normalized.goalType === 'weight'
+    ? ` for at least ${normalized.targetReps} rep${normalized.targetReps === 1 ? '' : 's'}` : '';
   if (remaining <= 0) {
-    return `${pathLabel} coaching is active. Goal reached with a logged best of ${formatGoalNumber(best)} ${normalized.unit}. Confirm it with controlled, high-quality work before setting the next target.`;
+    return `${pathLabel} coaching is active. Target recorded with a logged best of ${formatGoalNumber(best)} ${normalized.unit}${repContext}. Form and effort are not independently verified; confirm it with controlled, high-quality work before setting the next target.`;
   }
   if (best <= 0) {
-    return `${pathLabel} coaching is active. Log a normal baseline workout, then export it so the AI can calculate the next exact step toward ${formatGoalNumber(normalized.goalValue)} ${normalized.unit}.`;
+    return `${pathLabel} coaching is active. Log a normal baseline workout, then export it so the AI can calculate the next step toward ${formatGoalNumber(normalized.goalValue)} ${normalized.unit}${repContext}.`;
   }
   if (normalized.goalType === 'weight') {
     return `${pathLabel} coaching is active. Your logged best is ${formatGoalNumber(remaining)} ${normalized.unit} below the long-term goal. The AI should use the smallest available increment and progress one variable at a time after clean, repeatable work.`;
@@ -2761,6 +2767,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseGoalAction = document.getElementById('exerciseGoalAction');
   const exerciseGoalStatus = document.getElementById('exerciseGoalStatus');
   const exerciseGoalBest = document.getElementById('exerciseGoalBest');
+  const exerciseGoalBestLabel = document.getElementById('exerciseGoalBestLabel');
   const exerciseGoalTarget = document.getElementById('exerciseGoalTarget');
   const exerciseGoalRemaining = document.getElementById('exerciseGoalRemaining');
   const exerciseGoalProgressBar = document.getElementById('exerciseGoalProgressBar');
@@ -2775,6 +2782,8 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseGoalPathHint = document.getElementById('exerciseGoalPathHint');
   const exerciseGoalValue = document.getElementById('exerciseGoalValue');
   const exerciseGoalValueLabel = document.getElementById('exerciseGoalValueLabel');
+  const exerciseGoalRepsField = document.getElementById('exerciseGoalRepsField');
+  const exerciseGoalReps = document.getElementById('exerciseGoalReps');
   const saveExerciseGoal = document.getElementById('saveExerciseGoal');
   const removeExerciseGoal = document.getElementById('removeExerciseGoal');
   const themePackButton = document.getElementById('themePackButton');
@@ -4403,6 +4412,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       duration: 'e.g. 30',
     };
     exerciseGoalValue.placeholder = examples[type] || 'Enter target';
+    exerciseGoalRepsField.classList.toggle('hidden', type !== 'weight');
   }
 
   function updateExerciseGoalPathField() {
@@ -4434,8 +4444,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         exercise,
         previous.goalType,
         name,
+        previous.targetReps,
       );
-      const historicalBest = getBestHistoricalGoalPerformance(name, previous.goalType);
+      const historicalBest = getBestHistoricalGoalPerformance(name, previous.goalType, previous.targetReps);
       const best = Math.max(currentPerformance, historicalBest);
       const snapshot = normalizeExerciseGoal({
         ...previous,
@@ -4452,7 +4463,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (changed) persistExerciseGoals();
   }
 
-  function getBestHistoricalGoalPerformance(exerciseName, goalType) {
+  function getBestHistoricalGoalPerformance(exerciseName, goalType, targetReps = 1) {
     let best = 0;
     const inspectExercises = (exercises) => {
       (Array.isArray(exercises) ? exercises : []).forEach((exercise) => {
@@ -4463,7 +4474,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         ) {
           best = Math.max(
             best,
-            getGoalPerformanceFromExercise(exercise, goalType, exerciseName),
+            getGoalPerformanceFromExercise(exercise, goalType, exerciseName, targetReps),
           );
         }
       });
@@ -4502,8 +4513,12 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     removeExerciseGoal.classList.toggle('hidden', !goal);
 
     if (goal) {
+      exerciseGoalBestLabel.textContent = goal.goalType === 'weight' && goal.targetReps > 1
+        ? `Best at ${goal.targetReps}+ reps` : 'Logged best';
       const bestText = `${formatGoalNumber(goal.currentBestPerformance)} ${goal.unit}`;
-      const targetText = `${formatGoalNumber(goal.goalValue)} ${goal.unit}`;
+      const targetText = goal.goalType === 'weight'
+        ? `${formatGoalNumber(goal.goalValue)} ${goal.unit} × ${goal.targetReps}`
+        : `${formatGoalNumber(goal.goalValue)} ${goal.unit}`;
       const remainingText = `${formatGoalNumber(goal.remainingDistanceToGoal)} ${goal.unit}`;
       exerciseGoalBest.textContent = bestText;
       exerciseGoalTarget.textContent = targetText;
@@ -4518,7 +4533,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         ? 'balanced'
         : goal.goalPath;
       exerciseGoalValue.value = formatGoalNumber(goal.goalValue);
+      exerciseGoalReps.value = String(goal.targetReps || 1);
     } else {
+      exerciseGoalBestLabel.textContent = 'Logged best';
       exerciseGoalBest.textContent = '—';
       exerciseGoalTarget.textContent = '—';
       exerciseGoalRemaining.textContent = '—';
@@ -4526,6 +4543,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       syncExerciseGoalTypeOptions();
       exerciseGoalPath.value = currentExercise.isCardio ? 'balanced' : 'strength';
       exerciseGoalValue.value = '';
+      exerciseGoalReps.value = '1';
       exerciseGoalCoachPlan.textContent = '';
     }
     updateExerciseGoalValueField();
@@ -4563,12 +4581,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const goalType = exerciseGoalType.value;
     const goalPath = normalizeGoalPath(exerciseGoalPath.value, goalType);
     const goalValue = Number(exerciseGoalValue.value);
+    const targetReps = goalType === 'weight' ? Number(exerciseGoalReps.value) : 1;
     if (
       !exerciseName
       || !EXERCISE_GOAL_TYPES[goalType]
       || !getAllowedGoalTypes(exerciseName).includes(goalType)
       || !Number.isFinite(goalValue)
       || goalValue <= 0
+      || (goalType === 'weight' && (!Number.isInteger(targetReps) || targetReps < 1 || targetReps > 20))
     ) {
       showToast('Enter a valid goal value');
       return;
@@ -4576,17 +4596,19 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const key = exerciseGoalKey(exerciseName);
     const previous = exerciseGoals[key];
     const now = new Date().toISOString();
-    const performance = getGoalPerformanceFromExercise(currentExercise, goalType, exerciseName);
-    const historicalBest = getBestHistoricalGoalPerformance(exerciseName, goalType);
+    const performance = getGoalPerformanceFromExercise(currentExercise, goalType, exerciseName, targetReps);
+    const historicalBest = getBestHistoricalGoalPerformance(exerciseName, goalType, targetReps);
     exerciseGoals[key] = normalizeExerciseGoal({
       exerciseName,
       goalType,
       goalPath,
       goalValue,
+      ...(goalType === 'weight' ? { targetReps } : {}),
       unit: EXERCISE_GOAL_TYPES[goalType].unit,
       dateCreated: previous ? previous.dateCreated : now,
       lastUpdated: now,
       currentBestPerformance: previous && previous.goalType === goalType
+        && (goalType !== 'weight' || previous.targetReps === targetReps)
         ? Math.max(previous.currentBestPerformance, performance, historicalBest)
         : Math.max(performance, historicalBest),
     }, exerciseName, now);

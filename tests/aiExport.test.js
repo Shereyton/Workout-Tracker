@@ -52,6 +52,13 @@ describe('AI programming handoff',()=>{
     expect(result.text).toContain('Travel Thursday');expect(result.text).toContain('At-workout goal (historical only)');
     expect(build({current:record,helpers,currentExerciseGoals:{}}).packet.movements[0].goal).toBeNull();
   });
+  it('tells the AI whether a load goal is for one rep or several',()=>{
+    const record=current();
+    record.exercises[0].goal={exerciseName:'Bench Press',goalType:'weight',goalValue:315,targetReps:5,unit:'lbs'};
+    const result=build({current:record,helpers});
+    expect(result.packet.movements[0].goal.targetReps).toBe(5);
+    expect(result.text).toContain('Goal: 315 lbs × 5 reps');
+  });
   it('counts superset rounds separately from movement entries and preserves cardio units',()=>{
     const record=workout('2026-08-03',[{name:'Superset',isSuperset:true,sets:[1,2].map(set=>({set,role:'working',roleSource:'manual',restActual:90,exercises:[{name:'Press',weight:100,reps:5},{name:'Row',weight:80,reps:8}]}))},{name:'Running',isCardio:true,sets:[{distance:2,duration:1200}]}]);
     const result=build({current:record,helpers});

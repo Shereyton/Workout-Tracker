@@ -55,6 +55,14 @@ describe('current workout controls the next exercise roster', () => {
   });
 });
 
+describe('load-goal rep threshold', () => {
+  it('does not mark 315 for five achieved by a 315 single', () => {
+    const goal = { exerciseName: 'Bench Press', goalType: 'weight', goalValue: 315, targetReps: 5 };
+    const result = target(workout('2026-10-11', [exercise('Bench Press', [set(315, 1), set(300, 5)], { goal })]));
+    expect(result.goalProgress).toMatchObject({ current: 300, target: 315, reached: false });
+  });
+});
+
 describe('automatic isolation strength progression', () => {
   const goal = { exerciseName: 'Rear Delt Fly', goalType: 'weight', goalPath: 'strength', goalValue: 95 };
   const legacyProfile = { mode: 'auto', purpose: 'primary_strength', repMin: 1, repMax: 5, targetRir: 2, loadStep: 5 };

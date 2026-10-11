@@ -12,6 +12,7 @@
   function goalFact(goal, includeProgress) {
     if (!goal || !(Number(goal.goalValue) > 0)) return null;
     const result = {type:clean(goal.goalType),target:Number(goal.goalValue),unit:clean(goal.unit),focus:clean(goal.goalPathLabel || goal.goalPath)};
+    if(result.type==='weight')result.targetReps=Number.isInteger(Number(goal.targetReps))&&Number(goal.targetReps)>0?Number(goal.targetReps):1;
     if (includeProgress && numeric(goal.currentBestPerformance)) result.appLoggedBest=Number(goal.currentBestPerformance);
     return result;
   }
@@ -226,9 +227,9 @@
     lines.push('','CURRENT RESULTS + MATCHED HISTORY (newest first)');
     movements.forEach((m,i)=>{
       lines.push(`\n${i+1}. ${JSON.stringify(m.name)} [${m.type}]`);
-      if(m.goal)lines.push(`Goal: ${fmt(m.goal.target)} ${m.goal.unit} (${m.goal.type}; ${m.goal.focus||'focus unspecified'})${includeProgress&&m.goal.appLoggedBest!==undefined?`; app-tracked best ${fmt(m.goal.appLoggedBest)} ${m.goal.unit} (not independently verified)`:''}.`);
+      if(m.goal)lines.push(`Goal: ${fmt(m.goal.target)} ${m.goal.unit}${m.goal.type==='weight'?` × ${m.goal.targetReps} rep${m.goal.targetReps===1?'':'s'}`:''} (${m.goal.type}; ${m.goal.focus||'focus unspecified'})${includeProgress&&m.goal.appLoggedBest!==undefined?`; app-tracked best at the required reps ${fmt(m.goal.appLoggedBest)} ${m.goal.unit} (not independently verified)`:''}.`);
       else lines.push('Goal: — (none currently set).');
-      if(m.goalAtWorkout)lines.push(`At-workout goal (historical only): ${fmt(m.goalAtWorkout.target)} ${m.goalAtWorkout.unit} (${m.goalAtWorkout.type}).`);
+      if(m.goalAtWorkout)lines.push(`At-workout goal (historical only): ${fmt(m.goalAtWorkout.target)} ${m.goalAtWorkout.unit}${m.goalAtWorkout.type==='weight'?` × ${m.goalAtWorkout.targetReps} rep${m.goalAtWorkout.targetReps===1?'':'s'}`:''} (${m.goalAtWorkout.type}).`);
       if(m.profile)lines.push(profileText(m.profile));
       const assignment=assignedLine(m);if(assignment)lines.push(assignment);
       lines.push(`Today: ${compactSets(m.sets,m.type)}`);
