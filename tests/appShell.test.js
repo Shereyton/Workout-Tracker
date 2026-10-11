@@ -65,6 +65,35 @@ describe('iPhone product shell integration', () => {
     expect(document.getElementById('progressContent').textContent).toContain('Give your training a direction');
     expect(document.body.textContent).not.toContain('NaN');
   });
+  it('shows progress toward the required reps, not a heavier single',async()=>{
+    document.getElementById('customExercise').value='Bench Press';
+    document.getElementById('addExercise').click();
+    document.getElementById('exerciseGoalToggle').click();
+    document.getElementById('exerciseGoalValue').value='315';
+    document.getElementById('saveExerciseGoal').click();
+    document.getElementById('useTimer').checked=false;
+    document.getElementById('setRole').value='working';
+    for(const [weight,reps] of [[315,1],[300,5]]){
+      document.getElementById('weight').value=String(weight);
+      document.getElementById('reps').value=String(reps);
+      document.getElementById('weight').dispatchEvent(new Event('input',{bubbles:true}));
+      document.getElementById('reps').dispatchEvent(new Event('input',{bubbles:true}));
+      document.getElementById('logBtn').click();
+      await flush();
+    }
+    expect(window.workoutTracker.getState().current.exercises[0].sets.map(s=>[s.weight,s.reps])).toEqual([[315,1],[300,5]]);
+    expect(window.workoutTracker.getState().goals['bench press'].currentBestPerformance).toBe(315);
+    document.getElementById('exerciseGoalToggle').click();
+    document.getElementById('exerciseGoalReps').value='5';
+    document.getElementById('saveExerciseGoal').click();
+    await flush();
+    expect(window.workoutTracker.getState().goals['bench press'].currentBestPerformance).toBe(300);
+    document.querySelector('[data-view="progress"]').click();
+    const progress=document.getElementById('progressContent').textContent;
+    expect(progress).toContain('toward 315 lbs × 5 reps');
+    expect(progress).toContain('300 lbs');
+    expect(progress).not.toContain('Target logged ✓');
+  });
   it('shows top and back-off targets with their distinct rest times on the phone plan',async()=>{
     document.getElementById('customExercise').value='Bench Press';
     document.getElementById('addExercise').click();

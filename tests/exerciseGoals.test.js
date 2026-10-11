@@ -21,6 +21,7 @@ describe('custom exercise goals', () => {
     });
 
     expect(goal.goalWeight).toBe(225);
+    expect(goal.targetReps).toBe(1);
     expect(goal.goalPath).toBe('strength');
     expect(goal.goalPathLabel).toBe('Get stronger');
     expect(goal.unit).toBe('lbs');
@@ -95,6 +96,10 @@ describe('custom exercise goals', () => {
         ],
       }],
     }, 'weight', 'Press')).toBe(80);
+    expect(getGoalPerformanceFromExercise({
+      name: 'Bench Press',
+      sets: [{ weight: 315, reps: 1 }, { weight: 300, reps: 5 }, { weight: 305, reps: 5, technique: 'poor' }],
+    }, 'weight', 'Bench Press', 5)).toBe(300);
   });
 
   it('keeps the all-time best and never shows negative remaining progress', () => {
@@ -160,6 +165,7 @@ describe('custom exercise goals', () => {
       goalType: 'weight',
       goalValue: 315,
       goalWeight: 315,
+      targetReps: 1,
       unit: 'lbs',
       datePerformed: '2026-07-24',
     });

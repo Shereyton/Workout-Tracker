@@ -194,10 +194,12 @@
       || exercise.goal;
     const value = number(goal?.goalValue ?? goal?.goalWeight, 0.01, 1000000);
     if (!goal || value === null) return null;
+    const requestedReps = number(goal.targetReps, 1, 20);
     return {
       exerciseName: exercise.name,
       goalType: goal.goalType || 'weight',
       goalValue: value,
+      ...((goal.goalType || 'weight') === 'weight' ? { targetReps: Number.isInteger(requestedReps) ? requestedReps : 1 } : {}),
       goalPath: goal.goalPath || null,
       unit: goal.unit || ({ weight: 'lbs', reps: 'reps', duration: 'minutes', distance: 'miles' }[goal.goalType] || 'lbs'),
     };
@@ -268,7 +270,7 @@
   function attachGoalProgress(plan, recordedSets) {
     if (!plan.goal) return;
     const values = recordedSets.filter((set) => !['stopped', 'discomfort'].includes(set.pain) && set.technique !== 'poor').map((set) => {
-      if (plan.goal.goalType === 'weight') return number(set.weight);
+      if (plan.goal.goalType === 'weight') return set.reps >= plan.goal.targetReps ? number(set.weight) : null;
       if (plan.goal.goalType === 'reps') return number(set.reps);
       if (plan.goal.goalType === 'duration') return set.duration / 60;
       if (plan.goal.goalType === 'distance') return number(set.distance);
