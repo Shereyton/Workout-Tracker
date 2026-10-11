@@ -2,7 +2,8 @@
 const { buildNextWorkout } = require('../progression-planner');
 const helpers = require('../script');
 
-const profile = { mode: 'custom', purpose: 'hypertrophy_compound', repMin: 8, repMax: 12, targetRir: 2, loadStep: 5 };
+const equipment = { loadConvention: 'total_load', equipmentLabel: '', loadStepConfirmed: true };
+const profile = { ...equipment, mode: 'custom', purpose: 'hypertrophy_compound', repMin: 8, repMax: 12, targetRir: 2, loadStep: 5 };
 const set = (weight = 100, reps = 12, overrides = {}) => ({
   weight, reps, role: 'working', roleSource: 'manual', rir: 2,
   technique: 'good', pain: 'none', ...overrides,
@@ -65,7 +66,7 @@ describe('load-goal rep threshold', () => {
 
 describe('automatic isolation strength progression', () => {
   const goal = { exerciseName: 'Rear Delt Fly', goalType: 'weight', goalPath: 'strength', goalValue: 95 };
-  const legacyProfile = { mode: 'auto', purpose: 'primary_strength', repMin: 1, repMax: 5, targetRir: 2, loadStep: 5 };
+  const legacyProfile = { ...equipment, mode: 'auto', purpose: 'primary_strength', repMin: 1, repMax: 5, targetRir: 2, loadStep: 5 };
   const rearDelt = (extra = {}) => exercise('Rear Delt Fly', [set(90, 6), set(90, 6), set(90, 6)], {
     progressionProfile: legacyProfile, goal, ...extra,
   });
@@ -105,8 +106,22 @@ describe('automatic isolation strength progression', () => {
 
 describe('ready-to-follow strength targets', () => {
   const assigned = (workingSets) => ({source:'app_next_workout',type:'strength',sourceDate:'2026-09-18',workingSets:workingSets.map(([weight,reps])=>({role:'working',weight,reps,restSeconds:180})),preparationSets:[]});
-  const fiveByFiveProfile = { mode: 'custom', purpose: 'primary_strength', repMin: 5, repMax: 5, targetRir: 2, loadStep: 2.5 };
+  const fiveByFiveProfile = { ...equipment, mode: 'custom', purpose: 'primary_strength', repMin: 5, repMax: 5, targetRir: 2, loadStep: 2.5 };
   const fiveByFive = (reps) => exercise('Bench Press', reps.map((count) => set(225, count)), { progressionProfile: fiveByFiveProfile });
+  it('keeps progression available when optional equipment setup is missing', () => {
+    const entry = fiveByFive([5,5,5,5,5]);
+    entry.progressionProfile = {...fiveByFiveProfile, loadConvention:'unknown', loadStepConfirmed:false};
+    const result = target(workout('2026-10-11',[entry]));
+    expect(result.action).toBe('ADD LOAD');
+    expect(result.needsReview).toBe(false);
+    expect(result.workingSets[0].weight).toBe(227.5);
+    expect(result.evidence.missing.join(' ')).toContain('entered scale');
+  });
+  it('does not use a different named machine as proof for increasing load', () => {
+    const current = exercise('Chest Press',[set()],{progressionProfile:{...profile,loadConvention:'machine_stack',equipmentLabel:'Machine A'}});
+    const old = exercise('Chest Press',[set()],{progressionProfile:{...profile,loadConvention:'machine_stack',equipmentLabel:'Machine B'}});
+    expect(target(workout('2026-10-11',[current]),[workout('2026-10-09',[old])]).action).toBe('TEST BASELINE');
+  });
 
   it('uses an explicitly configured straight 5×5 completion to prescribe one small load step', () => {
     const result = target(workout('2026-09-20', [fiveByFive([5, 5, 5, 5, 5])]));
@@ -233,7 +248,7 @@ describe('ready-to-follow strength targets', () => {
   });
 
   it('progresses a labelled heavy top set independently of completed back-offs', () => {
-    const strength = { mode: 'custom', purpose: 'primary_strength', repMin: 3, repMax: 5, targetRir: 2, loadStep: 5 };
+    const strength = { ...equipment, mode: 'custom', purpose: 'primary_strength', repMin: 3, repMax: 5, targetRir: 2, loadStep: 5 };
     const sets = [set(285, 1, { role: 'top_set' }), ...Array(4).fill(null).map(() => set(255, 4, { role: 'back_off' }))];
     const entry = exercise('Bench Press', sets, { progressionProfile: strength });
     const result = target(workout('2026-09-20', [entry]), [workout('2026-09-18', [entry])]);
@@ -247,7 +262,7 @@ describe('ready-to-follow strength targets', () => {
   });
 
   it('holds a heavy top set when effort is unknown or the available jump is too large', () => {
-    const strength = { mode: 'custom', purpose: 'primary_strength', repMin: 3, repMax: 5, targetRir: 2, loadStep: 5 };
+    const strength = { ...equipment, mode: 'custom', purpose: 'primary_strength', repMin: 3, repMax: 5, targetRir: 2, loadStep: 5 };
     const sets = [set(100, 1, { role: 'top_set' }), set(80, 4, { role: 'back_off' })];
     const entry = exercise('Squat', sets, { progressionProfile: strength });
     const tooLarge = target(workout('2026-09-20', [entry]), [workout('2026-09-18', [entry])]);
@@ -259,7 +274,7 @@ describe('ready-to-follow strength targets', () => {
   });
 
   it('does not advance top work when a saved top-and-back-off assignment was missed', () => {
-    const strength = { mode: 'custom', purpose: 'primary_strength', repMin: 3, repMax: 5, targetRir: 2, loadStep: 5 };
+    const strength = { ...equipment, mode: 'custom', purpose: 'primary_strength', repMin: 3, repMax: 5, targetRir: 2, loadStep: 5 };
     const sets = [set(285, 1, { role: 'top_set' }), set(255, 4, { role: 'back_off' })];
     const saved = { source: 'app_next_workout', type: 'strength', workingSets: [
       { role: 'top_set', weight: 285, reps: 1 }, { role: 'back_off', weight: 255, reps: 5 },

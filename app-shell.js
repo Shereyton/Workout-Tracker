@@ -78,11 +78,28 @@
         $('setRir').value=selected?'':value;
         $('setRir').dispatchEvent(new Event('change',{bubbles:true}));
         effort.querySelectorAll('button').forEach(btn=>btn.setAttribute('aria-pressed',String(btn===b&&!selected)));
-      },'effort-button'); b.setAttribute('aria-pressed','false'); effort.append(b);
+      },'effort-button'); b.dataset.control='setRir'; b.dataset.value=value; b.setAttribute('aria-pressed','false'); effort.append(b);
     });
     effort.append(make('small','','About 3, 2, or 0 good reps left. Leave blank if unsure.'));
     $('logBtn').before(effort);
     $('logBtn').addEventListener('click',()=>effort.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed','false')));
+    const quality=make('fieldset','quick-effort','<legend>How did the reps feel? <span>Optional</span></legend>');
+    [['Form felt controlled','setTechnique','good'],['No pain','setPain','none']].forEach(([label,id,value])=>{
+      const b=button(label,()=>{
+        const selected=b.getAttribute('aria-pressed')==='true';
+        $(id).value=selected?'unknown':value;
+        $(id).dispatchEvent(new Event('change',{bubbles:true}));
+      },'effort-button');
+      b.setAttribute('aria-pressed','false');
+      b.dataset.control=id; b.dataset.value=value;
+      $(id).addEventListener('change',()=>b.setAttribute('aria-pressed',String($(id).value===value)));
+      quality.append(b);
+    });
+    quality.append(button('Pain / form problem',()=>{
+      $('accuracyDetails').open=true; $('setTechnique').scrollIntoView({block:'center',behavior:'smooth'});
+    },'effort-button'),make('small','','Record this for the set you are logging. Blank stays unknown.'));
+    $('logBtn').before(quality);
+    $('logBtn').addEventListener('click',()=>quality.querySelectorAll('[data-control]').forEach(b=>b.setAttribute('aria-pressed','false')));
 
     plan.append(heading('A reason behind every rep','Your next move.','A clear prescription, built from what you actually logged.'));
     const sourceLabel=make('label','source-label','Build a plan from'); sourceLabel.htmlFor='planSource';
@@ -252,7 +269,7 @@
       goals.forEach(g=>{
         let best=0;
         const requiredReps=g.goalType==='weight'&&Number.isInteger(Number(g.targetReps))&&Number(g.targetReps)>0?Number(g.targetReps):1;
-        if(api.helpers?.getGoalPerformanceFromExercise){[state.current,...sessions].filter(Boolean).forEach(p=>(p.exercises||[]).forEach(ex=>{if(key(ex?.name)===key(g.exerciseName)||ex?.isSuperset)best=Math.max(best,api.helpers.getGoalPerformanceFromExercise(ex,g.goalType,g.exerciseName,requiredReps));}));}
+        if(api.helpers?.getGoalPerformanceFromExercise){[state.current,...sessions].filter(Boolean).forEach(p=>(p.exercises||[]).forEach(ex=>{if(key(ex?.name)===key(g.exerciseName)||ex?.isSuperset)best=Math.max(best,api.helpers.getGoalPerformanceFromExercise(ex,g.goalType,g.exerciseName,requiredReps,state.equipmentProfiles?.[key(g.exerciseName)]));}));}
         const pct=best?Math.max(0,Math.min(100,best/Number(g.goalValue)*100)):0;
         const repLabel=g.goalType==='weight'?` × ${requiredReps} rep${requiredReps===1?'':'s'}`:'';
         const card=make('article','goal-card',`<div class="section-line"><span class="eyebrow">${esc(g.goalPathLabel||'PERSONAL GOAL')}</span><span>${best>=Number(g.goalValue)?'Target logged ✓':`${Math.round(pct)}%`}</span></div><h3>${esc(g.exerciseName)}</h3><div class="goal-numbers"><strong>${best?number(best):'—'} <small>${esc(g.unit||'')}</small></strong><span>toward ${number(g.goalValue)} ${esc(g.unit||'')}${repLabel}</span></div><div class="goal-meter" role="progressbar" aria-label="${esc(g.exerciseName)} logged goal progress" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div><p>${best?`Best qualifying logged performance${g.goalType==='weight'?` at ${requiredReps}+ reps`:''}. Not an independently verified max.`:'No qualifying performance logged yet. Your goal is saved.'}${g.goalType==='weight'?' This percentage compares logged load with your target; it does not predict when you will achieve it.':''}</p>`);
@@ -261,7 +278,10 @@
     }
     function render() {
       renderPending=false;
-      try {state=api.getState();sessions=uniqueSessions(state.history);renderOverview();rebuildSources();renderPlan();renderProgress();renderTarget();}
+      try {state=api.getState();sessions=uniqueSessions(state.history);renderOverview();rebuildSources();renderPlan();renderProgress();renderTarget();
+        effort.hidden=quality.hidden=!!state.activeExercise?.isCardio;
+        [effort,quality].forEach(group=>group.querySelectorAll('[data-control]').forEach(b=>b.setAttribute('aria-pressed',String($(b.dataset.control).value===b.dataset.value))));
+      }
       catch(error){console.error('Workout dashboard update failed',error);tell('A dashboard could not update. Your workout controls are still available.');}
     }
     function scheduleRender(){if(renderPending)return;renderPending=true;queueMicrotask(render);}

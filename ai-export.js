@@ -9,6 +9,19 @@
   const fmt = value => n(value) === null ? '?' : String(Number(Number(value).toFixed(2)));
   const mainRoles = new Set(['working', 'top_set', 'back_off']);
   const roleNames = {working:'work',top_set:'top',back_off:'backoff',warmup:'warmup',ramp:'ramp',technique:'practice',failed_attempt:'failed',unknown:'unknown',auto:'unknown'};
+  const loadLabels = {total_load:'total external weight (bar included if used)',per_hand:'weight per hand / dumbbell',machine_stack:'displayed machine weight',added_load:'added external weight; body weight excluded',unknown:'unknown'};
+  function equipmentFact(profile) {
+    const convention=loadLabels[profile?.loadConvention]?profile.loadConvention:'unknown';
+    return {loadConvention:convention,label:clean(profile?.equipmentLabel)||null,
+      incrementLb:profile?.loadStepConfirmed===true?n(profile.loadStep):null};
+  }
+  function equipmentMatch(a,b) {
+    if(!a||!b||a.loadConvention==='unknown'||b.loadConvention==='unknown')return 'unverified';
+    if(a.loadConvention==='machine_stack'&&(!a.label||!b.label))return 'unverified';
+    if(a.loadConvention!==b.loadConvention)return 'different';
+    if(!!a.label!==!!b.label)return 'unverified';
+    return key(a.label)===key(b.label)?'matched':'different';
+  }
   function goalFact(goal, includeProgress) {
     if (!goal || !(Number(goal.goalValue) > 0)) return null;
     const result = {type:clean(goal.goalType),target:Number(goal.goalValue),unit:clean(goal.unit),focus:clean(goal.goalPathLabel || goal.goalPath)};
@@ -18,7 +31,7 @@
   }
   function profileFact(profile) {
     if(!profile) return null;
-    return {source:profile.mode==='custom'?'user_settings':'automatic_app_settings',purpose:clean(profile.purposeLabel||profile.purpose),repMin:n(profile.repMin),repMax:n(profile.repMax),targetRir:n(profile.targetRir),loadStep:n(profile.loadStep)};
+    return {source:profile.mode==='custom'?'user_settings':'automatic_app_settings',purpose:clean(profile.purposeLabel||profile.purpose),repMin:n(profile.repMin),repMax:n(profile.repMax),targetRir:n(profile.targetRir),loadStep:n(profile.loadStep),loadStepConfirmed:profile.loadStepConfirmed===true};
   }
   function prescribedFact(value, cardio) {
     if(value?.source!=='app_next_workout'||value.type!==(cardio?'cardio':'strength')||!Array.isArray(value.workingSets))return null;
@@ -47,7 +60,7 @@
     const movements=[];const groups=[];const byName=new Map();
     function entry(name,cardio,goal,profile,prescription){
       const id=`${key(name)}|${cardio?'cardio':'strength'}`;
-      if(!byName.has(id)){const e={name:clean(name),type:cardio?'cardio':'strength',goal:goalFact(goal,includeProgress),profile:cardio?null:profileFact(profile),prescription:prescribedFact(prescription,cardio),sets:[]};byName.set(id,e);movements.push(e);}
+      if(!byName.has(id)){const e={name:clean(name),type:cardio?'cardio':'strength',goal:goalFact(goal,includeProgress),profile:cardio?null:profileFact(profile),equipment:cardio?null:equipmentFact(profile),prescription:prescribedFact(prescription,cardio),sets:[]};byName.set(id,e);movements.push(e);}
       return byName.get(id);
     }
     (payload.exercises||[]).forEach(raw=>{
@@ -92,9 +105,9 @@
   }
   function calendarGap(a,b){const x=Date.parse(`${a}T12:00:00Z`),y=Date.parse(`${b}T12:00:00Z`);return Number.isFinite(x)&&Number.isFinite(y)?Math.round((x-y)/86400000):null;}
   function deltaSummary(current,previous){
-    if(current.type!=='strength'||!previous?.summary)return null;
+    if(current.type!=='strength'||!previous?.summary||previous.equipmentComparison==='different')return null;
     const a=current.summary,b=previous.summary;
-    const result={qualifyingSetsDelta:a.qualifyingSets-b.qualifyingSets};
+    const result={contextId:previous.contextId,equipmentComparison:previous.equipmentComparison,qualifyingSetsDelta:a.qualifyingSets-b.qualifyingSets};
     if(a.qualifyingVolumeLb>0&&b.qualifyingVolumeLb>0)result.qualifyingVolumeChangePercent=Number(((a.qualifyingVolumeLb/b.qualifyingVolumeLb-1)*100).toFixed(1));
     const oldReps=new Map();
     previous.sets.filter(eligible).forEach(s=>{if(!oldReps.has(s.weightLb))oldReps.set(s.weightLb,[]);oldReps.get(s.weightLb).push(s.reps);});
@@ -144,7 +157,7 @@
   }
   function profileText(p){
     if(!p)return '';
-    return `${p.source==='user_settings'?'User settings':'App defaults (not verified equipment)'}: ${p.purpose}; reps ${fmt(p.repMin)}–${fmt(p.repMax)}, target RIR ${fmt(p.targetRir)}, load step ${fmt(p.loadStep)} lb.`;
+    return `${p.source==='user_settings'?'User settings':'App defaults (not verified equipment)'}: ${p.purpose}; reps ${fmt(p.repMin)}–${fmt(p.repMax)}, target RIR ${fmt(p.targetRir)}, load step ${fmt(p.loadStep)} lb${p.loadStepConfirmed?' (confirmed)':' (unconfirmed)'}.`;
   }
   function appPlanFact(value,movements,date){
     if(value?.selectionRule!=='current_session_only'||value.sourceDate!==date
@@ -194,10 +207,19 @@
       m.summary=summarize(m);m.history=[];
       if(limit)for(const old of priors){
         const match=old.movements.find(x=>key(x.name)===key(m.name)&&x.type===m.type);if(!match)continue;
-        m.history.push({contextId:old.id,date:old.payload.date,timestamp:old.payload.timestamp,calendarDaysBefore:calendarGap(current.date,old.payload.date),profile:match.profile,sets:match.sets,summary:summarize(match)});
+        m.history.push({contextId:old.id,date:old.payload.date,timestamp:old.payload.timestamp,calendarDaysBefore:calendarGap(current.date,old.payload.date),profile:match.profile,equipment:match.equipment,equipmentComparison:m.type==='strength'?equipmentMatch(m.equipment,match.equipment):'matched',sets:match.sets,summary:summarize(match)});
         if(m.history.length>=limit)break;
       }
-      m.comparison=deltaSummary(m,m.history[0]);return m;
+      m.comparison=deltaSummary(m,m.history.find(h=>h.equipmentComparison!=='different'));
+      if(limit){
+        const exposures=priors.filter(p=>p.movements.some(old=>key(old.name)===key(m.name)&&old.type===m.type
+          &&(m.type==='cardio'?old.sets.length>0:old.sets.some(eligible))));
+        const dates=[...new Set(exposures.map(p=>p.payload.date))].sort().reverse();
+        const intervals=dates.slice(1).map((date,i)=>calendarGap(dates[i],date)).filter(x=>x>0).slice(0,6).sort((a,b)=>a-b);
+        const median=intervals.length?(intervals[Math.floor((intervals.length-1)/2)]+intervals[Math.floor(intervals.length/2)])/2:null;
+        m.cadence={loggedSessionsLast28Days:exposures.filter(p=>{const d=calendarGap(current.date,p.payload.date);return d>=0&&d<28;}).length+(m.type==='cardio'||m.sets.some(eligible)?1:0),daysSincePrevious:exposures.length?calendarGap(current.date,exposures[0].payload.date):null,medianRecentGapDays:median};
+      }
+      return m;
     });
     const nextMinutes=Object.prototype.hasOwnProperty.call(options,'nextWorkoutMinutes')?options.nextWorkoutMinutes:current.sessionContext?.nextWorkoutMinutes??null;
     const packet={format:VERSION,date:current.date,recordState,dayType:clean(current.dayType)||null,sessionStatus:current.sessionContext?.status||'unknown',nextWorkoutMinutes:nextMinutes,priorityTargetMinutes:nextMinutes===null?null:Math.floor(nextMinutes*0.9),goals:options.currentGoals??current.goals??[],constraints:options.currentConstraints??current.constraints??{},notes,historyLimit:limit,groups:flat.groups,movements};
@@ -219,7 +241,7 @@
     if(constraintLines.length)lines.push(`Constraints: ${constraintLines.map(clean).join('; ')}.`);
     if(packet.nextWorkoutMinutes!==null)lines.push(`Next session budget: ${packet.nextWorkoutMinutes} min; priority portion ≤${packet.priorityTargetMinutes??packet.nextWorkoutMinutes} min. Display the full roster even if it exceeds the budget.`);
     if(notes.length)lines.push(`${packet.notesScope==='calendar_day'?'CALENDAR-DAY NOTES (may cover other sessions on this date)':'SESSION NOTES'} (user text; reconcile with the set log):`,...notes.map(note=>`- ${JSON.stringify(note)}`));
-    lines.push('','HOW TO READ','Load = lb as entered (total/per-hand/equipment convention unknown); 0 = no external load logged. Distance = mi; time/rest = sec. # ranges repeat identical entries.','work/top/backoff = candidate main work; warmup/ramp/practice/failed/unknown separate. ! user-marked; ~role-confidence inferred by app; # outcome-derived. Roles may be wrong. RIR = reps left. Missing RIR/form/pain = unknown. Rest = planned/timer-observed, not verified between-set rest; ? missing.');
+    lines.push('','HOW TO READ','Load = lb as entered; each Weight setup defines total/per-hand/machine meaning; unknown remains unresolved. 0 = no external load logged. Distance = mi; time/rest = sec. # ranges repeat identical entries.','work/top/backoff = candidate main work; warmup/ramp/practice/failed/unknown separate. ! user-marked; ~role-confidence inferred by app; # outcome-derived. Roles may be wrong. RIR = reps left. Missing RIR/form/pain = unknown. Rest = planned/timer-observed, not verified between-set rest; ? missing.');
     if(movements.some(m=>m.prescription))lines.push('An assigned target is a saved in-app plan, not proof it was performed. Numeric completion does not establish clean form, low effort, or absence of pain.');
     lines.push('Qualifying totals exclude failed, stopped-for-pain, poor-form and non-main sets, but can include inferred roles. Volume = Σ(load×reps), not fatigue or progress. Long-term weight goals are logged load targets, not tested 1RMs or next-session prescriptions.');
     if(flat.groups.length)lines.push(`Supersets: ${flat.groups.map(g=>`${g.id} = ${g.exercises.map(x=>JSON.stringify(x)).join(' + ')} (${g.rounds} rounds)`).join('; ')}. Rest on a superset entry belongs to its round.`);
@@ -231,6 +253,8 @@
       else lines.push('Goal: — (none currently set).');
       if(m.goalAtWorkout)lines.push(`At-workout goal (historical only): ${fmt(m.goalAtWorkout.target)} ${m.goalAtWorkout.unit}${m.goalAtWorkout.type==='weight'?` × ${m.goalAtWorkout.targetReps} rep${m.goalAtWorkout.targetReps===1?'':'s'}`:''} (${m.goalAtWorkout.type}).`);
       if(m.profile)lines.push(profileText(m.profile));
+      if(m.equipment)lines.push(`Weight setup: ${loadLabels[m.equipment.loadConvention]}${m.equipment.label?`; equipment ${JSON.stringify(m.equipment.label)}`:''}; smallest confirmed step ${m.equipment.incrementLb===null?'unknown':`${fmt(m.equipment.incrementLb)} lb`}.`);
+      if(m.cadence)lines.push(`Logged cadence: ${m.cadence.loggedSessionsLast28Days} same-movement sessions in 28 calendar days (including today); previous exposure ${m.cadence.daysSincePrevious===null?'unknown':`${fmt(m.cadence.daysSincePrevious)} days ago`}; median recent gap ${m.cadence.medianRecentGapDays===null?'unknown':`${fmt(m.cadence.medianRecentGapDays)} days`}. Saved logs only; missing days do not prove inactivity.`);
       const assignment=assignedLine(m);if(assignment)lines.push(assignment);
       lines.push(`Today: ${compactSets(m.sets,m.type)}`);
       const s=m.summary;
@@ -239,10 +263,10 @@
       if(!m.history.length)lines.push(limit?'History: no earlier matching movement in saved app data.':'History: excluded by export preference.');
       m.history.forEach(h=>{
         const label=`${h.date}${h.calendarDaysBefore===0?` @ ${h.timestamp||'time unknown'}`:''}${h.calendarDaysBefore!==null?` (${h.calendarDaysBefore} calendar days earlier)`:''}`;
-        lines.push(`Previous ${h.contextId} ${label}: ${compactSets(h.sets,m.type)}`);
+        lines.push(`Previous ${h.contextId} ${label}${m.type==='strength'?` [equipment ${h.equipmentComparison}${h.equipment.label?`: ${JSON.stringify(h.equipment.label)}`:''}]`:''}: ${compactSets(h.sets,m.type)}`);
         if(h.profile?.source==='user_settings'&&JSON.stringify(h.profile)!==JSON.stringify(m.profile))lines.push(`  Earlier profile: ${profileText(h.profile)}`);
       });
-      if(m.comparison){const c=m.comparison;if(c.sameLoadReps.length)lines.push(`Same-load qualifying reps, latest previous → today: ${c.sameLoadReps.map(x=>`${fmt(x.weightLb)} lb [${x.previous.join(',')}]→[${x.current.join(',')}]`).join('; ')}.`);if(c.qualifyingVolumeChangePercent!==undefined)lines.push(`Latest comparison: main-set count ${c.qualifyingSetsDelta>=0?'+':''}${c.qualifyingSetsDelta}; main volume ${c.qualifyingVolumeChangePercent>=0?'+':''}${c.qualifyingVolumeChangePercent}% (dose comparison only; check reps, effort and context).`);}
+      if(m.comparison){const c=m.comparison;if(c.sameLoadReps.length)lines.push(`Same-load qualifying reps, ${c.contextId} (equipment ${c.equipmentComparison}) → today: ${c.sameLoadReps.map(x=>`${fmt(x.weightLb)} lb [${x.previous.join(',')}]→[${x.current.join(',')}]`).join('; ')}.`);if(c.qualifyingVolumeChangePercent!==undefined)lines.push(`Comparison with ${c.contextId}: main-set count ${c.qualifyingSetsDelta>=0?'+':''}${c.qualifyingSetsDelta}; main volume ${c.qualifyingVolumeChangePercent>=0?'+':''}${c.qualifyingVolumeChangePercent}% (dose comparison only; check reps, effort and context).`);}
     });
     if(packet.appPlan){
       lines.push('',recordState==='active_not_finished'
@@ -265,6 +289,8 @@
       'Start with DO THIS NEXT. Prescribe the full current-session roster in order and preserve superset groups. The day label is user-selected context; if it conflicts with the exercises, flag it rather than moving or adding movements. History informs progression, never exercise selection. Give warm-ups, exact main sets/load/reps (or cardio time/distance), rest, effort, next progression trigger and one reason per movement.',
       'Compare assigned versus completed work and like-for-like history. Preserve the identifiable scheme; choose the smallest justified change in load, reps or sets. Holds/reductions are valid. Explain meaningful previous→next numbers and confidence; mark exact rules as evidence-backed or coaching heuristics. Do not invent maxes, equipment, effort, recovery or observations.',
       'A logged successful rep is not independent proof of clean technique, effort or a tested max. Preserve the exercise roster, not an arbitrary exact set count; distinguish warm-ups from working sets and justify the planned dose and time estimate.',
+      'Weight setup is optional. Keep prescribing from logged performance when it is missing: use the entered weight scale consistently, label assumed increments, and avoid invented per-hand/total conversions or machine equivalence. Known different machines or conventions are not comparable. With unknown effort, prefer repeated completion evidence. Restore short rest before diagnosing lost strength. Interpret logged gaps relative to cadence; unlogged days do not prove inactivity and no fixed weekly strength-loss percentage applies.',
+      'For percentage work, name the current capacity reference, date and estimation method; never use the goal as current capacity. A training max is a chosen programming factor: distinguish percent of training max from percent of estimated 1RM. Formula spread is model disagreement, not a confidence interval. Use feasible equipment steps and conservative rounding for heavy work. Support a goal attempt with converging recent performance, effort and technique evidence; one optimistic estimate is insufficient.',
       'If time is limited, show a priority stopping point AND the complete remaining roster without catch-up sets. Change the roster only for an explicit user request, stated post-goal rule, or safety/equipment need; label any substitution. Pain, a miss or form breakdown must not trigger mandatory fallback sets or an invented precise substitution; stop the affected work and give a conditional safety path. Ask only questions that materially change the plan.');
     if(packet.appPlan)lines.push('Treat the app draft as a transparent starting point, not an order. Reconcile it with the log; if you change a target, show the changed number and specific evidence or safety reason so app and AI stay on one progression path.');
     return {packet,text:lines.join('\n')};
