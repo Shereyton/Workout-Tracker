@@ -2,10 +2,27 @@ const core=require('../script');
 const {build,compactSets}=require('../ai-export');
 const helpers={normalizePayload:core.normalizePayload,classifyExerciseSets:core.classifyExerciseSets,describeConstraintsLines:core.describeConstraintsLines};
 const workout=(date,exercises,extra={})=>({date,timestamp:`${date}T18:00:00Z`,exercises,...extra});
-const lift=(name,sets,extra={})=>({name,sets:sets.map(([weight,reps,context={}])=>({weight,reps,role:'working',roleSource:'manual',...context})),...extra});
+const lift=(name,sets,extra={})=>({name,progressionProfile:{loadConvention:'total_load',loadStep:5,loadStepConfirmed:true},sets:sets.map(([weight,reps,context={}])=>({weight,reps,role:'working',roleSource:'manual',...context})),...extra});
 const current=()=>workout('2026-08-03',[lift('Bench Press',[[135,8],[135,8],[135,6]])],{workoutId:'today',dayType:'Chest'});
 
 describe('AI programming handoff',()=>{
+  it('exports optional equipment without treating defaults as confirmed and derives cadence',()=>{
+    const result=build({current:workout('2026-10-11',[lift('Bench',[[225,5]])]),history:['2026-10-07','2026-10-04','2026-10-01'].map(d=>workout(d,[lift('Bench',[[225,5]])])),helpers});
+    expect(result.packet.movements[0].cadence).toEqual({loggedSessionsLast28Days:4,daysSincePrevious:4,medianRecentGapDays:3});
+    expect(result.text).toContain('smallest confirmed step 5 lb');
+    expect(result.text).toContain('Weight setup is optional. Keep prescribing');
+    const legacy=build({current:workout('2026-10-11',[lift('Bench',[[225,5]],{progressionProfile:{loadStep:5}})]),helpers});
+    expect(legacy.packet.movements[0].equipment.incrementLb).toBeNull();
+    expect(legacy.packet.movements[0].equipment.loadConvention).toBe('unknown');
+    expect(build({current:current(),historyLimit:0,helpers}).packet.movements[0].cadence).toBeUndefined();
+  });
+  it('labels incompatible machine history and excludes its load comparison',()=>{
+    const machine=(label)=>lift('Press',[[70,10]],{progressionProfile:{loadConvention:'machine_stack',equipmentLabel:label,loadStep:5,loadStepConfirmed:true}});
+    const result=build({current:workout('2026-10-11',[machine('A')]),history:[workout('2026-10-09',[machine('B')])],helpers});
+    expect(result.packet.movements[0].history[0].equipmentComparison).toBe('different');
+    expect(result.packet.movements[0].comparison).toBeNull();
+    expect(result.text).toContain('equipment different: "B"');
+  });
   it('exports ordered results and only matching earlier movements across training categories',()=>{
     const history=[workout('2026-08-01',[lift(' bench   press ',[[135,7],[135,6]]),lift('Unrelated Squat',[[225,5]])],{dayType:'Upper'}),workout('2026-08-04',[lift('Bench Press',[[200,5]])]),current()];
     const result=build({current:current(),history,helpers});

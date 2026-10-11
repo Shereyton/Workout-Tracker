@@ -65,6 +65,23 @@ describe('iPhone product shell integration', () => {
     expect(document.getElementById('progressContent').textContent).toContain('Give your training a direction');
     expect(document.body.textContent).not.toContain('NaN');
   });
+  it('saves optional weight setup and keeps quick form and pain feedback specific to one set',async()=>{
+    document.getElementById('customExercise').value='Bench Press'; document.getElementById('addExercise').click();
+    document.getElementById('loadConvention').value='total_load';
+    document.getElementById('equipmentStep').value='2.5';
+    document.getElementById('saveWeightSetup').click();
+    expect(window.workoutTracker.getState().activeExercise.progressionProfile).toMatchObject({loadConvention:'total_load',loadStep:2.5,loadStepConfirmed:true});
+    document.getElementById('useTimer').checked=false;
+    [...document.querySelectorAll('button')].find(b=>b.textContent==='Form felt controlled').click();
+    [...document.querySelectorAll('button')].find(b=>b.textContent==='No pain').click();
+    for(let i=0;i<2;i++){
+      for(const [id,value] of [['weight','135'],['reps','5']]){document.getElementById(id).value=value;document.getElementById(id).dispatchEvent(new Event('input',{bubbles:true}));}
+      document.getElementById('logBtn').click(); await flush();
+    }
+    const sets=window.workoutTracker.getState().current.exercises[0].sets;
+    expect(sets[0]).toMatchObject({technique:'good',pain:'none'});
+    expect(sets[1]).toMatchObject({technique:'unknown',pain:'unknown'});
+  });
   it('shows progress toward the required reps, not a heavier single',async()=>{
     document.getElementById('customExercise').value='Bench Press';
     document.getElementById('addExercise').click();

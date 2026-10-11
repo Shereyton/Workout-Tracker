@@ -414,6 +414,21 @@
       return finalize(plan);
     }
 
+    const equipmentKnown = profile.loadConvention && profile.loadConvention !== 'unknown'
+      && (profile.loadConvention !== 'machine_stack' || profile.equipmentLabel);
+    const unverifiedHistory = previousExercises.some(entry => {
+      const old=entry.exercise.progressionProfile || {};
+      return !old.loadConvention || old.loadConvention==='unknown'
+        || !!old.equipmentLabel !== !!profile.equipmentLabel;
+    });
+    // Optional metadata only excludes known incompatible scales; legacy logs remain usable.
+    previousExercises = previousExercises.filter(entry => {
+      const old = entry.exercise.progressionProfile || {};
+      if (!equipmentKnown || !old.loadConvention || old.loadConvention === 'unknown') return true;
+      return old.loadConvention === profile.loadConvention
+        && (!old.equipmentLabel || !profile.equipmentLabel || key(old.equipmentLabel) === key(profile.equipmentLabel));
+    });
+
     let support = null;
     if (typeof helpers.computeSessionStats === 'function' && typeof helpers.buildStrengthDecisionSupport === 'function') {
       const toStats = (item, context) => helpers.computeSessionStats({
@@ -607,6 +622,10 @@
       plan.reason = `${plan.reason || 'Review the new target.'} An older app-generated isolation target below ${profile.repMin} reps was ignored; check the updated plan before training.`;
       plan.progressionTrigger = `Confirm the updated ${profile.repMin}–${profile.repMax} rep range before using another saved assignment.`;
     }
+    if (!equipmentKnown) plan.evidence.missing.push('weight convention / machine identity; calculations use the entered scale');
+    if (!profile.loadStepConfirmed) plan.evidence.missing.push(`available equipment increment; using the saved ${profile.loadStep} lb step`);
+    if (unverifiedHistory) plan.evidence.missing.push('historical equipment match is unverified');
+    if ((!equipmentKnown || !profile.loadStepConfirmed || unverifiedHistory) && plan.confidence === 'HIGH') plan.confidence = 'MODERATE';
     return finalize(plan);
   }
 

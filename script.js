@@ -176,6 +176,9 @@ function defaultExerciseProfile(purpose = 'general') {
     repMax: defaults.repMax,
     targetRir: defaults.targetRir,
     loadStep: 5,
+    loadConvention: 'unknown',
+    equipmentLabel: '',
+    loadStepConfirmed: false,
   };
 }
 
@@ -196,6 +199,10 @@ function normalizeExerciseProfile(value) {
     mode: source.mode === 'custom' ? 'custom' : 'auto',
     purpose: base.purpose,
     purposeLabel: base.purposeLabel,
+    loadConvention: ['total_load', 'per_hand', 'machine_stack', 'added_load'].includes(source.loadConvention)
+      ? source.loadConvention : 'unknown',
+    equipmentLabel: trimString(source.equipmentLabel, 60),
+    loadStepConfirmed: source.loadStepConfirmed === true && Number.isFinite(loadStep) && loadStep >= 0.25 && loadStep <= 100,
     repMin: safeMin,
     repMax: safeMax,
     targetRir: Number.isFinite(targetRir) && targetRir >= 0 && targetRir <= 10
@@ -220,6 +227,9 @@ function buildAutomaticExerciseProfile(exerciseName, goal, previousProfile = nul
       ...defaultExerciseProfile('general'),
       mode: 'auto',
       loadStep: previous.loadStep,
+      loadConvention: previous.loadConvention,
+      equipmentLabel: previous.equipmentLabel,
+      loadStepConfirmed: previous.loadStepConfirmed,
     });
   }
   const goalType = normalizedGoal?.goalType || 'weight';
@@ -239,6 +249,9 @@ function buildAutomaticExerciseProfile(exerciseName, goal, previousProfile = nul
     ...automatic,
     mode: 'auto',
     loadStep: previous.loadStep,
+    loadConvention: previous.loadConvention,
+    equipmentLabel: previous.equipmentLabel,
+    loadStepConfirmed: previous.loadStepConfirmed,
   });
 }
 
@@ -315,8 +328,15 @@ function sanitizeExerciseGoals(value) {
   return out;
 }
 
-function getGoalPerformanceFromExercise(exercise, goalType, exerciseName = '', targetReps = 1) {
+function getGoalPerformanceFromExercise(exercise, goalType, exerciseName = '', targetReps = 1, equipment = null) {
   if (!exercise || !Array.isArray(exercise.sets)) return 0;
+  const actualEquipment = exercise.isSuperset
+    ? exercise.progressionProfiles?.[exerciseGoalKey(exerciseName)] : exercise.progressionProfile;
+  if (equipment?.loadConvention && equipment.loadConvention !== 'unknown'
+    && actualEquipment?.loadConvention && actualEquipment.loadConvention !== 'unknown'
+    && (equipment.loadConvention !== actualEquipment.loadConvention
+      || equipment.equipmentLabel && actualEquipment.equipmentLabel
+        && exerciseGoalKey(equipment.equipmentLabel) !== exerciseGoalKey(actualEquipment.equipmentLabel))) return 0;
   const classifiedExercise = classifyExerciseSets(exercise);
   const values = [];
   const record = (set) => {
@@ -2784,6 +2804,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   const exerciseGoalValueLabel = document.getElementById('exerciseGoalValueLabel');
   const exerciseGoalRepsField = document.getElementById('exerciseGoalRepsField');
   const exerciseGoalReps = document.getElementById('exerciseGoalReps');
+  const weightSetup = document.getElementById('weightSetup');
+  const weightSetupExercise = document.getElementById('weightSetupExercise');
+  const loadConventionInput = document.getElementById('loadConvention');
+  const equipmentLabelInput = document.getElementById('equipmentLabel');
+  const equipmentStepInput = document.getElementById('equipmentStep');
   const saveExerciseGoal = document.getElementById('saveExerciseGoal');
   const removeExerciseGoal = document.getElementById('removeExerciseGoal');
   const themePackButton = document.getElementById('themePackButton');
@@ -3886,8 +3911,11 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
     if (currentExercise.isSuperset) {
       const ok = currentExercise.exercises.every((_, i) => {
-        const w = parseWorkoutNumber(document.getElementById(`weight${i}`).value);
-        const r = parseWorkoutNumber(document.getElementById(`reps${i}`).value);
+        const weightField = document.getElementById(`weight${i}`);
+        const repsField = document.getElementById(`reps${i}`);
+        if (!weightField || !repsField) return false;
+        const w = parseWorkoutNumber(weightField.value);
+        const r = parseWorkoutNumber(repsField.value);
         return canLogSet(w, r);
       });
       logBtn.disabled = !ok;
@@ -4440,13 +4468,16 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       const key = exerciseGoalKey(name);
       const previous = exerciseGoals[key];
       if (!previous) return;
+      const equipment = exercise.isSuperset ? exercise.progressionProfiles?.[key] || exerciseProfiles[key]
+        : exercise.progressionProfile || exerciseProfiles[key];
       const currentPerformance = getGoalPerformanceFromExercise(
         exercise,
         previous.goalType,
         name,
         previous.targetReps,
+        equipment,
       );
-      const historicalBest = getBestHistoricalGoalPerformance(name, previous.goalType, previous.targetReps);
+      const historicalBest = getBestHistoricalGoalPerformance(name, previous.goalType, previous.targetReps, equipment);
       const best = Math.max(currentPerformance, historicalBest);
       const snapshot = normalizeExerciseGoal({
         ...previous,
@@ -4463,7 +4494,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     if (changed) persistExerciseGoals();
   }
 
-  function getBestHistoricalGoalPerformance(exerciseName, goalType, targetReps = 1) {
+  function getBestHistoricalGoalPerformance(exerciseName, goalType, targetReps = 1, equipment = null) {
     let best = 0;
     const inspectExercises = (exercises) => {
       (Array.isArray(exercises) ? exercises : []).forEach((exercise) => {
@@ -4474,7 +4505,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         ) {
           best = Math.max(
             best,
-            getGoalPerformanceFromExercise(exercise, goalType, exerciseName, targetReps),
+            getGoalPerformanceFromExercise(exercise, goalType, exerciseName, targetReps, equipment),
           );
         }
       });
@@ -4596,8 +4627,10 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     const key = exerciseGoalKey(exerciseName);
     const previous = exerciseGoals[key];
     const now = new Date().toISOString();
-    const performance = getGoalPerformanceFromExercise(currentExercise, goalType, exerciseName, targetReps);
-    const historicalBest = getBestHistoricalGoalPerformance(exerciseName, goalType, targetReps);
+    const equipment = currentExercise.isSuperset ? currentExercise.progressionProfiles?.[key] || exerciseProfiles[key]
+      : currentExercise.progressionProfile || exerciseProfiles[key];
+    const performance = getGoalPerformanceFromExercise(currentExercise, goalType, exerciseName, targetReps, equipment);
+    const historicalBest = getBestHistoricalGoalPerformance(exerciseName, goalType, targetReps, equipment);
     exerciseGoals[key] = normalizeExerciseGoal({
       exerciseName,
       goalType,
@@ -4608,6 +4641,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       dateCreated: previous ? previous.dateCreated : now,
       lastUpdated: now,
       currentBestPerformance: previous && previous.goalType === goalType
+        && (!equipment?.loadConvention || equipment.loadConvention === 'unknown')
         && (goalType !== 'weight' || previous.targetReps === targetReps)
         ? Math.max(previous.currentBestPerformance, performance, historicalBest)
         : Math.max(performance, historicalBest),
@@ -4661,8 +4695,64 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
     showToast(`Goal removed for ${exerciseName}`);
   });
 
+  function renderWeightSetup() {
+    if (!weightSetup || !currentExercise) return;
+    weightSetup.classList.toggle('hidden', !!currentExercise.isCardio);
+    if (currentExercise.isCardio) return;
+    const names = currentExercise.isSuperset ? currentExercise.exercises || [] : [currentExercise.name];
+    const selected = weightSetupExercise.value;
+    weightSetupExercise.replaceChildren(...names.map(name => {
+      const option = document.createElement('option'); option.value = name; option.textContent = name; return option;
+    }));
+    if (names.includes(selected)) weightSetupExercise.value = selected;
+    const key = exerciseGoalKey(weightSetupExercise.value);
+    const profile = normalizeExerciseProfile(currentExercise.isSuperset
+      ? currentExercise.progressionProfiles?.[key] || exerciseProfiles[key]
+      : currentExercise.progressionProfile || exerciseProfiles[key]);
+    loadConventionInput.value = profile.loadConvention;
+    equipmentLabelInput.value = profile.equipmentLabel;
+    equipmentStepInput.value = profile.loadStepConfirmed ? String(profile.loadStep) : '';
+    document.getElementById('weightSetupSummary').textContent = profile.loadConvention !== 'unknown' && profile.loadStepConfirmed
+      ? 'Saved · edit if equipment changes' : 'Optional · improve AI accuracy';
+  }
+  weightSetupExercise?.addEventListener('change', renderWeightSetup);
+  document.getElementById('saveWeightSetup')?.addEventListener('click', () => {
+    if (!currentExercise || currentExercise.isCardio) return;
+    const name = weightSetupExercise.value;
+    const key = exerciseGoalKey(name);
+    const previous = normalizeExerciseProfile(currentExercise.isSuperset
+      ? currentExercise.progressionProfiles?.[key] || exerciseProfiles[key]
+      : currentExercise.progressionProfile || exerciseProfiles[key]);
+    const loadConvention = loadConventionInput.value;
+    const equipmentLabel = trimString(equipmentLabelInput.value, 60);
+    const loadStep = Number(equipmentStepInput.value);
+    if (!['total_load', 'per_hand', 'machine_stack', 'added_load'].includes(loadConvention)
+      || !Number.isFinite(loadStep) || loadStep < 0.25 || loadStep > 100
+      || (loadConvention === 'machine_stack' && !equipmentLabel)) {
+      showToast('Choose the weight meaning and smallest increase. Give machines a name.'); return;
+    }
+    const hasLoggedSets = currentExercise.sets?.length || session.exercises.some(ex => ex.sets?.length
+      && (exerciseGoalKey(ex.name) === key || ex.isSuperset && ex.exercises?.some(member => exerciseGoalKey(member) === key)));
+    if (hasLoggedSets && previous.loadConvention !== 'unknown'
+      && (previous.loadConvention !== loadConvention || previous.equipmentLabel !== equipmentLabel)) {
+      showToast('Keep the setup for these logged sets. Change equipment in a new workout.'); return;
+    }
+    const profile = normalizeExerciseProfile({...previous, loadConvention, equipmentLabel, loadStep, loadStepConfirmed: true});
+    const updatedProfiles = {...exerciseProfiles, [key]: profile};
+    const updatedExercise = {...currentExercise};
+    if (updatedExercise.isSuperset) updatedExercise.progressionProfiles = {...updatedExercise.progressionProfiles, [key]: profile};
+    else updatedExercise.progressionProfile = profile;
+    if (!wtStorage.setMany([[WT_KEYS.exerciseProfiles, updatedProfiles], [WT_KEYS.current, updatedExercise]])) {
+      showToast('Weight setup could not be saved. Your workout controls are still available.'); return;
+    }
+    exerciseProfiles = updatedProfiles; currentExercise = updatedExercise;
+    saveState(); renderAccuracyDetails(); renderExerciseGoalPanel(); weightSetup.open = false;
+    showToast(`Weight setup saved for ${name}.`);
+  });
+
   function renderAccuracyDetails() {
     if (!accuracyDetails || !currentExercise) return;
+    renderWeightSetup();
     const isCardio = !!currentExercise.isCardio;
     if (autoSetNote) autoSetNote.classList.toggle('hidden', isCardio);
     accuracyDetails.classList.toggle('hidden', isCardio);
@@ -4808,12 +4898,14 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         return;
       }
       const profile = normalizeExerciseProfile({
+        ...normalizeExerciseProfile(exerciseProfiles[key] || currentExercise.progressionProfile),
         mode: 'custom',
         purpose: exercisePurposeInput.value,
         repMin,
         repMax,
         targetRir,
         loadStep,
+        loadStepConfirmed: true,
       });
       exerciseProfiles[key] = profile;
       currentExercise.progressionProfile = profile;
@@ -6347,6 +6439,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       last,
       history,
       goals: exerciseGoals,
+      equipmentProfiles: exerciseProfiles,
       generalGoals: goals,
       constraints,
       activeExercise: currentExercise,

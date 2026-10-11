@@ -60,6 +60,8 @@ describe('custom exercise goals', () => {
       mode: 'auto', purpose: 'general', repMin: 6, repMax: 12,
     });
     expect(strength.loadStep).toBe(2.5);
+    const configured=buildAutomaticExerciseProfile('Bench Press',{exerciseName:'Bench Press',goalType:'weight',goalValue:315},{loadConvention:'total_load',equipmentLabel:'Home bar',loadStep:2.5,loadStepConfirmed:true});
+    expect(configured).toMatchObject({mode:'auto',loadConvention:'total_load',equipmentLabel:'Home bar',loadStep:2.5,loadStepConfirmed:true});
   });
 
   it('rejects invalid goals and keys valid goals by exercise', () => {
@@ -116,6 +118,11 @@ describe('custom exercise goals', () => {
     expect(reached.currentBestPerformance).toBe(410);
     expect(reached.progressPercentage).toBe(100);
     expect(reached.remainingDistanceToGoal).toBe(0);
+  });
+  it('does not count a known different machine toward the current equipment goal',()=>{
+    const exercise={name:'Chest Press',progressionProfile:{loadConvention:'machine_stack',equipmentLabel:'Machine A'},sets:[{weight:200,reps:5,role:'working',roleSource:'manual'}]};
+    expect(getGoalPerformanceFromExercise(exercise,'weight','Chest Press',1,{loadConvention:'machine_stack',equipmentLabel:'Machine B'})).toBe(0);
+    expect(getGoalPerformanceFromExercise(exercise,'weight','Chest Press')).toBe(200);
   });
 
   it('attaches only goals for exercises performed in the workout', () => {
