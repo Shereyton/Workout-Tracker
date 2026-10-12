@@ -544,12 +544,15 @@
         plan.action = 'HOLD';
         plan.reason = 'The available weight jump is too large for a small next step. Repeat this weight or choose a smaller equipment increment.';
       } else {
+        const preserveRepScheme = structured || ['primary_strength', 'secondary_strength', 'power_skill'].includes(profile.purpose);
         plan.workingSets = plan.workingSets.map((set) => (structured ? set.role === 'top_set' : set.weight === topWeight)
           ? { ...set, weight: nextWeight, reps: profile.purpose === 'strength_isolation' && !structured
-            ? Math.max(profile.repMin, set.reps - 1) : Math.min(set.reps, profile.repMin) } : set);
+            ? Math.max(profile.repMin, set.reps - 1) : preserveRepScheme ? set.reps : Math.min(set.reps, profile.repMin) } : set);
         plan.reason = structured ? plan.reason : fiveByFiveComplete
           ? `You completed the configured five sets of five. Try one ${profile.loadStep} lb step higher for five sets of five; repeat that load until all 25 reps are completed. This is your 5×5 progression rule, not a guaranteed rate of gain.`
-          : `Your recent sets support the next ${profile.loadStep} lb step. Keep the same number of sets and rebuild reps at the new weight.`;
+          : preserveRepScheme
+            ? `Your recent sets support the next ${profile.loadStep} lb step. Keep the demonstrated repetitions and set count at the new weight.`
+            : `Your recent sets support the next ${profile.loadStep} lb step. Keep the same number of sets and rebuild reps at the new weight.`;
         plan.evidence.heuristic.push(structured
           ? 'Raise only the labelled top set by one equipment step; leave back-off work unchanged.'
           : 'Raise only the heaviest working-set group by one equipment step; leave back-off work unchanged.');

@@ -6,6 +6,41 @@ const lift=(name,sets,extra={})=>({name,progressionProfile:{loadConvention:'tota
 const current=()=>workout('2026-08-03',[lift('Bench Press',[[135,8],[135,8],[135,6]])],{workoutId:'today',dayType:'Chest'});
 
 describe('AI programming handoff',()=>{
+  it('computes transparent load-step percentages and three-formula estimates independently of goals',()=>{
+    const record=workout('2026-10-11',[lift('Bench',[[235,5]],{goal:{exerciseName:'Bench',goalType:'weight',goalValue:315}})]);
+    const result=build({current:record,helpers});
+    const q=result.packet.movements[0].quantitative;
+    expect(q.jumpPercent).toBe(2.13);
+    expect(q.capacity.referenceLb).toBe(264.38);
+    expect(q.capacity.latestInputs[0].formulaEstimatesLb).toEqual({epley:274.17,brzycki:264.38,oconnor:264.38});
+    expect(q.capacity.mainLoadPercentages[0].percentOfEstimatedReference).toBe(88.89);
+    expect(q.capacity.effortBasis).toBe('includes_unknown_effort_rep_assumptions');
+    record.exercises[0].goal.goalValue=405;
+    expect(build({current:record,helpers}).packet.movements[0].quantitative.capacity).toEqual(q.capacity);
+    expect(result.text).toContain('Missing RIR, equipment setup, or a capacity estimate must not become a prerequisite');
+    record.exercises[0].progressionProfile={mode:'auto',loadStep:2.5,loadStepConfirmed:false};
+    const assumed=build({current:record,helpers}).packet.movements[0].quantitative;
+    expect(assumed.loadStepLb).toBe(2.5);
+    expect(assumed.loadStepAssumed).toBe(true);
+  });
+  it('uses reported RIR transparently and never puts an estimate below a heavier logged single',()=>{
+    const record=workout('2026-10-11',[lift('Bench',[[300,1],[235,5,{rir:2}]])]);
+    const q=build({current:record,helpers}).packet.movements[0].quantitative;
+    expect(q.capacity.latestInputs[0].effectiveReps).toBe(7);
+    expect(q.capacity.referenceLb).toBe(300);
+    expect(q.capacity.raisedToLoggedPerformance).toBe(true);
+    expect(build({current:workout('2026-10-11',[lift('Curl',[[30,15]])]),helpers}).packet.movements[0].quantitative.capacity).toBeNull();
+  });
+  it('separates attempted-rep shortfalls from unlogged targets and flags failed attempts',()=>{
+    const record=workout('2026-10-11',[lift('Bench',[[235,5],[235,4]])]);
+    record.exercises[0].prescription={source:'app_next_workout',type:'strength',workingSets:[1,2,3].map(()=>({weight:235,reps:5,role:'working'}))};
+    const q=build({current:record,helpers}).packet.movements[0].quantitative;
+    expect(q.assignedOutcome).toMatchObject({repDeficit:1,unloggedTargets:1,failedAttempts:0,shortfallSetNumbers:[2]});
+    record.exercises[0].sets[1]={weight:235,reps:0,role:'failed_attempt',roleSource:'manual'};
+    const failed=build({current:record,helpers}).packet.movements[0].quantitative;
+    expect(failed.assignedOutcome).toMatchObject({repDeficit:5,unloggedTargets:1,failedAttempts:1});
+    expect(failed.capacity.latestInputs).toHaveLength(1);
+  });
   it('exports optional equipment without treating defaults as confirmed and derives cadence',()=>{
     const result=build({current:workout('2026-10-11',[lift('Bench',[[225,5]])]),history:['2026-10-07','2026-10-04','2026-10-01'].map(d=>workout(d,[lift('Bench',[[225,5]])])),helpers});
     expect(result.packet.movements[0].cadence).toEqual({loggedSessionsLast28Days:4,daysSincePrevious:4,medianRecentGapDays:3});

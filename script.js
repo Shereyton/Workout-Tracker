@@ -1943,7 +1943,7 @@ function buildStrengthDecisionSupport(
     ].filter(Boolean),
     estimated: [
       current.e1rm
-        ? `Model-derived e1RM ${formatGoalNumber(current.e1rm.estimate)} ± ${formatGoalNumber(current.e1rm.uncertainty)} lbs`
+        ? `Model-derived e1RM center ${formatGoalNumber(current.e1rm.estimate)} lbs; heuristic sensitivity margin ${formatGoalNumber(current.e1rm.uncertainty)} lbs, not a statistical interval`
         : null,
       nextLoadFeasibility
         ? `About ${formatGoalNumber(nextLoadFeasibility.predictedMinimumReps)} minimum reps predicted at ${formatGoalNumber(profile.targetRir)} RIR after the saved load jump`
@@ -1978,7 +1978,7 @@ function buildStrengthDecisionSupport(
     loadIncreasePercent: Number(loadIncreasePercent.toFixed(1)),
     evidenceTrace,
     text: `${current.name} – ${decision} (${confidence} confidence): ${reason}${current.e1rm
-      ? ` Model-derived e1RM range: ${formatGoalNumber(Math.max(current.e1rm.lowerBound, current.e1rm.estimate - current.e1rm.uncertainty))}–${formatGoalNumber(current.e1rm.estimate + current.e1rm.uncertainty)} lbs (${current.e1rm.confidence} estimate confidence; not a tested max).`
+      ? ` Heuristic e1RM sensitivity range: ${formatGoalNumber(Math.max(current.e1rm.lowerBound, current.e1rm.estimate - current.e1rm.uncertainty))}–${formatGoalNumber(current.e1rm.estimate + current.e1rm.uncertainty)} lbs (${current.e1rm.confidence} estimate confidence; not a tested max or statistical interval).`
       : ''}`,
   };
 }
