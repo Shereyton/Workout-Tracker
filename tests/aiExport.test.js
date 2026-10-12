@@ -66,6 +66,10 @@ describe('AI programming handoff',()=>{
     expect(result.packet.movements[0].comparison.sameLoadReps[0]).toEqual({weightLb:135,previous:[7,6],current:[8,8,6]});
     expect(result.text).not.toContain('Unrelated Squat');expect(result.text).not.toContain('200×5');
     expect(result.text).toContain('#1–2 135×8');expect(result.text).toContain('#3 135×6');
+    expect(result.text.indexOf('COMPLETED WORK')).toBeLessThan(result.text.indexOf('RECENT HISTORY'));
+    expect(result.text.indexOf('RECENT HISTORY')).toBeLessThan(result.text.indexOf('NUMERIC EVIDENCE'));
+    expect(result.text.indexOf('NEXT WORKOUT REQUEST')).toBeLessThan(result.text.indexOf('CALCULATION NOTES + SOURCES'));
+    expect(result.text.match(/^NEXT WORKOUT REQUEST$/gm)).toHaveLength(1);
   });
   it('separates failures, preparation and unsafe work without fabricating favorable unknowns',()=>{
     const result=build({current:workout('2026-08-03',[lift('Bench',[[45,10,{role:'warmup'}],[200,0],[135,8],[135,8,{pain:'stopped'}],[135,8,{technique:'poor'}]])]),helpers});

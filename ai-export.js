@@ -233,12 +233,13 @@
   }
   function quantitativeLines(m){
     const q=m.quantitative;if(!q)return [];
-    const lines=[`NUMERIC BRIEF: saved load step +${fmt(q.loadStepLb)} lb${q.jumpPercent!==null?` = ${fmt(q.jumpPercent)}% of the heaviest completed main load`:''}${q.loadStepAssumed?' (assumed increment; keep prescribing on the entered scale)':''}.`];
-    if(q.blocks.length)lines.push(`Same-load blocks: ${q.blocks.map(b=>`${fmt(b.loadLb)} lb, ${b.firstReps}→${b.lastReps} reps across ${b.sets} sets (${fmt(b.repDropPercent)}% observed rep drop)`).join('; ')}. Check intended reps/rest before attributing fatigue.`);
+    const lines=[`Load step: +${fmt(q.loadStepLb)} lb${q.jumpPercent!==null?` = ${fmt(q.jumpPercent)}% of the heaviest completed main load`:''}${q.loadStepAssumed?' (assumed increment; entered scale)':''}.`];
+    const changedBlocks=q.blocks.filter(b=>b.repDropPercent!==0);
+    if(changedBlocks.length)lines.push(`Same-load blocks: ${changedBlocks.map(b=>`${fmt(b.loadLb)} lb, ${b.firstReps}→${b.lastReps} reps across ${b.sets} sets (${fmt(b.repDropPercent)}% observed rep drop)`).join('; ')}. Check intended reps/rest before attributing fatigue.`);
     if(q.assignedOutcome){const a=q.assignedOutcome;lines.push(`Target accounting: ${a.loadsComparable?`${a.repDeficit} missing reps in attempted matched-load targets; shortfall set positions ${a.shortfallSetNumbers.join(',')||'none'}`:'loads/structure changed; no numerical pass/fail claim'}; ${a.failedAttempts} failed attempts; ${a.unloggedTargets} targets unlogged (not failed).`);}
     if(q.capacity){
       const c=q.capacity;
-      lines.push(`Capacity reference: ${fmt(c.referenceLb)} lb [${c.confidence} estimate confidence], from ${c.sessionCount} logged session(s); ${c.effortBasis==='reported_RIR_adjusted'?'uses reported reps + RIR':'includes unknown-effort rep assumptions'}. Latest anchor formula envelope ${c.latestModelEnvelopeLb.map(fmt).join('–')} lb${c.latestEvidenceDate?` from ${c.latestEvidenceDate}`:' from today'}; model disagreement, not a statistical interval.${c.sessionCount>1?` Session-center range separately ${c.sessionCenterRangeLb.map(fmt).join('–')} lb.`:''}${c.raisedToLoggedPerformance?' Reference raised to the heavier lift actually logged; models and performance disagree.':''}`);
+      lines.push(`Capacity reference: ${fmt(c.referenceLb)} lb [${c.confidence} estimate confidence], from ${c.sessionCount} logged session(s); ${c.effortBasis==='reported_RIR_adjusted'?'uses reported reps + RIR':'includes unknown-effort rep assumptions'}. Latest anchor formula envelope ${c.latestModelEnvelopeLb.map(fmt).join('–')} lb${c.latestEvidenceDate?` from ${c.latestEvidenceDate}`:' from today'}; model disagreement, not a statistical interval.${c.sessionCount>1&&c.sessionCenterRangeLb[0]!==c.sessionCenterRangeLb[1]?` Session-center range separately ${c.sessionCenterRangeLb.map(fmt).join('–')} lb.`:''}${c.raisedToLoggedPerformance?' Reference raised to the heavier lift actually logged; models and performance disagree.':''}`);
       const s=c.latestInputs[0];
       lines.push(`Model anchor #${s.set}: ${fmt(s.loadLb)}×${s.reps}${s.rir===null?' (reserve unknown)':` +${s.rir} RIR`} → Epley ${fmt(s.formulaEstimatesLb.epley)}, Brzycki ${fmt(s.formulaEstimatesLb.brzycki)}, OConnor ${fmt(s.formulaEstimatesLb.oconnor)} lb. Latest session median ${fmt(c.latestSessionCenterLb)} lb uses sets ${c.latestInputs.map(input=>input.set).join(',')}.`);
       if(c.mainLoadPercentages.length)lines.push(`Working intensity against that estimated reference: ${c.mainLoadPercentages.map(p=>`${fmt(p.loadLb)} lb = ${fmt(p.percentOfEstimatedReference)}%`).join('; ')}. This is a model reference; reconcile any explicitly stated tested/training max in user notes.`);
@@ -331,11 +332,10 @@
     lines.push('','HOW TO READ','Load = lb as entered; each Weight setup defines total/per-hand/machine meaning; unknown remains unresolved. 0 = no external load logged. Distance = mi; time/rest = sec. # ranges repeat identical entries.','work/top/backoff = candidate main work; warmup/ramp/practice/failed/unknown separate. ! user-marked; ~role-confidence inferred by app; # outcome-derived. Roles may be wrong. RIR = reps left. Missing RIR/form/pain = unknown. Rest = planned/timer-observed, not verified between-set rest; ? missing.');
     if(movements.some(m=>m.prescription))lines.push('An assigned target is a saved in-app plan, not proof it was performed. Numeric completion does not establish clean form, low effort, or absence of pain.');
     lines.push('Qualifying totals exclude failed, stopped-for-pain, poor-form and non-main sets, but can include inferred roles. Volume = Σ(load×reps), not fatigue or progress. Long-term weight goals are logged load targets, not tested 1RMs or next-session prescriptions.');
-    if(movements.some(m=>m.quantitative?.capacity))lines.push('Capacity math: L=entered load; n=reps+reported RIR (0–3), or reps alone with reserve unknown; only n=2–10 modeled. Epley=L(1+n/30); Brzycki=36L/(37−n); OConnor=L(1+0.025n). Up to 3 early/low-rep sets form a weighted session median; up to 5 sessions form a recency-weighted median, weight=1/(1+days/14). These weighting choices are coaching heuristics. Reference never falls below a heavier successful main lift in this snapshot.');
     if(flat.groups.length)lines.push(`Supersets: ${flat.groups.map(g=>`${g.id} = ${g.exercises.map(x=>JSON.stringify(x)).join(' + ')} (${g.rounds} rounds)`).join('; ')}. Rest on a superset entry belongs to its round.`);
-    if(packet.historyContext.length){lines.push('','HISTORY CONTEXT (referenced below; notes shown once)');packet.historyContext.forEach(h=>{lines.push(`${h.id}: ${h.date}${packet.historyContext.filter(x=>x.date===h.date).length>1?` @ ${h.timestamp}`:''}; day=${h.dayType||'unspecified'}; status-setting=${h.status}.`);if(h.notes.length)lines.push(`  ${h.notesScope==='calendar_day'?'Calendar-day':'Session'} notes: ${h.notes.map(note=>JSON.stringify(note)).join('; ')}`);});}
     lines.push('','CURRENT RESULTS + MATCHED HISTORY (newest first)');
     movements.forEach((m,i)=>{
+      const blockStart=lines.length;
       lines.push(`\n${i+1}. ${JSON.stringify(m.name)} [${m.type}]`);
       if(m.goal)lines.push(`Goal: ${fmt(m.goal.target)} ${m.goal.unit}${m.goal.type==='weight'?` × ${m.goal.targetReps} rep${m.goal.targetReps===1?'':'s'}`:''} (${m.goal.type}; ${m.goal.focus||'focus unspecified'})${includeProgress&&m.goal.appLoggedBest!==undefined?`; app-tracked best at the required reps ${fmt(m.goal.appLoggedBest)} ${m.goal.unit} (not independently verified)`:''}.`);
       else lines.push('Goal: — (none currently set).');
@@ -343,12 +343,13 @@
       if(m.profile)lines.push(profileText(m.profile));
       if(m.equipment)lines.push(`Weight setup: ${loadLabels[m.equipment.loadConvention]}${m.equipment.label?`; equipment ${JSON.stringify(m.equipment.label)}`:''}; smallest confirmed step ${m.equipment.incrementLb===null?'unknown':`${fmt(m.equipment.incrementLb)} lb`}.`);
       if(m.cadence)lines.push(`Logged cadence: ${m.cadence.loggedSessionsLast28Days} same-movement sessions in 28 calendar days (including today); previous exposure ${m.cadence.daysSincePrevious===null?'unknown':`${fmt(m.cadence.daysSincePrevious)} days ago`}; median recent gap ${m.cadence.medianRecentGapDays===null?'unknown':`${fmt(m.cadence.medianRecentGapDays)} days`}. Saved logs only; missing days do not prove inactivity.`);
+      lines.push('  COMPLETED WORK');
       const assignment=assignedLine(m);if(assignment)lines.push(assignment);
       lines.push(`Today: ${compactSets(m.sets,m.type)}`);
       const s=m.summary;
       if(m.type==='strength')lines.push(`Calculated: ${s.qualifyingSets} qualifying main sets, ${s.qualifyingReps} reps, ${fmt(s.qualifyingVolumeLb)} lb·reps; ${s.failedAttempts} failed; ${s.inferredRoles}/${s.entries} roles inferred. Unknown: RIR ${s.unknownRir}/${m.sets.filter(x=>x.completed).length} completed sets, form ${s.unknownTechnique}/${s.entries}, pain ${s.unknownPain}/${s.entries}.`);
       else lines.push(`Calculated: ${fmt(s.durationSeconds)} sec total; ${s.distanceMiles===null?'distance unknown':`${fmt(s.distanceMiles)} mi total`}. Effort, heart rate, terrain and conditions are not recorded.`);
-      lines.push(...quantitativeLines(m));
+      lines.push('  RECENT HISTORY');
       if(!m.history.length)lines.push(limit?'History: no earlier matching movement in saved app data.':'History: excluded by export preference.');
       m.history.forEach(h=>{
         const label=`${h.date}${h.calendarDaysBefore===0?` @ ${h.timestamp||'time unknown'}`:''}${h.calendarDaysBefore!==null?` (${h.calendarDaysBefore} calendar days earlier)`:''}`;
@@ -356,7 +357,18 @@
         if(h.profile?.source==='user_settings'&&JSON.stringify(h.profile)!==JSON.stringify(m.profile))lines.push(`  Earlier profile: ${profileText(h.profile)}`);
       });
       if(m.comparison){const c=m.comparison;if(c.sameLoadReps.length)lines.push(`Same-load qualifying reps, ${c.contextId} (equipment ${c.equipmentComparison}) → today: ${c.sameLoadReps.map(x=>`${fmt(x.weightLb)} lb [${x.previous.join(',')}]→[${x.current.join(',')}]`).join('; ')}.`);if(c.qualifyingVolumeChangePercent!==undefined)lines.push(`Comparison with ${c.contextId}: main-set count ${c.qualifyingSetsDelta>=0?'+':''}${c.qualifyingSetsDelta}; main volume ${c.qualifyingVolumeChangePercent>=0?'+':''}${c.qualifyingVolumeChangePercent}% (dose comparison only; check reps, effort and context).`);}
+      const numbers=quantitativeLines(m);
+      if(numbers.length)lines.push('  NUMERIC EVIDENCE',...numbers);
+      let inSection=false;
+      for(let line=blockStart+1;line<lines.length;line++){
+        const value=lines[line].trimStart();
+        const section=['COMPLETED WORK','RECENT HISTORY','NUMERIC EVIDENCE'].includes(value);
+        if(section)inSection=true;
+        lines[line]=`${section||!inSection?'  ':'    '}${value}`;
+      }
     });
+    const meaningfulContexts=packet.historyContext.filter(h=>h.notes.length||h.dayType||!['unknown','complete'].includes(h.status));
+    if(meaningfulContexts.length){lines.push('','HISTORY CONTEXT (referenced above; notes shown once)');meaningfulContexts.forEach(h=>{lines.push(`${h.id}: ${h.date}${packet.historyContext.filter(x=>x.date===h.date).length>1?` @ ${h.timestamp}`:''}; day=${h.dayType||'unspecified'}; status-setting=${h.status}.`);if(h.notes.length)lines.push(`  ${h.notesScope==='calendar_day'?'Calendar-day':'Session'} notes: ${h.notes.map(note=>JSON.stringify(note)).join('; ')}`);});}
     if(packet.appPlan){
       lines.push('',recordState==='active_not_finished'
         ?'PROVISIONAL APP NEXT-WORKOUT DRAFT (from this active snapshot; recalculate after later edits)'
@@ -370,20 +382,20 @@
         if(ex.trigger)lines.push(`  Next increase requires: ${ex.trigger}`);
       });
     }
-    if(movements.some(m=>m.type==='strength'))lines.push('','PROGRAMMING LENS (general evidence versus app rules)',
-      'For a strength goal, prioritize repeatable high-quality work, appropriate heavier exposure, enough submaximal volume and rest, and recorded effort/recovery. A goal load is not a verified current 1RM; do not derive fixed percentages or a peak calendar from it.',
-      'Keep the logged scheme: straight 5×5, top set plus back-offs, or rep range only when actually identifiable. Complete assigned work before escalating; compare like loads/roles across sessions. Change one variable at a time; hold or reduce after misses, pain, poor form or uncertain data. Do not add a heavy single or extra exercise just because a strength goal exists.',
-      'The app’s exact 5×5 completion/reset, two-comparable-session, load-step and fatigue cutoffs are coaching heuristics, not proven individual laws. General evidence anchors: ACSM position stand https://pubmed.ncbi.nlm.nih.gov/41843416/ ; load/sets/frequency review https://pubmed.ncbi.nlm.nih.gov/37414459/ ; autoregulation review https://pubmed.ncbi.nlm.nih.gov/40791980/ ; strength rest review https://pubmed.ncbi.nlm.nih.gov/28933024/ .');
     lines.push('','NEXT WORKOUT REQUEST',
-      'Start with DO THIS NEXT. Prescribe the full current-session roster in order and preserve superset groups. The day label is user-selected context; if it conflicts with the exercises, flag it rather than moving or adding movements. History informs progression, never exercise selection. Give warm-ups, exact main sets/load/reps (or cardio time/distance), rest, effort, next progression trigger and one reason per movement.',
-      'Compare assigned versus completed work and like-for-like history. Preserve the identifiable scheme; choose the smallest justified change in load, reps or sets. Holds/reductions are valid. Explain meaningful previous→next numbers and confidence; mark exact rules as evidence-backed or coaching heuristics. Do not invent maxes, equipment, effort, recovery or observations.',
-      'Make the numbers auditable for every movement: previous→next working load and percentage change, main sets × reps, rest, the goal-directed reason, and the exact next progression trigger. Use the numeric brief as evidence, not a mandatory prescription. Missing RIR, equipment setup, or a capacity estimate must not become a prerequisite for a complete next workout; use observed load/reps and state assumptions inline.',
-      'Choose the rep/set scheme deliberately: retain effective straight sets (3×5, 5×5, 3×3, 4×4, 5×3), separate top sets/back-offs, or use rep-range progression when increments are coarse. These are program conventions, not universally optimal percentage tables. Explain a scheme change numerically. Treat improving same-load reps as progress; distinguish early shortfalls from late-set attrition. Do not add sets merely because tonnage fell, or impose a fixed percentage reduction from unlogged days.',
-      'A logged successful rep is not independent proof of clean technique, effort or a tested max. Preserve the exercise roster, not an arbitrary exact set count; distinguish warm-ups from working sets and justify the planned dose and time estimate.',
-      'Weight setup is optional. Keep prescribing from logged performance when it is missing: use the entered weight scale consistently, label assumed increments, and avoid invented per-hand/total conversions or machine equivalence. Known different machines or conventions are not comparable. With unknown effort, prefer repeated completion evidence. Restore short rest before diagnosing lost strength. Interpret logged gaps relative to cadence; unlogged days do not prove inactivity and no fixed weekly strength-loss percentage applies.',
-      'For percentage work, name the current capacity reference, date and estimation method; never use the goal as current capacity. A training max is a chosen programming factor: distinguish percent of training max from percent of estimated 1RM. Formula spread is model disagreement, not a confidence interval. Use feasible equipment steps and conservative rounding for heavy work. Support a goal attempt with converging recent performance, effort and technique evidence; one optimistic estimate is insufficient.',
-      'If time is limited, show a priority stopping point AND the complete remaining roster without catch-up sets. Change the roster only for an explicit user request, stated post-goal rule, or safety/equipment need; label any substitution. Pain, a miss or form breakdown must not trigger mandatory fallback sets or an invented precise substitution; stop the affected work and give a conditional safety path. Ask only questions that materially change the plan.');
-    if(packet.appPlan)lines.push('Treat the app draft as a transparent starting point, not an order. Reconcile it with the log; if you change a target, show the changed number and specific evidence or safety reason so app and AI stay on one progression path.');
+      '1. Start with DO THIS NEXT. Use the full current-session roster in order, preserving supersets. History informs progression, never exercise selection. Flag a conflicting day label. For each movement give warm-ups, exact main sets/load/reps (cardio: time/distance), rest and intended effort.',
+      '2. Explain previous→next load and percentage change, reps/set count, one goal-directed reason and the exact progression trigger. Compare assigned work with actual results and compatible history. Preserve an effective scheme or justify its change; change one primary variable when possible. Improved same-load reps count as progress. Use numbers as evidence, not a mandatory prescription.',
+      '3. Missing RIR, equipment setup, or a capacity estimate must not become a prerequisite for a complete next workout. Weight setup is optional. Keep prescribing on the entered scale with assumptions inline; do not invent conversions, equipment, maxes or effort. Known incompatible equipment is not comparable.',
+      '4. Name the denominator, date and method for every capacity percentage. Keep estimated capacity, training max and future goal separate. Never use the goal as current capacity. A logged successful rep is not independent proof of clean technique, effort or a tested max. One optimistic estimate cannot establish goal-attempt readiness.',
+      '5. Distinguish early shortfalls, late-set attrition and unlogged work; omitted sets are not failures. Check rest before diagnosing lost strength. Justify set count; tonnage alone cannot justify adding sets. Gaps in saved logs do not prove inactivity. If time is limited, give a priority stopping point AND the full remaining roster without catch-up sets.',
+      '6. Roster changes require an explicit request, stated post-goal rule or safety/equipment need; explain substitutions. Pain, a miss or form breakdown must not trigger mandatory fallback sets or an invented precise substitution. Give an appropriate conditional path for affected work. Ask only questions that materially change the plan.');
+    if(packet.appPlan)lines.push('7. Reconcile the app draft with the log; if you change a target, show the changed number and specific reason. The draft is a starting point, not performed work.');
+    if(movements.some(m=>m.type==='strength')){
+      lines.push('','CALCULATION NOTES + SOURCES');
+      if(movements.some(m=>m.quantitative?.capacity))lines.push('Capacity math: L=entered load; n=reps+reported RIR (0–3), or reps alone if reserve unknown; n=2–10 modeled. Epley=L(1+n/30); Brzycki=36L/(37−n); OConnor=L(1+0.025n). Up to 3 early/low-rep sets give a weighted session median; up to 5 sessions give a recency-weighted median, weight=1/(1+days/14). Reference is at least the heavier successful main load in this snapshot. Formula envelopes are model disagreement, not statistical intervals.');
+      lines.push('Strength principles: appropriate heavy exposure, supporting multiset volume and adequate rest. Exact schemes (3×5, 5×5, triples, top/back-offs, rep ranges), weighting, completion/reset and fatigue thresholds are coaching heuristics, not proven individual laws.',
+        'Evidence: ACSM https://pubmed.ncbi.nlm.nih.gov/41843416/ ; load/sets/frequency https://pubmed.ncbi.nlm.nih.gov/37414459/ ; autoregulation https://pubmed.ncbi.nlm.nih.gov/40791980/ ; rest https://pubmed.ncbi.nlm.nih.gov/28933024/ .');
+    }
     return {packet,text:lines.join('\n')};
   }
   const api={build,compactSets,flatten,summarize};

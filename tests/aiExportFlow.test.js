@@ -38,7 +38,7 @@ describe('copy workout for AI flow',()=>{
     document.getElementById('exportBtn').click();await Promise.resolve();await Promise.resolve();
     const brief=navigator.clipboard.writeText.mock.calls[0][0];
     expect(brief).toContain('APP NEXT-WORKOUT DRAFT');
-    expect(brief).toContain('PROGRAMMING LENS');
+    expect(brief).toContain('CALCULATION NOTES + SOURCES');
     expect(brief).toContain('Bench');
     expect(localStorage.getItem('wt_currentExercise')).toBe(original);
   });
