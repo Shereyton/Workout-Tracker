@@ -105,6 +105,12 @@ describe('automatic isolation strength progression', () => {
 });
 
 describe('ready-to-follow strength targets', () => {
+  it('preserves an automatic three-by-five strength scheme when adding load',()=>{
+    const entry=exercise('Bench Press',Array(3).fill(null).map(()=>set(225,5)),{goal:{exerciseName:'Bench Press',goalType:'weight',goalValue:315},progressionProfile:{...equipment,mode:'auto',purpose:'primary_strength',repMin:1,repMax:5,targetRir:2,loadStep:5}});
+    const result=target(workout('2026-10-11',[entry]),[workout('2026-10-09',[entry])]);
+    expect(result.action).toBe('ADD LOAD');
+    expect(result.workingSets.map(s=>[s.weight,s.reps])).toEqual([[230,5],[230,5],[230,5]]);
+  });
   const assigned = (workingSets) => ({source:'app_next_workout',type:'strength',sourceDate:'2026-09-18',workingSets:workingSets.map(([weight,reps])=>({role:'working',weight,reps,restSeconds:180})),preparationSets:[]});
   const fiveByFiveProfile = { ...equipment, mode: 'custom', purpose: 'primary_strength', repMin: 5, repMax: 5, targetRir: 2, loadStep: 2.5 };
   const fiveByFive = (reps) => exercise('Bench Press', reps.map((count) => set(225, count)), { progressionProfile: fiveByFiveProfile });
