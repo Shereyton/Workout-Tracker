@@ -2,8 +2,17 @@ const fs = require('fs');
 const path = require('path');
 
 describe('iPhone product shell integration', () => {
+  let eventBindings;
   beforeEach(() => {
     jest.resetModules(); jest.useFakeTimers(); localStorage.clear(); sessionStorage.clear();
+    eventBindings=[];
+    [window,document].forEach(target=>{
+      const original=target.addEventListener;
+      jest.spyOn(target,'addEventListener').mockImplementation(function(type,handler,options){
+        eventBindings.push([target,type,handler,options]);
+        return original.call(this,type,handler,options);
+      });
+    });
     document.documentElement.innerHTML=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
     document.body.className='';
     window.matchMedia=jest.fn(()=>({matches:false,addEventListener(){}}));
@@ -13,7 +22,7 @@ describe('iPhone product shell integration', () => {
     require('../script'); window.WorkoutPlanner=require('../progression-planner');
     require('../app-shell');
   });
-  afterEach(()=>{jest.clearAllTimers();jest.useRealTimers();jest.restoreAllMocks();});
+  afterEach(()=>{eventBindings.forEach(([target,type,handler,options])=>target.removeEventListener(type,handler,options));jest.clearAllTimers();jest.useRealTimers();jest.restoreAllMocks();});
   const flush=async()=>{await Promise.resolve();jest.runAllTicks();await Promise.resolve();};
   it('moves controls without detaching them and uses real screen navigation',()=>{
     expect(document.body.classList.contains('app-v2')).toBe(true);
@@ -33,6 +42,7 @@ describe('iPhone product shell integration', () => {
     }
     document.getElementById('useTimer').checked=false;
     document.getElementById('logBtn').click();await flush();
+    document.querySelector('[data-view="plan"]').click();
     expect(document.getElementById('planContent').textContent).toContain('Bench Press');
     expect(document.querySelectorAll('.plan-card')).toHaveLength(1);
     document.getElementById('finishBtn').click();
@@ -51,6 +61,7 @@ describe('iPhone product shell integration', () => {
     document.getElementById('logBtn').click();await flush();
     document.getElementById('finishBtn').click();
     [...document.querySelectorAll('[role="dialog"] button')].find(b=>b.textContent==='Save Workout').click();await flush();
+    document.querySelector('[data-view="plan"]').click();
     document.querySelector('.plan-card button').click();await flush();
     const next=[...document.querySelectorAll('[role="dialog"] button')].find(b=>b.textContent==='Start New');
     expect(next).toBeTruthy();next.click();await flush();await flush();
@@ -61,6 +72,7 @@ describe('iPhone product shell integration', () => {
     expect(document.getElementById('liveTarget').textContent).toContain('135 lb × 8');
   });
   it('labels the notes export honestly and keeps unknown goals blank',()=>{
+    document.querySelector('[data-view="progress"]').click();
     expect(document.querySelector('.data-fineprint').textContent).toContain('calendar notes only');
     expect(document.getElementById('progressContent').textContent).toContain('Give your training a direction');
     expect(document.body.textContent).not.toContain('NaN');
@@ -127,10 +139,73 @@ describe('iPhone product shell integration', () => {
         {role:'back_off',weight:255,reps:4,restSeconds:180},
       ],
     }]})};
+    document.querySelector('[data-view="plan"]').click();
     document.getElementById('planSource').dispatchEvent(new Event('change'));
     const card=document.querySelector('.plan-card');
     expect(card.textContent).toContain('Top set');
     expect(card.textContent).toContain('Back-off set');
     expect(card.textContent).toContain('top set 4 min · back-offs 3 min');
+  });
+  it('does not build hidden dashboards and preserves visible plan controls on unchanged updates',async()=>{
+    const original=window.WorkoutPlanner.buildNextWorkout;
+    const build=jest.fn(original);
+    window.WorkoutPlanner={buildNextWorkout:build};
+    document.getElementById('customExercise').value='Bench Press';
+    document.getElementById('addExercise').click();
+    document.getElementById('useTimer').checked=false;
+    for(const [id,value] of [['weight','135'],['reps','5']]){
+      document.getElementById(id).value=value;
+      document.getElementById(id).dispatchEvent(new Event('input',{bubbles:true}));
+    }
+    document.getElementById('logBtn').click();await flush();
+    expect(build).not.toHaveBeenCalled();
+    expect(document.getElementById('progressContent').children).toHaveLength(0);
+    document.querySelector('[data-view="plan"]').click();
+    expect(build).toHaveBeenCalledTimes(1);
+    const card=document.querySelector('.plan-card');
+    const select=document.getElementById('planSource');
+    const option=select.firstChild;
+    window.dispatchEvent(new Event('wt-state-updated'));await flush();
+    expect(document.querySelector('.plan-card')).toBe(card);
+    expect(select.firstChild).toBe(option);
+    expect(build).toHaveBeenCalledTimes(1);
+  });
+  it('keeps a new rest timer visible when the previous Ready message expires',async()=>{
+    document.getElementById('customExercise').value='Bench Press';
+    document.getElementById('addExercise').click();
+    document.getElementById('useTimer').checked=true;
+    document.getElementById('restSecsInput').value='5';
+    const log=()=>{
+      for(const [id,value] of [['weight','135'],['reps','5']]){
+        document.getElementById(id).value=value;
+        document.getElementById(id).dispatchEvent(new Event('input',{bubbles:true}));
+      }
+      document.getElementById('logBtn').click();
+    };
+    log();jest.advanceTimersByTime(5000);await flush();
+    expect(document.getElementById('restDisplay').textContent).toBe('Ready!');
+    log();jest.advanceTimersByTime(1500);await flush();
+    expect(document.getElementById('restBox').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('restDisplay').textContent).not.toBe('Ready!');
+  });
+  it('respects reduced motion when opening training',()=>{
+    window.matchMedia.mockReturnValue({matches:true});
+    document.querySelector('.hero-button').click();
+    expect(document.getElementById('trainingSection').scrollIntoView).toHaveBeenLastCalledWith({block:'start',behavior:'auto'});
+  });
+  it('keeps the selected saved session when a newer workout changes the sort order',async()=>{
+    const record=(id,date,weight)=>({workoutId:id,date,timestamp:`${date}T12:00:00Z`,exercises:[{name:'Bench Press',sets:[{weight,reps:5}]}]});
+    const older=record('older','2026-10-01',135);
+    localStorage.setItem('wt_completedWorkouts',JSON.stringify({older}));
+    window.dispatchEvent(new Event('wt-state-updated'));await flush();
+    document.querySelector('[data-view="plan"]').click();
+    const select=document.getElementById('planSource');
+    select.value='saved-older';select.dispatchEvent(new Event('change'));
+    const newer=record('newer','2026-10-08',185);
+    localStorage.setItem('wt_completedWorkouts',JSON.stringify({older,newer}));
+    window.dispatchEvent(new Event('wt-state-updated'));await flush();
+    expect(select.value).toBe('saved-older');
+    expect(select.selectedOptions[0].textContent).toContain('Oct 1');
+    expect(document.querySelector('.prescription-table').textContent).toContain('135');
   });
 });

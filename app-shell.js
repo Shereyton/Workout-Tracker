@@ -6,10 +6,11 @@
   const number = (value) => finite(value) ? Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—';
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   const hasSets = (payload) => Array.isArray(payload?.exercises) && payload.exercises.some(ex => Array.isArray(ex?.sets) && ex.sets.length);
+  const sessionIdentity = item => item.workoutId || item.id || item.completedId || `${item.timestamp || item.date}:${JSON.stringify(item.exercises)}`;
   function uniqueSessions(history) {
     const seen = new Set();
     return (Array.isArray(history) ? history : Object.values(history || {})).filter(hasSets).filter(item => {
-      const id = item.workoutId || item.id || item.completedId || `${item.timestamp || item.date}:${JSON.stringify(item.exercises)}`;
+      const id = sessionIdentity(item);
       if (seen.has(id)) return false;
       seen.add(id); return true;
     }).sort((a,b) => String(b.timestamp || b.date).localeCompare(String(a.timestamp || a.date)));
@@ -39,6 +40,7 @@
     if (!api?.getState) return; // Legacy screen remains fully usable if the enhancement cannot initialize.
     const originalElements = new Map(Array.from(doc.querySelectorAll('[id]'),el=>[el.id,el]));
     const $ = (id) => doc.getElementById(id) || originalElements.get(id);
+    const scrollBehavior = () => root.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
     const make = (tag, cls, html) => { const el = doc.createElement(tag); if (cls) el.className = cls; if (html) el.innerHTML = html; return el; };
     const button = (label, handler, cls = 'shell-button') => { const el = make('button',cls); el.type='button'; el.textContent=label; el.addEventListener('click',handler); return el; };
     const heading = (eyebrow,title,copy) => make('div','view-heading',`<span class="eyebrow">${eyebrow}</span><h2 tabindex="-1">${title}</h2><p>${copy}</p>`);
@@ -96,7 +98,7 @@
       quality.append(b);
     });
     quality.append(button('Pain / form problem',()=>{
-      $('accuracyDetails').open=true; $('setTechnique').scrollIntoView({block:'center',behavior:'smooth'});
+      $('accuracyDetails').open=true; $('setTechnique').scrollIntoView({block:'center',behavior:scrollBehavior()});
     },'effort-button'),make('small','','Record this for the set you are logging. Blank stays unknown.'));
     $('logBtn').before(quality);
     $('logBtn').addEventListener('click',()=>quality.querySelectorAll('[data-control]').forEach(b=>b.setAttribute('aria-pressed','false')));
@@ -129,6 +131,9 @@
     let statusTimer;
     const tell=(message)=>{ status.textContent=message;status.classList.add('visible');clearTimeout(statusTimer);statusTimer=setTimeout(()=>status.classList.remove('visible'),4500); };
     let view='train', state={}, sessions=[], selectedSource='current', lastExercise='', activeGuide=null, renderPending=false;
+    let overviewSignature='', sourceSignature='', planSignature=null, progressSignature=null;
+    let choosingExercise=false;
+    const savedSources=new Map();
     try { const saved=JSON.parse(root.sessionStorage.getItem('wt_guidedPlan')||'null'); if(saved&&Array.isArray(saved.exercises)) activeGuide=saved; } catch {}
     function switchView(name,{focus=true}={}) {
       if(!panels[name]) return;
@@ -139,26 +144,31 @@
         if(on)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');
       });
       doc.body.dataset.appView=name;
+      renderVisibleView();
       if (focus) { root.scrollTo?.({top:0,behavior:'instant'}); panels[name].querySelector('h2')?.focus({preventScroll:true}); }
     }
     const summaryExport=button('Copy finished workout for AI ↗',()=>{
       switchView('plan');
       $('exportBtn').click();
-      exportSection.scrollIntoView({block:'start',behavior:'smooth'});
+      exportSection.scrollIntoView({block:'start',behavior:scrollBehavior()});
     });
     summaryExport.id='summaryExportBtn'; summaryExport.hidden=true;
     $('summaryText').after(summaryExport);
     doc.querySelectorAll('.dock-action[data-view]').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
     function currentName(){return state.activeExercise?.name || state.currentExercise?.name || '';}
     async function chooseExercise(name, goal=false) {
-      const result=await api.startExercise?.(name);
-      if(result===false)return false;
-      const guided=activeGuide?.exercises?.find(ex=>key(ex.name)===key(name));
-      if(guided)api.setActivePrescription?.(guided,activeGuide.sourceDate);
-      switchView('train'); scheduleRender();
-      if(goal) { if($('exerciseGoalForm').classList.contains('hidden'))$('exerciseGoalToggle').click(); $('exerciseGoalPanel').scrollIntoView({block:'center',behavior:'smooth'}); }
-      else $('interface').scrollIntoView({block:'start',behavior:'smooth'});
-      return true;
+      if(choosingExercise)return false;
+      choosingExercise=true;
+      try {
+        const result=await api.startExercise?.(name);
+        if(result===false)return false;
+        const guided=activeGuide?.exercises?.find(ex=>key(ex.name)===key(name));
+        if(guided)api.setActivePrescription?.(guided,activeGuide.sourceDate);
+        switchView('train'); scheduleRender();
+        if(goal) { if($('exerciseGoalForm').classList.contains('hidden'))$('exerciseGoalToggle').click(); $('exerciseGoalPanel').scrollIntoView({block:'center',behavior:scrollBehavior()}); }
+        else $('interface').scrollIntoView({block:'start',behavior:scrollBehavior()});
+        return true;
+      } finally { choosingExercise=false; }
     }
     function renderOverview() {
       const exercises=state.current?.exercises || [];
@@ -169,25 +179,36 @@
       recent.hidden=Boolean(name);
       doc.body.classList.toggle('has-active-exercise',Boolean(name));
       if(name!==lastExercise){picker.open=!name;lastExercise=name;}
+      // Do not recreate the welcome card or its focused button on unrelated updates.
+      const signature=JSON.stringify([count,name,sessions.length,Object.keys(state.goals||{}),sessions[0]]);
+      if(signature===overviewSignature)return;
+      overviewSignature=signature;
+      if(name)return;
       const latest=sessions[0];
       overview.innerHTML=`<div class="hero-orbit" aria-hidden="true"><span>↗</span></div><div class="hero-kicker"><i></i> YOUR PERSONAL TRAINING SPACE</div><h2>${count?'Keep the<br>momentum.':'Make your<br>next rep count.'}</h2><p>${count?'Your work is here. Pick up where you left off.':'One clear goal. One focused session.<br>A stronger version of you.'}</p><div class="hero-bottom"><span><strong>${number(sessions.length)}</strong> saved sessions</span><span><strong>${number(Object.keys(state.goals||{}).length)}</strong> exercise goals</span></div>`;
-      overview.append(button(count?'Continue training ↗':'Let’s train ↗',()=>{$('exerciseSearch').focus();$('trainingSection').scrollIntoView({block:'start',behavior:'smooth'});},'hero-button'));
+      overview.append(button(count?'Continue training ↗':'Let’s train ↗',()=>{picker.open=true;$('exerciseSearch').focus({preventScroll:true});$('trainingSection').scrollIntoView({block:'start',behavior:scrollBehavior()});},'hero-button'));
       recent.replaceChildren();
       if(latest){recent.append(make('div','section-line',`<h3>Pick up the rhythm</h3><span>${sessionDate(latest)}</span>`));const rail=make('div','exercise-rail');
         (latest.exercises||[]).filter(e=>e?.name&&!e.isSuperset).slice(0,8).forEach(e=>rail.append(button(e.name,()=>chooseExercise(e.name),'exercise-chip')));recent.append(rail);}
     }
     function rebuildSources() {
+      const signature=JSON.stringify([hasSets(state.current),sessions.map(s=>[sessionIdentity(s),s.timestamp,s.date,s.dayType,s.sessionContext?.dayType,s.exercises.length])]);
+      // Keep the native iPhone select intact unless its options actually changed.
+      savedSources.clear();
+      sessions.forEach(item=>savedSources.set(`saved-${sessionIdentity(item)}`,item));
+      if(signature===sourceSignature)return;
+      sourceSignature=signature;
       const prior=sourceSelect.value || selectedSource;
       sourceSelect.replaceChildren();
       if(hasSets(state.current)){ const o=make('option','','Current session');o.value='current';sourceSelect.append(o); }
-      sessions.forEach((item,index)=>{const o=make('option','',`${sessionDate(item)} · ${item.dayType || item.sessionContext?.dayType || 'Workout'} · ${item.exercises.length} exercises`);o.value=`saved-${index}`;sourceSelect.append(o);});
+      savedSources.forEach((item,id)=>{const o=make('option','',`${sessionDate(item)} · ${item.dayType || item.sessionContext?.dayType || 'Workout'} · ${item.exercises.length} exercises`);o.value=id;sourceSelect.append(o);});
       if(!sourceSelect.options.length){const o=make('option','','No sessions yet');o.value='';sourceSelect.append(o);}
       const match=Array.from(sourceSelect.options).find(o=>o.value===prior);
       sourceSelect.value=match?prior:sourceSelect.options[0].value;
       selectedSource=sourceSelect.value;
     }
     function getPlan() {
-      const source=selectedSource==='current'?state.current:sessions[Number(selectedSource.replace('saved-',''))];
+      const source=selectedSource==='current'?state.current:savedSources.get(selectedSource);
       if(!hasSets(source)||!root.WorkoutPlanner)return null;
       return root.WorkoutPlanner.buildNextWorkout({current:source,history:sessions.filter(s=>s!==source),goals:state.goals,helpers:api.helpers||state.helpers});
     }
@@ -276,16 +297,28 @@
         card.append(button('Train or edit goal ↗',()=>chooseExercise(g.exerciseName,true),'text-button'));progressContent.append(card);
       });
     }
+    function renderVisibleView() {
+      // Active exports include a fresh snapshot timestamp/duration on every read.
+      // Those clock-only changes do not alter a prescription or goal chart.
+      const {timestamp,session,...currentData}=state.current||{};
+      if(view==='plan'){
+        const signature=JSON.stringify([selectedSource,currentData,sessions,state.goals]);
+        if(signature!==planSignature){renderPlan();planSignature=signature;}
+      }else if(view==='progress'){
+        const signature=JSON.stringify([currentData,sessions,state.goals,state.equipmentProfiles,new Date().toDateString()]);
+        if(signature!==progressSignature){renderProgress();progressSignature=signature;}
+      }
+    }
     function render() {
       renderPending=false;
-      try {state=api.getState();sessions=uniqueSessions(state.history);renderOverview();rebuildSources();renderPlan();renderProgress();renderTarget();
+      try {state=api.getState();sessions=uniqueSessions(state.history);renderOverview();rebuildSources();renderVisibleView();renderTarget();
         effort.hidden=quality.hidden=!!state.activeExercise?.isCardio;
         [effort,quality].forEach(group=>group.querySelectorAll('[data-control]').forEach(b=>b.setAttribute('aria-pressed',String($(b.dataset.control).value===b.dataset.value))));
       }
       catch(error){console.error('Workout dashboard update failed',error);tell('A dashboard could not update. Your workout controls are still available.');}
     }
     function scheduleRender(){if(renderPending)return;renderPending=true;queueMicrotask(render);}
-    sourceSelect.addEventListener('change',()=>{selectedSource=sourceSelect.value;renderPlan();});
+    sourceSelect.addEventListener('change',()=>{selectedSource=sourceSelect.value;planSignature=null;renderVisibleView();});
     root.addEventListener('wt-state-updated',scheduleRender);
     root.addEventListener('storage',scheduleRender);
     // Keyboard-aware dock: keep it away from numeric inputs on iPhone.
@@ -293,6 +326,7 @@
       const editing=/^(INPUT|TEXTAREA|SELECT)$/.test(doc.activeElement?.tagName||'');
       doc.body.classList.toggle('keyboard-open',editing&&root.innerHeight-root.visualViewport.height>150);
     };root.visualViewport.addEventListener('resize',resized);doc.addEventListener('focusin',resized);doc.addEventListener('focusout',()=>setTimeout(resized,0));}
+    doc.documentElement.classList.add('workout-shell');
     doc.body.classList.add('app-v2');switchView('train',{focus:false});render();
     root.WorkoutShell={switchView,refresh:scheduleRender};
   }

@@ -99,4 +99,17 @@ describe('finish workout persistence', () => {
     expect(Object.keys(JSON.parse(localStorage.getItem('wt_completedWorkouts')))).toHaveLength(3);
     expect(document.body.textContent).toContain('Download Workout');
   });
+
+  it('keeps the saved-workouts disclosure open and reuses its rows when another set is logged',()=>{
+    const panel=document.querySelector('.saved-workouts');
+    panel.open=true;
+    const row=panel.querySelector('.saved-workout-row');
+    document.getElementById('useTimer').checked=false;
+    document.getElementById('weight').value='135';document.getElementById('reps').value='5';
+    document.getElementById('reps').dispatchEvent(new Event('input',{bubbles:true}));
+    document.getElementById('logBtn').click();
+    expect(document.querySelector('.saved-workouts')).toBe(panel);
+    expect(panel.open).toBe(true);
+    expect(panel.querySelector('.saved-workout-row')).toBe(row);
+  });
 });
