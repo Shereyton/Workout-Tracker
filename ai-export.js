@@ -398,7 +398,45 @@
     }
     return {packet,text:lines.join('\n')};
   }
-  const api={build,compactSets,flatten,summarize};
+  function buildPersonalRecords(options={}){
+    const helpers=options.helpers||{};
+    const current=options.current||null;
+    const history=(Array.isArray(options.history)?options.history:[]).filter(record=>!current?.workoutId||record?.workoutId!==current.workoutId);
+    const best=new Map();
+    [...history,...(current?[current]:[])].forEach(raw=>{
+      if(!raw||typeof raw!=='object')return;
+      const record=helpers.normalizePayload?helpers.normalizePayload(raw):raw;
+      if(!record)return;
+      const date=clean(raw.date||raw.timestamp?.slice(0,10))||null;
+      (record.exercises||[]).flatMap(ex=>flatten({...record,exercises:[ex]},helpers).movements).filter(m=>m.type==='strength').forEach(m=>{
+        const setup=m.equipment||equipmentFact(null);
+        const identity=JSON.stringify([key(m.name),setup.loadConvention,key(setup.label)]);
+        m.sets.forEach(s=>{
+          if(!s.completed||s.role==='failed_attempt'||s.pain==='stopped'||s.technique==='poor'
+            ||s.weightLb===null||s.weightLb<0||!(s.reps>0))return;
+          const candidate={exercise:m.name,weightLb:s.weightLb,reps:s.reps,date,
+            loadConvention:setup.loadConvention,equipmentLabel:setup.label,
+            source:raw===current?'active_session':'saved_workout'};
+          const prior=best.get(identity);
+          if(!prior||candidate.weightLb>prior.weightLb
+            ||candidate.weightLb===prior.weightLb&&(candidate.reps>prior.reps
+              ||candidate.reps===prior.reps&&String(candidate.date||'')>String(prior.date||'')))best.set(identity,candidate);
+        });
+      });
+    });
+    const records=[...best.values()].sort((a,b)=>key(a.exercise).localeCompare(key(b.exercise))
+      ||a.loadConvention.localeCompare(b.loadConvention)||key(a.equipmentLabel).localeCompare(key(b.equipmentLabel)));
+    const packet={format:'personal-records/1',asOf:options.asOf||current?.date||null,
+      exerciseCount:new Set(records.map(r=>key(r.exercise))).size,records};
+    const lines=[`PERSONAL RECORDS | ${packet.asOf||'date unspecified'} | ${packet.format}`,
+      `${packet.exerciseCount} exercises; ${records.length} equipment groups. Highest successful logged weight + reps completed at that weight.`,
+      'Saved structured workouts + active session on this device. Logged records, not verified/tested 1RMs. Equipment setups stay separate; 0 = no external weight logged.',
+      ''];
+    records.forEach((r,i)=>lines.push(`${i+1}. ${JSON.stringify(r.exercise)}: ${fmt(r.weightLb)} lb × ${r.reps} rep${r.reps===1?'':'s'} | ${r.date||'date unknown'} | load scale: ${loadLabels[r.loadConvention]}${r.equipmentLabel?`; ${JSON.stringify(r.equipmentLabel)}`:''}${r.source==='active_session'?' | active session':''}`));
+    if(!records.length)lines.push('No successful strength sets found in the stored workouts or active session.');
+    return {packet,text:lines.join('\n')};
+  }
+  const api={build,buildPersonalRecords,compactSets,flatten,summarize};
   if(typeof module!=='undefined')module.exports=api;
   root.WorkoutAIExport=api;
 })(typeof window!=='undefined'?window:globalThis);
