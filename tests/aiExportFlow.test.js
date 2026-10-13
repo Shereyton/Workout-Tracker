@@ -29,6 +29,23 @@ describe('copy workout for AI flow',()=>{
     expect(document.getElementById('aiExportStatus').textContent).toContain('use Copy');
     const text=document.getElementById('aiExportText');expect(text.selectionEnd).toBe(text.value.length);
   });
+  it('copies personal records separately without archiving or changing the active workout',async()=>{
+    const original=localStorage.getItem('wt_currentExercise');
+    const archive=localStorage.getItem('wt_sessionArchive');
+    document.getElementById('exportPersonalRecords').click();await Promise.resolve();await Promise.resolve();
+    expect(navigator.clipboard.writeText.mock.calls[0][0]).toContain('PERSONAL RECORDS');
+    expect(document.getElementById('personalRecordsPreview').hidden).toBe(false);
+    expect(document.getElementById('aiExportPreview').hidden).toBe(true);
+    expect(localStorage.getItem('wt_currentExercise')).toBe(original);
+    expect(localStorage.getItem('wt_sessionArchive')).toBe(archive);
+  });
+  it('provides phone-copy fallback for the separate records export',async()=>{
+    navigator.clipboard.writeText.mockRejectedValue(new Error('denied'));
+    document.getElementById('exportPersonalRecords').click();await Promise.resolve();await Promise.resolve();
+    expect(document.getElementById('personalRecordsStatus').textContent).toContain('use Copy on your phone');
+    const text=document.getElementById('personalRecordsText');
+    expect(text.selectionEnd).toBe(text.value.length);
+  });
   it('adds the in-app draft after a finished workout without changing logged data',async()=>{
     window.WorkoutPlanner=require('../progression-planner');
     document.getElementById('finishBtn').click();

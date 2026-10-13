@@ -6273,6 +6273,47 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   let latestExport = null;
   let exportSequence = 0;
 
+  const recordsButton=document.createElement('button');
+  recordsButton.id='exportPersonalRecords'; recordsButton.type='button';
+  recordsButton.className='btn btn-secondary'; recordsButton.textContent='Export Personal Records';
+  const recordsHelp=document.createElement('p'); recordsHelp.className='ai-export-help';
+  recordsHelp.textContent='Your highest logged weight and reps for every exercise across saved workouts and this session.';
+  const recordsPreview=document.createElement('section');
+  recordsPreview.id='personalRecordsPreview'; recordsPreview.hidden=true;
+  recordsPreview.setAttribute('aria-label','Personal records export');
+  const recordsStatus=document.createElement('p'); recordsStatus.setAttribute('role','status'); recordsStatus.id='personalRecordsStatus';
+  const recordsLabel=document.createElement('label'); recordsLabel.htmlFor='personalRecordsText'; recordsLabel.textContent='Your recorded lifts';
+  const recordsText=document.createElement('textarea'); recordsText.id='personalRecordsText'; recordsText.readOnly=true; recordsText.rows=9; recordsText.spellcheck=false;
+  const recordsActions=document.createElement('div'); recordsActions.className='ai-export-actions';
+  recordsPreview.append(recordsStatus,recordsLabel,recordsText,recordsActions);
+  exportHint.after(recordsButton,recordsHelp,recordsPreview);
+  let latestRecords=null;
+  async function copyPersonalRecords(){
+    const text=recordsText.value;
+    try{
+      if(!navigator.clipboard?.writeText)throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(text);
+      recordsStatus.textContent='Personal records copied. Paste into your AI or save for reference.';
+    }catch{
+      recordsStatus.textContent='Select the records below and use Copy on your phone.';
+      recordsText.focus(); recordsText.select(); recordsText.setSelectionRange(0,text.length);
+    }
+  }
+  exportAction('Copy again',copyPersonalRecords,recordsActions);
+  exportAction('Download (.txt)',()=>{
+    if(latestRecords)triggerDownload(new Blob([latestRecords.text],{type:'text/plain;charset=utf-8'}),`personal_records_${getLocalDateString()}.txt`);
+  },recordsActions);
+  recordsButton.addEventListener('click',async()=>{
+    if(!window.WorkoutAIExport?.buildPersonalRecords){showToast('Refresh the app to load personal-record exports.');return;}
+    const history=getWorkoutRecords(wtStorage.get(WT_KEYS.completed,{}),archivedSessions);
+    const last=wtStorage.get(WT_KEYS.last,[]);
+    if(Array.isArray(last)&&last.length)history.push(normalizePayload({...wtStorage.get(WT_KEYS.lastMeta,{}),exercises:last}));
+    latestRecords=window.WorkoutAIExport.buildPersonalRecords({current:buildActiveWorkoutRecord(),history,
+      asOf:getLocalDateString(),helpers:{normalizePayload,classifyExerciseSets}});
+    recordsText.value=latestRecords.text; recordsPreview.hidden=false;
+    await copyPersonalRecords();
+  });
+
   function exportAction(label, handler, parent = previewActions) {
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'btn btn-secondary'; button.textContent = label;
