@@ -2653,6 +2653,7 @@ if (typeof localStorage !== "undefined") {
 }
 
 let restTimer = null;
+let restHideTimer = null;
 let restSecondsRemaining = 0;
 let restStartMs = 0;
 let restDeadlineMs = 0;
@@ -4089,6 +4090,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   durationSecInput.addEventListener("input", updateLogButtonState);
   supersetInputs.addEventListener("input", updateLogButtonState);
 
+  // Summary cache must exist before initial rendering (functions are hoisted).
+  let savedPanelCache = null;
+  let savedRecordsSignature = '';
   /* ------------------ INIT ------------------ */
   todayEl.textContent = new Date().toLocaleDateString("en-US", {
     weekday: "long",
@@ -5018,22 +5022,22 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
   }
 
   async function startSuperset(namesArr) {
-    if (session.finishedAt && !await startNewWorkout()) return false;
-    finishRest({ announceCompletion: false, hide: true });
-    if (!session.startedAt) session.startedAt = new Date().toISOString();
-    startSessionTimer();
-    if (currentExercise && currentExercise.sets.length) {
-      pushOrMergeExercise(currentExercise);
-    }
-    const clean = namesArr
+    const clean = (Array.isArray(namesArr) ? namesArr : [])
       .map((name) => trimString(name, 80))
       .filter((name, index, names) => name && names.findIndex(
         (candidate) => exerciseGoalKey(candidate) === exerciseGoalKey(name),
       ) === index);
     if (clean.length < 2) {
       showToast('Choose two different strength exercises');
-      return;
+      return false;
     }
+    // Validate before moving the active exercise, otherwise an invalid selection
+    // duplicates its sets in the session while leaving it active.
+    if (session.finishedAt && !await startNewWorkout()) return false;
+    finishRest({ announceCompletion: false, hide: true });
+    if (!session.startedAt) session.startedAt = new Date().toISOString();
+    startSessionTimer();
+    if (currentExercise && currentExercise.sets.length) pushOrMergeExercise(currentExercise);
     const progressionProfiles = {};
     clean.forEach((name) => {
       const key = exerciseGoalKey(name);
@@ -5135,6 +5139,7 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
 
   /* ------------------ LOG SET ------------------ */
   logBtn.addEventListener("click", function () {
+    if (!currentExercise) return;
     if (currentExercise.isSuperset) {
       const setGroup = currentExercise.exercises.map((ex, i) => {
         const w = parseWorkoutNumber(document.getElementById(`weight${i}`).value);
@@ -5830,13 +5835,18 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       if (restSecondsRemaining <= 0) {
         finishRest();
         restDisplay.textContent = "Ready!";
-        setTimeout(() => restBox.classList.add("hidden"), 1500);
+        restHideTimer = setTimeout(() => {
+          restBox.classList.add("hidden");
+          restHideTimer = null;
+        }, 1500);
       }
     };
     restTimer = setInterval(tick, 250);
   }
 
   function stopRest() {
+    clearTimeout(restHideTimer);
+    restHideTimer = null;
     if (restTimer) {
       clearInterval(restTimer);
       restTimer = null;
@@ -6161,12 +6171,19 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
       summaryText.prepend(document.createElement("br"));
       summaryText.prepend(total);
     }
-    const savedRecords = Object.values(wtStorage.get(WT_KEYS.completed, null) || archivedSessions)
-      .filter(record => record && Array.isArray(record.exercises))
-      .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+    const savedRecords = getWorkoutRecords(wtStorage.get(WT_KEYS.completed, {}), archivedSessions);
     if (savedRecords.length) {
+      const signature = JSON.stringify(savedRecords);
+      if (signature === savedRecordsSignature && savedPanelCache) {
+        summaryText.appendChild(savedPanelCache);
+        notifyStateChanged();
+        return;
+      }
       const savedPanel = document.createElement('details');
       savedPanel.className = 'saved-workouts';
+      savedPanel.open = savedPanelCache?.open || false;
+      savedPanelCache = savedPanel;
+      savedRecordsSignature = signature;
       const heading = document.createElement('summary');
       heading.textContent = `Saved Workouts (${savedRecords.length})`;
       savedPanel.appendChild(heading);
@@ -6188,6 +6205,9 @@ if (typeof document !== "undefined" && document.getElementById("today")) {
         row.append(label, download);
         savedPanel.appendChild(row);
       });
+    } else {
+      savedPanelCache = null;
+      savedRecordsSignature = '';
     }
     notifyStateChanged();
   }

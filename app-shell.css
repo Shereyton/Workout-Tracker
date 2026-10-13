@@ -53,3 +53,17 @@ body.app-v2.dark{--paper:#101b15;--card:#1b2a21;--ink:#f1f6eb;--muted:#b0bfaf;--
 #personalRecordsPreview{margin:16px 0;padding-top:16px;border-top:1px solid var(--input-border);}
 #personalRecordsPreview label{display:block;margin:8px 0;font-size:12px;}
 #personalRecordsText{width:100%;min-height:230px;font-size:16px;line-height:1.5;white-space:pre-wrap;resize:vertical;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;user-select:text;-webkit-user-select:text;}
+
+/* Touch feedback uses compositor-friendly transforms, never transition: all. */
+html.workout-shell{scroll-padding-top:16px;scroll-padding-bottom:calc(100px + env(safe-area-inset-bottom))}
+.app-v2 button,.app-v2 summary{touch-action:manipulation}
+.app-v2 button{transition:transform 100ms ease,background-color 140ms ease,color 140ms ease,border-color 140ms ease}
+.app-v2 button:active:not(:disabled){transform:scale(.98)}
+.app-v2 .dock-action:active:not(:disabled){transform:scale(.96)}
+.app-v2 button:disabled{transform:none}
+.app-v2 input,.app-v2 select,.app-v2 textarea{transition:border-color 140ms ease,background-color 140ms ease}
+.app-v2 .settings-disclosure>summary,.app-v2 .exercise-extras>summary{min-height:44px;display:flex;align-items:center}
+.app-v2 .app-dock{-webkit-backdrop-filter:blur(18px)}
+.app-v2 #darkToggle{position:static;right:auto;bottom:auto;transform:none;min-width:44px;min-height:44px;background:var(--card);color:var(--ink);border:1px solid var(--line);box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}
+.app-v2 .set-label,.app-v2 .set-meta,.app-v2 .plan-card h3,.app-v2 .goal-card h3{overflow-wrap:anywhere}
+@media(hover:hover) and (pointer:fine){.app-v2 button:hover:not(:disabled){filter:brightness(.96)}}
